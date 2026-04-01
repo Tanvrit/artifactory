@@ -1,0 +1,25 @@
+{
+  "product": {
+    "friendly": {
+      "name": "Friendly",
+      "slug": "friendly",
+      "tagline": "POS & Retail for Bharat",
+      "package": "com.friendly",
+      "color": {
+        "brand":          { "value": "#1D4ED8", "type": "color" },
+        "brandGradient":  { "value": "#3B82F6", "type": "color" },
+        "brandLight":     { "value": "#DBEAFE", "type": "color" },
+        "brandDark":      { "value": "#1E3A8A", "type": "color" },
+        "brandSurface":   { "value": "#EFF6FF", "type": "color" },
+        "onBrand":        { "value": "#FFFFFF", "type": "color" }
+      },
+      "icon": {
+        "src": "branding/icons/src/friendly/friendly-icon.svg",
+        "safezone_px": 72,
+        "viewbox": "0 0 1024 1024",
+        "renderer": "sharp",
+        "platforms": ["android", "ios", "macos", "windows", "linux", "web"]
+      }
+    }
+  }
+}

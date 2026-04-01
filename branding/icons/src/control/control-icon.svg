@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    Tanvrit Control — Mission Control macOS App Icon
+    Brand: Forest Green #1A5C3A on Dark #0D1117
+    Safe zone: artwork within 880×880 circle centered at 512,512 (radius 440)
+    Concept: Terminal/command prompt bracket — developer tool aesthetic
+    Renderer: sharp
+    Note: macOS only app — icon style inspired by macOS dev tools (Xcode, iTerm)
+  -->
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#1A2B1F"/>
+      <stop offset="100%" stop-color="#060D08"/>
+    </radialGradient>
+    <linearGradient id="green" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4CC87E"/>
+      <stop offset="100%" stop-color="#1A5C3A"/>
+    </linearGradient>
+    <linearGradient id="green-bright" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#A7F3CC"/>
+      <stop offset="100%" stop-color="#2E9E63"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background — near-black with subtle green tint -->
+  <rect width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+
+  <!-- Terminal scanlines (subtle texture) -->
+  <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224"
+        fill="url(#scanlines)" opacity="0.03"/>
+
+  <!-- Left chevron bracket < -->
+  <path d="M 380 280 L 200 512 L 380 744"
+        fill="none"
+        stroke="url(#green-bright)"
+        stroke-width="52"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        filter="url(#glow)"/>
+
+  <!-- Right chevron bracket > -->
+  <path d="M 644 280 L 824 512 L 644 744"
+        fill="none"
+        stroke="url(#green)"
+        stroke-width="52"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        filter="url(#glow)"/>
+
+  <!-- Center: T monogram (Tanvrit) with cursor blink effect -->
+  <!-- Horizontal bar of T -->
+  <rect x="416" y="400" width="192" height="48" rx="12" fill="url(#green-bright)" filter="url(#glow)"/>
+  <!-- Vertical stem of T -->
+  <rect x="488" y="400" width="48" height="232" rx="12" fill="url(#green-bright)" filter="url(#glow)"/>
+
+  <!-- Cursor block after T (terminal blink) -->
+  <rect x="546" y="600" width="32" height="48" rx="4" fill="#A7F3CC" opacity="0.8"/>
+
+  <!-- Saffron Gold accent line at top (like macOS app badge) -->
+  <rect x="400" y="240" width="224" height="8" rx="4" fill="#F59E0B" opacity="0.6"/>
+</svg>

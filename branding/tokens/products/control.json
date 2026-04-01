@@ -1,0 +1,27 @@
+{
+  "product": {
+    "control": {
+      "name": "Tanvrit Control",
+      "slug": "control",
+      "tagline": "Mission Control for Tanvrit Infrastructure",
+      "package": "com.tanvrit.control",
+      "color": {
+        "brand":          { "value": "#1A5C3A", "type": "color" },
+        "brandGradient":  { "value": "#2E9E63", "type": "color" },
+        "brandSurface":   { "value": "#0D1117", "type": "color" },
+        "uiBackground":   { "value": "#0D1117", "type": "color", "description": "macOS dark window background" },
+        "uiSidebar":      { "value": "#161B22", "type": "color" },
+        "uiCard":         { "value": "#21262D", "type": "color" },
+        "accent":         { "value": "#F59E0B", "type": "color", "description": "Saffron Gold accent" },
+        "onBrand":        { "value": "#F0FDF4", "type": "color" }
+      },
+      "icon": {
+        "src": "branding/icons/src/control/control-icon.svg",
+        "safezone_px": 72,
+        "viewbox": "0 0 1024 1024",
+        "renderer": "sharp",
+        "platforms": ["macos"]
+      }
+    }
+  }
+}

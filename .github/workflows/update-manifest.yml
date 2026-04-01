@@ -1,0 +1,171 @@
+name: Update Release Manifest
+
+on:
+  repository_dispatch:
+    types: [update-manifest]
+  workflow_dispatch:
+    inputs:
+      product:
+        description: 'Product slug'
+        required: true
+      version:
+        description: 'Version (e.g. 1.2.0)'
+        required: true
+      build:
+        description: 'Build number'
+        required: true
+
+jobs:
+  update:
+    name: Update ${{ github.event.client_payload.product || github.event.inputs.product }} manifest
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Extract payload
+        id: payload
+        run: |
+          # Support both repository_dispatch and manual workflow_dispatch
+          PRODUCT="${{ github.event.client_payload.product || github.event.inputs.product }}"
+          VERSION="${{ github.event.client_payload.version || github.event.inputs.version }}"
+          BUILD="${{ github.event.client_payload.build || github.event.inputs.build }}"
+          RELEASED_AT="${{ github.event.client_payload.released_at || github.event.inputs.released_at }}"
+          [ -z "$RELEASED_AT" ] && RELEASED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "product=$PRODUCT"     >> $GITHUB_OUTPUT
+          echo "version=$VERSION"     >> $GITHUB_OUTPUT
+          echo "build=$BUILD"         >> $GITHUB_OUTPUT
+          echo "released_at=$RELEASED_AT" >> $GITHUB_OUTPUT
+
+      - name: Generate manifest JSON
+        run: |
+          PRODUCT="${{ steps.payload.outputs.product }}"
+          VERSION="${{ steps.payload.outputs.version }}"
+          BUILD="${{ steps.payload.outputs.build }}"
+          RELEASED_AT="${{ steps.payload.outputs.released_at }}"
+
+          # Compute SHA256 for each platform binary from the GitHub Release
+          get_sha256() {
+            local url="$1"
+            curl -sL "$url.sha256" 2>/dev/null | awk '{print $1}'
+          }
+
+          BASE="https://github.com/tanvrit/artifactory/releases/download/${PRODUCT}-v${VERSION}"
+          CDN="https://artifacts.tanvrit.com/${PRODUCT}/${VERSION}"
+
+          # Build manifest using jq
+          MANIFEST=$(jq -n \
+            --arg product "$PRODUCT" \
+            --arg version "$VERSION" \
+            --argjson build "$BUILD" \
+            --arg released_at "$RELEASED_AT" \
+            --arg cdn "$CDN" \
+            --arg base "$BASE" \
+            '{
+              product: $product,
+              version: $version,
+              build: $build,
+              released_at: $released_at,
+              release_notes: "See https://github.com/tanvrit/artifactory/releases/tag/\($product)-v\($version)",
+              platforms: {
+                "macos-arm64": {
+                  url: "\($cdn)/macos-arm64",
+                  direct_url: "\($base)/\($product)-\($version)-macos-arm64.dmg",
+                  sha256: "",
+                  size_bytes: 0,
+                  format: "dmg",
+                  available: true
+                },
+                "macos-x64": {
+                  url: "\($cdn)/macos-x64",
+                  direct_url: "\($base)/\($product)-\($version)-macos-x64.dmg",
+                  sha256: "",
+                  size_bytes: 0,
+                  format: "dmg",
+                  available: true
+                },
+                "windows-x64": {
+                  url: "\($cdn)/windows-x64",
+                  direct_url: "\($base)/\($product)-\($version)-windows-x64.msi",
+                  sha256: "",
+                  size_bytes: 0,
+                  format: "msi",
+                  available: true
+                },
+                "linux-x64": {
+                  url: "\($cdn)/linux-x64",
+                  direct_url: "\($base)/\($product)-\($version)-linux-x64.deb",
+                  sha256: "",
+                  size_bytes: 0,
+                  format: "deb",
+                  available: true
+                }
+              }
+            }')
+
+          mkdir -p "manifests/$PRODUCT"
+          echo "$MANIFEST" > "manifests/$PRODUCT/latest.json"
+          echo "$MANIFEST" > "manifests/$PRODUCT/${VERSION}.json"
+          echo "Generated manifest for $PRODUCT v$VERSION"
+
+      - name: Update catalog.json
+        run: |
+          PRODUCT="${{ steps.payload.outputs.product }}"
+          VERSION="${{ steps.payload.outputs.version }}"
+          BUILD="${{ steps.payload.outputs.build }}"
+          RELEASED_AT="${{ steps.payload.outputs.released_at }}"
+
+          # Update the product entry in catalog.json
+          CATALOG=$(cat manifests/catalog.json)
+          UPDATED=$(echo "$CATALOG" | jq \
+            --arg product "$PRODUCT" \
+            --arg version "$VERSION" \
+            --argjson build "$BUILD" \
+            --arg released_at "$RELEASED_AT" \
+            --arg now "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            '.updated_at = $now
+             | .products[$product].version = $version
+             | .products[$product].build = $build
+             | .products[$product].released_at = $released_at')
+
+          echo "$UPDATED" > manifests/catalog.json
+
+      - name: Commit manifest updates
+        run: |
+          git config user.name "tanvrit-bot"
+          git config user.email "bot@tanvrit.com"
+          git add manifests/
+          git commit -m "release: ${{ steps.payload.outputs.product }} v${{ steps.payload.outputs.version }}"
+          git push
+
+      - name: Upload manifests to Cloudflare R2
+        run: |
+          PRODUCT="${{ steps.payload.outputs.product }}"
+          VERSION="${{ steps.payload.outputs.version }}"
+
+          # Upload product latest.json
+          npx wrangler r2 object put "tanvrit-artifacts/manifests/${PRODUCT}/latest.json" \
+            --file "manifests/${PRODUCT}/latest.json" \
+            --content-type "application/json"
+
+          # Upload versioned manifest
+          npx wrangler r2 object put "tanvrit-artifacts/manifests/${PRODUCT}/${VERSION}.json" \
+            --file "manifests/${PRODUCT}/${VERSION}.json" \
+            --content-type "application/json"
+
+          # Upload catalog
+          npx wrangler r2 object put "tanvrit-artifacts/catalog.json" \
+            --file "manifests/catalog.json" \
+            --content-type "application/json"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_R2_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        working-directory: worker

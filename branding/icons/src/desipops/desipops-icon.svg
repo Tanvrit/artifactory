@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    DesiPops — E-Commerce Marketplace Icon
+    Brand: Orange #EA580C → #FB923C
+    Safe zone: artwork within 880×880 circle centered at 512,512 (radius 440)
+    Concept: Flame/pop burst on orange field — energy of Indian market
+    Renderer: sharp
+  -->
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F97316"/>
+      <stop offset="100%" stop-color="#9A3412"/>
+    </linearGradient>
+    <linearGradient id="flame" x1="50%" y1="100%" x2="50%" y2="0%">
+      <stop offset="0%" stop-color="#FEF3C7"/>
+      <stop offset="40%" stop-color="#FCD34D"/>
+      <stop offset="100%" stop-color="#F97316" stop-opacity="0.6"/>
+    </linearGradient>
+    <linearGradient id="flame2" x1="50%" y1="100%" x2="50%" y2="0%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#FEF3C7" stop-opacity="0.7"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+
+  <!-- Outer flame / pop burst -->
+  <path d="M 512 720
+           C 380 680 280 580 300 440
+           C 320 340 400 300 440 280
+           C 420 340 460 380 480 360
+           C 460 300 500 240 512 200
+           C 524 240 564 300 544 360
+           C 564 380 604 340 584 280
+           C 624 300 704 340 724 440
+           C 744 580 644 680 512 720 Z"
+        fill="url(#flame)"/>
+
+  <!-- Inner flame -->
+  <path d="M 512 640
+           C 440 620 390 560 400 480
+           C 410 420 450 400 470 390
+           C 460 420 480 440 490 430
+           C 480 400 500 370 512 340
+           C 524 370 544 400 534 430
+           C 544 440 564 420 554 390
+           C 574 400 614 420 624 480
+           C 634 560 584 620 512 640 Z"
+        fill="url(#flame2)"/>
+
+  <!-- D letter mark at base -->
+  <path d="M 440 700 L 440 760 Q 440 780 460 780 L 520 780 Q 580 780 580 720 L 580 700 Z"
+        fill="white" opacity="0.2"/>
+</svg>

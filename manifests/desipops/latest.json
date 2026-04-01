@@ -1,0 +1,45 @@
+{
+  "product": "desipops",
+  "display_name": "DesiPops",
+  "tagline": "E-Commerce Marketplace",
+  "version": "0.0.77",
+  "build": 77,
+  "released_at": "2026-04-01T10:00:00Z",
+  "release_notes": "Latest DesiPops marketplace build.",
+  "release_notes_hi": "DesiPops मार्केटप्लेस का नवीनतम संस्करण।",
+  "min_required_version": "0.0.1",
+  "platforms": {
+    "macos-arm64": {
+      "url": "https://artifacts.tanvrit.com/desipops/0.0.77/macos-arm64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/desipops-v0.0.77/desipops-0.0.77-macos-arm64.dmg",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "dmg",
+      "available": false
+    },
+    "macos-x64": {
+      "url": "https://artifacts.tanvrit.com/desipops/0.0.77/macos-x64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/desipops-v0.0.77/desipops-0.0.77-macos-x64.dmg",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "dmg",
+      "available": false
+    },
+    "windows-x64": {
+      "url": "https://artifacts.tanvrit.com/desipops/0.0.77/windows-x64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/desipops-v0.0.77/desipops-0.0.77-windows-x64.msi",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "msi",
+      "available": false
+    },
+    "linux-x64": {
+      "url": "https://artifacts.tanvrit.com/desipops/0.0.77/linux-x64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/desipops-v0.0.77/desipops-0.0.77-linux-x64.deb",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "deb",
+      "available": false
+    }
+  }
+}

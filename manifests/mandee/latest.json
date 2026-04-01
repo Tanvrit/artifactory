@@ -1,0 +1,45 @@
+{
+  "product": "mandee",
+  "display_name": "Mandee",
+  "tagline": "Multi-Location Business Management",
+  "version": "0.1.6",
+  "build": 106,
+  "released_at": "2026-04-01T10:00:00Z",
+  "release_notes": "Mandee business management platform update.",
+  "release_notes_hi": "Mandee बिज़नेस मैनेजमेंट प्लेटफॉर्म अपडेट।",
+  "min_required_version": "0.1.0",
+  "platforms": {
+    "macos-arm64": {
+      "url": "https://artifacts.tanvrit.com/mandee/0.1.6/macos-arm64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/mandee-v0.1.6/mandee-0.1.6-macos-arm64.dmg",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "dmg",
+      "available": false
+    },
+    "macos-x64": {
+      "url": "https://artifacts.tanvrit.com/mandee/0.1.6/macos-x64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/mandee-v0.1.6/mandee-0.1.6-macos-x64.dmg",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "dmg",
+      "available": false
+    },
+    "windows-x64": {
+      "url": "https://artifacts.tanvrit.com/mandee/0.1.6/windows-x64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/mandee-v0.1.6/mandee-0.1.6-windows-x64.msi",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "msi",
+      "available": false
+    },
+    "linux-x64": {
+      "url": "https://artifacts.tanvrit.com/mandee/0.1.6/linux-x64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/mandee-v0.1.6/mandee-0.1.6-linux-x64.deb",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "deb",
+      "available": false
+    }
+  }
+}

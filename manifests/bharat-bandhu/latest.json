@@ -1,0 +1,21 @@
+{
+  "product": "bharat-bandhu",
+  "display_name": "Bharat Bandhu",
+  "tagline": "Community Commerce",
+  "version": "1.0.0",
+  "build": 1,
+  "released_at": "2026-04-01T10:00:00Z",
+  "release_notes": "Initial release of Bharat Bandhu.",
+  "release_notes_hi": "भारत बंधु का प्रारंभिक संस्करण।",
+  "min_required_version": "1.0.0",
+  "platforms": {
+    "android": {
+      "url": "https://play.google.com/store/apps/details?id=com.tanvrit.bharat",
+      "direct_url": "",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "apk",
+      "available": false
+    }
+  }
+}

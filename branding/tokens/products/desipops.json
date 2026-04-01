@@ -1,0 +1,25 @@
+{
+  "product": {
+    "desipops": {
+      "name": "DesiPops",
+      "slug": "desipops",
+      "tagline": "E-Commerce Marketplace",
+      "package": "com.desipops",
+      "color": {
+        "brand":          { "value": "#EA580C", "type": "color" },
+        "brandGradient":  { "value": "#FB923C", "type": "color" },
+        "brandLight":     { "value": "#FFEDD5", "type": "color" },
+        "brandDark":      { "value": "#9A3412", "type": "color" },
+        "brandSurface":   { "value": "#FFF7ED", "type": "color" },
+        "onBrand":        { "value": "#FFFFFF", "type": "color" }
+      },
+      "icon": {
+        "src": "branding/icons/src/desipops/desipops-icon.svg",
+        "safezone_px": 72,
+        "viewbox": "0 0 1024 1024",
+        "renderer": "sharp",
+        "platforms": ["android", "ios", "macos", "windows", "linux", "web"]
+      }
+    }
+  }
+}

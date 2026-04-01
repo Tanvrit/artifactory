@@ -1,0 +1,25 @@
+{
+  "product": {
+    "mandee": {
+      "name": "Mandee",
+      "slug": "mandee",
+      "tagline": "Multi-Location Business Management",
+      "package": "business.mandee.ai",
+      "color": {
+        "brand":          { "value": "#7C3AED", "type": "color" },
+        "brandGradient":  { "value": "#A78BFA", "type": "color" },
+        "brandLight":     { "value": "#EDE9FE", "type": "color" },
+        "brandDark":      { "value": "#4C1D95", "type": "color" },
+        "brandSurface":   { "value": "#F5F3FF", "type": "color" },
+        "onBrand":        { "value": "#FFFFFF", "type": "color" }
+      },
+      "icon": {
+        "src": "branding/icons/src/mandee/mandee-icon.svg",
+        "safezone_px": 72,
+        "viewbox": "0 0 1024 1024",
+        "renderer": "sharp",
+        "platforms": ["android", "ios", "macos", "windows", "linux", "web"]
+      }
+    }
+  }
+}

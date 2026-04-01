@@ -1,0 +1,14 @@
+# Brand assets — restricted to brand lead + CTO
+/branding/icons/src/        @viveksingh
+/branding/tokens/base.json  @viveksingh
+/branding/tokens/semantic.json @viveksingh
+/branding/tokens/products/  @viveksingh
+
+# Generated outputs — bot only, humans should not edit
+/branding/tokens/generated/ @tanvrit-bot
+/branding/icons/dist/       @tanvrit-bot
+
+# Pipeline scripts — engineering
+/scripts/                   @viveksingh
+/.github/                   @viveksingh
+/worker/                    @viveksingh

@@ -1,0 +1,51 @@
+name: Generate Design Tokens
+
+on:
+  push:
+    paths:
+      - 'branding/tokens/base.json'
+      - 'branding/tokens/semantic.json'
+      - 'branding/tokens/products/**'
+      - 'scripts/generate-tokens.js'
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  tokens:
+    name: Generate Platform Token Outputs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: scripts/package.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: scripts
+
+      - name: Generate tokens
+        run: node scripts/generate-tokens.js
+
+      - name: Commit generated outputs
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(tokens): regenerate platform outputs [skip ci]"
+          file_pattern: "branding/tokens/generated/**"
+          commit_user_name: "tanvrit-bot"
+          commit_user_email: "bot@tanvrit.com"
+
+      - name: Publish @tanvrit/tokens to GitHub Packages
+        if: github.ref == 'refs/heads/main'
+        run: |
+          cd scripts
+          VERSION=$(node -e "const t=require('./package.json'); console.log(t.version)")
+          npm publish --registry https://npm.pkg.github.com
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,38 @@
+{
+  "color": {
+    "background": {
+      "default":   { "value": "{color.green.900}",    "type": "color", "description": "Page background" },
+      "paper":     { "value": "{color.green.800}",    "type": "color", "description": "Card/surface background" },
+      "elevated":  { "value": "{color.green.700}",    "type": "color", "description": "Elevated surface" },
+      "overlay":   { "value": "{color.green.600}",    "type": "color", "description": "Overlay / modal backdrop" }
+    },
+    "brand": {
+      "primary":      { "value": "{color.green.500}",   "type": "color", "description": "Tanvrit primary brand — Forest Green" },
+      "primaryLight": { "value": "{color.green.300}",   "type": "color" },
+      "primaryDark":  { "value": "{color.green.700}",   "type": "color" },
+      "accent":       { "value": "{color.saffron.400}", "type": "color", "description": "Tanvrit accent — Saffron Gold" },
+      "accentLight":  { "value": "{color.saffron.200}", "type": "color" },
+      "accentDark":   { "value": "{color.saffron.600}", "type": "color" }
+    },
+    "text": {
+      "primary":   { "value": "{color.green.50}",     "type": "color" },
+      "secondary": { "value": "{color.green.100}",    "type": "color" },
+      "tertiary":  { "value": "{color.green.200}",    "type": "color" },
+      "disabled":  { "value": "{color.neutral.600}",  "type": "color" },
+      "inverse":   { "value": "{color.neutral.950}",  "type": "color" },
+      "accent":    { "value": "{color.saffron.400}",  "type": "color" }
+    },
+    "border": {
+      "default":  { "value": "{color.green.700}",    "type": "color" },
+      "subtle":   { "value": "{color.green.800}",    "type": "color" },
+      "strong":   { "value": "{color.green.500}",    "type": "color" },
+      "accent":   { "value": "{color.saffron.500}",  "type": "color" }
+    },
+    "status": {
+      "success":   { "value": "{color.green.300}",  "type": "color" },
+      "warning":   { "value": "{color.saffron.400}", "type": "color" },
+      "error":     { "value": "#EF4444",             "type": "color" },
+      "info":      { "value": "{color.cyan.500}",    "type": "color" }
+    }
+  }
+}

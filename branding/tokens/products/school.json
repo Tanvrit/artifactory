@@ -1,0 +1,25 @@
+{
+  "product": {
+    "school": {
+      "name": "School",
+      "slug": "school",
+      "tagline": "Education Management",
+      "package": "com.school",
+      "color": {
+        "brand":          { "value": "#0891B2", "type": "color" },
+        "brandGradient":  { "value": "#22D3EE", "type": "color" },
+        "brandLight":     { "value": "#CFFAFE", "type": "color" },
+        "brandDark":      { "value": "#164E63", "type": "color" },
+        "brandSurface":   { "value": "#ECFEFF", "type": "color" },
+        "onBrand":        { "value": "#FFFFFF", "type": "color" }
+      },
+      "icon": {
+        "src": "branding/icons/src/school/school-icon.svg",
+        "safezone_px": 72,
+        "viewbox": "0 0 1024 1024",
+        "renderer": "sharp",
+        "platforms": ["android", "ios", "macos", "windows", "linux", "web"]
+      }
+    }
+  }
+}

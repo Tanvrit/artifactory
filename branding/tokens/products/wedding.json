@@ -1,0 +1,26 @@
+{
+  "product": {
+    "wedding": {
+      "name": "Friendly Wedding",
+      "slug": "wedding",
+      "tagline": "Multi-Event Guest Coordination",
+      "package": "com.friendly.wedding",
+      "color": {
+        "brand":          { "value": "#F8FAFC", "type": "color" },
+        "brandGlass":     { "value": "rgba(255,255,255,0.6)", "type": "color", "description": "Liquid Glass primary" },
+        "brandDark":      { "value": "#0F172A", "type": "color" },
+        "brandSurface":   { "value": "rgba(255,255,255,0.15)", "type": "color" },
+        "accentGold":     { "value": "#F59E0B", "type": "color", "description": "Wedding gold accent" },
+        "accentRose":     { "value": "#FB7185", "type": "color", "description": "Wedding rose accent" },
+        "onBrand":        { "value": "#1E293B", "type": "color" }
+      },
+      "icon": {
+        "src": "branding/icons/src/wedding/wedding-icon.svg",
+        "safezone_px": 72,
+        "viewbox": "0 0 1024 1024",
+        "renderer": "inkscape",
+        "platforms": ["android", "ios", "web"]
+      }
+    }
+  }
+}

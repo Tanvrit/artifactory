@@ -1,0 +1,42 @@
+{
+  "name": "@tanvrit/tokens",
+  "version": "1.0.0",
+  "description": "Tanvrit Design Tokens — CSS, TypeScript, Kotlin, Swift",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "private": false,
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tanvrit/artifactory.git"
+  },
+  "scripts": {
+    "generate:icons": "node generate-icons.js --all",
+    "generate:tokens": "node generate-tokens.js",
+    "verify": "node verify-assets.js",
+    "sync": "node sync-to-apps.js",
+    "bump": "bash bump-version.sh"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "sharp": "^0.33.0",
+    "svgo": "^3.0.0",
+    "png-to-ico": "^2.1.8",
+    "style-dictionary": "^4.0.0",
+    "jimp": "^0.22.12"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "../branding/tokens/generated/tokens.css",
+    "../branding/tokens/generated/tokens.ts",
+    "../branding/tokens/generated/TanvritTokens.kt",
+    "../branding/tokens/generated/TanvritTokens.swift"
+  ]
+}

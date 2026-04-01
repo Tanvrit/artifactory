@@ -1,0 +1,27 @@
+{
+  "product": {
+    "swyft": {
+      "name": "Swyft",
+      "slug": "swyft",
+      "tagline": "Ride-Sharing & Delivery",
+      "package": "com.tanvrit.swyft",
+      "color": {
+        "brand":          { "value": "#D97706", "type": "color" },
+        "brandGradient":  { "value": "#FBBF24", "type": "color" },
+        "brandLight":     { "value": "#FEF3C7", "type": "color" },
+        "brandDark":      { "value": "#92400E", "type": "color" },
+        "brandSurface":   { "value": "#FFFBEB", "type": "color" },
+        "onBrand":        { "value": "#FFFFFF", "type": "color" },
+        "uiPrimary":      { "value": "#00FFC8", "type": "color", "description": "In-app map UI color (Electric Teal)" },
+        "uiSurface":      { "value": "#0D1117", "type": "color", "description": "In-app dark surface" }
+      },
+      "icon": {
+        "src": "branding/icons/src/swyft/swyft-icon.svg",
+        "safezone_px": 72,
+        "viewbox": "0 0 1024 1024",
+        "renderer": "sharp",
+        "platforms": ["android", "ios", "macos", "windows", "linux", "web"]
+      }
+    }
+  }
+}

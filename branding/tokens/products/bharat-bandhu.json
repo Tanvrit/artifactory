@@ -1,0 +1,25 @@
+{
+  "product": {
+    "bharat-bandhu": {
+      "name": "Bharat Bandhu",
+      "slug": "bharat-bandhu",
+      "tagline": "Community Commerce",
+      "package": "com.tanvrit.bharat",
+      "color": {
+        "brand":          { "value": "#BE185D", "type": "color" },
+        "brandGradient":  { "value": "#EC4899", "type": "color" },
+        "brandLight":     { "value": "#FCE7F3", "type": "color" },
+        "brandDark":      { "value": "#831843", "type": "color" },
+        "brandSurface":   { "value": "#FDF2F8", "type": "color" },
+        "onBrand":        { "value": "#FFFFFF", "type": "color" }
+      },
+      "icon": {
+        "src": "branding/icons/src/bharat-bandhu/bharat-bandhu-icon.svg",
+        "safezone_px": 72,
+        "viewbox": "0 0 1024 1024",
+        "renderer": "sharp",
+        "platforms": ["android", "ios", "web"]
+      }
+    }
+  }
+}

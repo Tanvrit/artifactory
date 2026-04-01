@@ -1,0 +1,29 @@
+{
+  "product": "control",
+  "display_name": "Tanvrit Control",
+  "tagline": "Mission Control for Tanvrit Infrastructure",
+  "version": "1.0.0",
+  "build": 1,
+  "released_at": "2026-04-01T10:00:00Z",
+  "release_notes": "Initial release of Tanvrit Control macOS app.",
+  "release_notes_hi": "Tanvrit Control macOS ऐप का प्रारंभिक संस्करण।",
+  "min_required_version": "1.0.0",
+  "platforms": {
+    "macos-universal": {
+      "url": "https://artifacts.tanvrit.com/control/1.0.0/macos-universal",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/control-v1.0.0/control-1.0.0-macos-universal.dmg",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "dmg",
+      "available": false
+    },
+    "macos-arm64": {
+      "url": "https://artifacts.tanvrit.com/control/1.0.0/macos-arm64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/control-v1.0.0/control-1.0.0-macos-arm64.dmg",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "dmg",
+      "available": false
+    }
+  }
+}

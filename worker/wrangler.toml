@@ -1,0 +1,16 @@
+name = "tanvrit-artifacts"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[[routes]]
+pattern = "artifacts.tanvrit.com/*"
+zone_name = "tanvrit.com"
+
+[[r2_buckets]]
+binding = "ARTIFACTS"
+bucket_name = "tanvrit-artifacts"
+
+[vars]
+GITHUB_ORG = "tanvrit"
+GITHUB_REPO = "artifactory"
+ARTIFACTS_BASE_URL = "https://artifacts.tanvrit.com"

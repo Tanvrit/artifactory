@@ -1,0 +1,88 @@
+name: Export Icons
+
+on:
+  push:
+    paths:
+      - 'branding/icons/src/**'
+      - 'scripts/generate-icons.js'
+      - 'scripts/package.json'
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      product:
+        description: 'Product slug to regenerate (leave blank for all)'
+        required: false
+        default: ''
+
+jobs:
+  generate:
+    name: Generate Platform Icons
+    runs-on: macos-latest  # macOS for iconutil (.icns generation)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: scripts/package.json
+
+      - name: Install Inkscape (for Wedding icon SVG filters)
+        run: brew install --cask inkscape
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: scripts
+
+      - name: Generate icons
+        run: |
+          PRODUCT="${{ github.event.inputs.product }}"
+          if [ -n "$PRODUCT" ]; then
+            node scripts/generate-icons.js --product "$PRODUCT"
+          else
+            node scripts/generate-icons.js --all
+          fi
+
+      - name: Verify generated assets
+        run: node scripts/verify-assets.js
+
+      - name: Commit generated icons
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(icons): regenerate dist assets [skip ci]"
+          file_pattern: "branding/icons/dist/**"
+          commit_user_name: "tanvrit-bot"
+          commit_user_email: "bot@tanvrit.com"
+
+      - name: Upload to Cloudflare R2
+        if: github.ref == 'refs/heads/main'
+        run: |
+          # Sync all branding dist to R2 under /brand/ prefix
+          find branding/icons/dist -type f | while read file; do
+            key="brand/${file#branding/icons/dist/}"
+            npx wrangler r2 object put "tanvrit-artifacts/$key" \
+              --file "$file" \
+              --content-type "$(file --mime-type -b $file)"
+          done
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_R2_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        working-directory: worker
+
+      - name: Notify product repos
+        if: github.ref == 'refs/heads/main'
+        run: |
+          # Dispatch to each product repo to pick up new icons
+          for repo in "tanvrit/friendly" "tanvrit/mandee" "tanvrit/school" "tanvrit/swyft"; do
+            gh api repos/$repo/dispatches \
+              --method POST \
+              --field event_type=branding-updated \
+              --field client_payload='{"branding_sha":"${{ github.sha }}"}'
+          done
+        env:
+          GH_TOKEN: ${{ secrets.ARTIFACTS_REPO_TOKEN }}

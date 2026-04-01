@@ -1,0 +1,29 @@
+{
+  "product": "wedding",
+  "display_name": "Friendly Wedding",
+  "tagline": "Multi-Event Guest Coordination",
+  "version": "1.0.0",
+  "build": 1,
+  "released_at": "2026-04-01T10:00:00Z",
+  "release_notes": "Initial release of Friendly Wedding app.",
+  "release_notes_hi": "Friendly Wedding ऐप का प्रारंभिक संस्करण।",
+  "min_required_version": "1.0.0",
+  "platforms": {
+    "macos-arm64": {
+      "url": "https://artifacts.tanvrit.com/wedding/1.0.0/macos-arm64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/wedding-v1.0.0/wedding-1.0.0-macos-arm64.dmg",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "dmg",
+      "available": false
+    },
+    "web": {
+      "url": "https://friendly.wedding",
+      "direct_url": "https://friendly.wedding",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "web",
+      "available": true
+    }
+  }
+}

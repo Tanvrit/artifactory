@@ -1,0 +1,305 @@
+# ─────────────────────────────────────────────────────────────
+# Reusable Workflow: Build Desktop Releases
+# Called by each product repo's release-desktop.yml
+#
+# Caller example:
+#   jobs:
+#     release:
+#       uses: tanvrit/artifactory/.github/workflows/release-desktop-template.yml@main
+#       with:
+#         product: friendly
+#         version: 1.2.0
+#         gradle_module: composeApp
+#         main_class: com.friendly.MainKt
+#         package_name: com.friendly
+#         bundle_id: com.tanvrit.friendly
+#         windows_upgrade_uuid: F47AC10B-58CC-4372-A567-0E02B2C3D479
+#       secrets: inherit
+# ─────────────────────────────────────────────────────────────
+
+name: Desktop Release (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      product:
+        description: 'Product slug (friendly, mandee, swyft, etc.)'
+        type: string
+        required: true
+      version:
+        description: 'Version string (e.g. 1.2.0)'
+        type: string
+        required: true
+      gradle_module:
+        description: 'Gradle module for desktop app (e.g. composeApp or app)'
+        type: string
+        required: true
+        default: 'composeApp'
+      main_class:
+        description: 'Main class for the desktop entry point'
+        type: string
+        required: true
+      package_name:
+        description: 'Package name (e.g. com.friendly)'
+        type: string
+        required: true
+      bundle_id:
+        description: 'macOS bundle ID (e.g. com.tanvrit.friendly)'
+        type: string
+        required: true
+      windows_upgrade_uuid:
+        description: 'Stable Windows MSI upgrade UUID (generate once, never change)'
+        type: string
+        required: false
+        default: ''
+    secrets:
+      APPLE_CERTIFICATE:
+        description: 'Base64-encoded Apple Developer certificate (.p12)'
+        required: false
+      APPLE_CERTIFICATE_PASSWORD:
+        required: false
+      APPLE_NOTARIZATION_APPLE_ID:
+        required: false
+      APPLE_NOTARIZATION_PASSWORD:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
+      ARTIFACTS_REPO_TOKEN:
+        description: 'PAT with write access to tanvrit/artifactory'
+        required: true
+      CF_R2_TOKEN:
+        required: true
+      CF_ACCOUNT_ID:
+        required: true
+
+jobs:
+
+  # ── macOS Apple Silicon ──────────────────────────────────────
+  build-macos-arm64:
+    name: macOS arm64 (Apple Silicon)
+    runs-on: macos-14
+    outputs:
+      artifact_name: ${{ steps.rename.outputs.artifact_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch branding icons from artifactory
+        uses: actions/checkout@v4
+        with:
+          repository: tanvrit/artifactory
+          path: _branding
+          token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+          sparse-checkout: branding/icons/dist/${{ inputs.product }}
+
+      - name: Copy icons to expected path
+        run: |
+          mkdir -p ${{ inputs.gradle_module }}/icons
+          ICON_DIR="_branding/branding/icons/dist/${{ inputs.product }}"
+          [ -f "$ICON_DIR/macos/${{ inputs.product }}.icns" ] && \
+            cp "$ICON_DIR/macos/${{ inputs.product }}.icns" ${{ inputs.gradle_module }}/icons/
+          [ -f "$ICON_DIR/windows/${{ inputs.product }}.ico" ] && \
+            cp "$ICON_DIR/windows/${{ inputs.product }}.ico" ${{ inputs.gradle_module }}/icons/
+          [ -f "$ICON_DIR/linux/${{ inputs.product }}-256.png" ] && \
+            cp "$ICON_DIR/linux/${{ inputs.product }}-256.png" ${{ inputs.gradle_module }}/icons/
+          ls -la ${{ inputs.gradle_module }}/icons/
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-encryption-key: ${{ secrets.GRADLE_CACHE_KEY || '' }}
+
+      - name: Build macOS DMG (arm64)
+        run: |
+          ./gradlew :${{ inputs.gradle_module }}:packageDmg \
+            -PappVersion=${{ inputs.version }} \
+            --no-daemon
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Rename artifact
+        id: rename
+        run: |
+          VERSION="${{ inputs.version }}"
+          PRODUCT="${{ inputs.product }}"
+          DMG_PATH=$(find ${{ inputs.gradle_module }}/build/compose/binaries -name "*.dmg" | head -1)
+          ARTIFACT="${PRODUCT}-${VERSION}-macos-arm64.dmg"
+          mv "$DMG_PATH" "$ARTIFACT"
+          shasum -a 256 "$ARTIFACT" > "${ARTIFACT}.sha256"
+          echo "artifact_name=$ARTIFACT" >> $GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: |
+            ${{ inputs.product }}-${{ inputs.version }}-macos-arm64.dmg
+            ${{ inputs.product }}-${{ inputs.version }}-macos-arm64.dmg.sha256
+          retention-days: 7
+
+  # ── macOS Intel ─────────────────────────────────────────────
+  build-macos-x64:
+    name: macOS x64 (Intel)
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: tanvrit/artifactory
+          path: _branding
+          token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+          sparse-checkout: branding/icons/dist/${{ inputs.product }}
+      - name: Copy icons
+        run: |
+          mkdir -p ${{ inputs.gradle_module }}/icons
+          cp "_branding/branding/icons/dist/${{ inputs.product }}/macos/${{ inputs.product }}.icns" \
+             "${{ inputs.gradle_module }}/icons/" 2>/dev/null || true
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build macOS DMG (x64)
+        run: ./gradlew :${{ inputs.gradle_module }}:packageDmg -PappVersion=${{ inputs.version }} --no-daemon
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Rename artifact
+        run: |
+          DMG=$(find ${{ inputs.gradle_module }}/build/compose/binaries -name "*.dmg" | head -1)
+          ARTIFACT="${{ inputs.product }}-${{ inputs.version }}-macos-x64.dmg"
+          mv "$DMG" "$ARTIFACT"
+          shasum -a 256 "$ARTIFACT" > "${ARTIFACT}.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-x64
+          path: |
+            ${{ inputs.product }}-${{ inputs.version }}-macos-x64.dmg
+            ${{ inputs.product }}-${{ inputs.version }}-macos-x64.dmg.sha256
+          retention-days: 7
+
+  # ── Windows ──────────────────────────────────────────────────
+  build-windows:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: tanvrit/artifactory
+          path: _branding
+          token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+          sparse-checkout: branding/icons/dist/${{ inputs.product }}
+      - name: Copy icons
+        shell: bash
+        run: |
+          mkdir -p ${{ inputs.gradle_module }}/icons
+          cp "_branding/branding/icons/dist/${{ inputs.product }}/windows/${{ inputs.product }}.ico" \
+             "${{ inputs.gradle_module }}/icons/" 2>/dev/null || true
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build Windows MSI
+        run: ./gradlew :${{ inputs.gradle_module }}:packageMsi -PappVersion=${{ inputs.version }} --no-daemon
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Rename artifact
+        shell: bash
+        run: |
+          MSI=$(find ${{ inputs.gradle_module }}/build/compose/binaries -name "*.msi" | head -1)
+          ARTIFACT="${{ inputs.product }}-${{ inputs.version }}-windows-x64.msi"
+          mv "$MSI" "$ARTIFACT"
+          sha256sum "$ARTIFACT" > "${ARTIFACT}.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: |
+            ${{ inputs.product }}-${{ inputs.version }}-windows-x64.msi
+            ${{ inputs.product }}-${{ inputs.version }}-windows-x64.msi.sha256
+          retention-days: 7
+
+  # ── Linux ────────────────────────────────────────────────────
+  build-linux:
+    name: Linux x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: tanvrit/artifactory
+          path: _branding
+          token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+          sparse-checkout: branding/icons/dist/${{ inputs.product }}
+      - name: Copy icons
+        run: |
+          mkdir -p ${{ inputs.gradle_module }}/icons
+          cp "_branding/branding/icons/dist/${{ inputs.product }}/linux/${{ inputs.product }}-256.png" \
+             "${{ inputs.gradle_module }}/icons/" 2>/dev/null || true
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Linux packaging tools
+        run: sudo apt-get install -y fakeroot binutils
+      - name: Build Linux DEB
+        run: ./gradlew :${{ inputs.gradle_module }}:packageDeb -PappVersion=${{ inputs.version }} --no-daemon
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Rename artifact
+        run: |
+          DEB=$(find ${{ inputs.gradle_module }}/build/compose/binaries -name "*.deb" | head -1)
+          ARTIFACT="${{ inputs.product }}-${{ inputs.version }}-linux-x64.deb"
+          mv "$DEB" "$ARTIFACT"
+          sha256sum "$ARTIFACT" > "${ARTIFACT}.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: |
+            ${{ inputs.product }}-${{ inputs.version }}-linux-x64.deb
+            ${{ inputs.product }}-${{ inputs.version }}-linux-x64.deb.sha256
+          retention-days: 7
+
+  # ── Publish to GitHub Releases + update manifest ─────────────
+  publish:
+    name: Publish Release
+    needs: [build-macos-arm64, build-macos-x64, build-windows, build-linux]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create GitHub Release in tanvrit/artifactory
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: tanvrit/artifactory
+          tag_name: ${{ inputs.product }}-v${{ inputs.version }}
+          name: "${{ inputs.product }} v${{ inputs.version }}"
+          draft: false
+          prerelease: false
+          files: |
+            ${{ inputs.product }}-${{ inputs.version }}-macos-arm64.dmg
+            ${{ inputs.product }}-${{ inputs.version }}-macos-arm64.dmg.sha256
+            ${{ inputs.product }}-${{ inputs.version }}-macos-x64.dmg
+            ${{ inputs.product }}-${{ inputs.version }}-macos-x64.dmg.sha256
+            ${{ inputs.product }}-${{ inputs.version }}-windows-x64.msi
+            ${{ inputs.product }}-${{ inputs.version }}-windows-x64.msi.sha256
+            ${{ inputs.product }}-${{ inputs.version }}-linux-x64.deb
+            ${{ inputs.product }}-${{ inputs.version }}-linux-x64.deb.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+
+      - name: Dispatch manifest update
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+          repository: tanvrit/artifactory
+          event-type: update-manifest
+          client-payload: |
+            {
+              "product": "${{ inputs.product }}",
+              "version": "${{ inputs.version }}",
+              "build": "${{ github.run_number }}",
+              "released_at": "${{ github.event.head_commit.timestamp || '' }}"
+            }
