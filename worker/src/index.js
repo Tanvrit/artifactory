@@ -3,18 +3,22 @@
  * artifacts.tanvrit.com
  *
  * Routes:
- *   GET /catalog.json                           → master catalog (R2)
- *   GET /{product}/latest.json                  → latest manifest (R2)
- *   GET /{product}/{version}/latest.json        → versioned manifest (R2)
+ *   GET /catalog.json                           → master catalog (R2 or GitHub raw fallback)
+ *   GET /{product}/latest.json                  → latest manifest (R2 or GitHub raw fallback)
+ *   GET /{product}/{version}/latest.json        → versioned manifest (R2 or GitHub raw fallback)
  *   GET /{product}/latest/{platform}            → redirect to latest binary
  *   GET /{product}/{version}/{platform}         → redirect to versioned binary
- *   GET /brand/{product}/{asset}                → branding assets (R2)
- *   GET /brand/press-kit.zip                    → press kit (R2)
+ *   GET /brand/{product}/{asset}                → branding assets (R2 or GitHub raw)
+ *   GET /brand/press-kit.zip                    → press kit (R2 or GitHub raw)
  *
  * Storage:
- *   R2 bucket "tanvrit-artifacts" stores manifests + branding
- *   GitHub Releases stores the actual binaries (free bandwidth)
+ *   Phase 1 (now): Manifests served directly from GitHub raw content (no R2 needed)
+ *   Phase 2 (after R2 enabled): Uncomment [[r2_buckets]] in wrangler.toml + re-deploy
+ *   GitHub Releases stores the actual binaries (free bandwidth always)
  */
+
+// GitHub raw content base for manifest fallback (when R2 not yet enabled)
+const GITHUB_RAW = 'https://raw.githubusercontent.com/tanvrit/artifactory/main';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -69,14 +73,14 @@ async function routeRequest(path, env, ctx) {
 
   // --- /catalog.json
   if (path === '/catalog.json') {
-    return serveFromR2(env.ARTIFACTS, 'catalog.json', CACHE_CATALOG, 'application/json');
+    return serveFromR2(env.ARTIFACTS, 'manifests/catalog.json', CACHE_CATALOG, 'application/json');
   }
 
   // --- /brand/{product}/{asset...} or /brand/press-kit.zip
   if (segments[0] === 'brand') {
     const assetPath = segments.slice(1).join('/');
     if (!assetPath) return jsonError(400, 'Missing brand asset path');
-    const r2Key = `brand/${assetPath}`;
+    const r2Key = `branding/${assetPath}`;
     return serveFromR2(env.ARTIFACTS, r2Key, CACHE_BRANDING);
   }
 
@@ -124,19 +128,23 @@ async function resolveAndRedirect(bucket, product, versionOrLatest, platform, ct
     return jsonError(400, `Unknown platform: ${platform}. Valid: ${Object.keys(PLATFORM_FILE_MAP).join(', ')}`);
   }
 
-  // Load the manifest to get the direct_url
+  // Load manifest — from R2 if available, otherwise GitHub raw
   const manifestKey = versionOrLatest === 'latest'
     ? `manifests/${product}/latest.json`
     : `manifests/${product}/${versionOrLatest}.json`;
 
-  const obj = await bucket.get(manifestKey);
-  if (!obj) {
-    return jsonError(404, `Manifest not found for ${product} ${versionOrLatest}`);
+  let manifest;
+  if (bucket) {
+    const obj = await bucket.get(manifestKey);
+    if (!obj) return jsonError(404, `Manifest not found for ${product} ${versionOrLatest}`);
+    manifest = await obj.json();
+  } else {
+    const res = await fetch(`${GITHUB_RAW}/${manifestKey}`);
+    if (!res.ok) return jsonError(404, `Manifest not found for ${product} ${versionOrLatest}`);
+    manifest = await res.json();
   }
 
-  const manifest = await obj.json();
   const platformData = manifest?.platforms?.[platform];
-
   if (!platformData) {
     return jsonError(404, `Platform ${platform} not available for ${product} ${versionOrLatest}`);
   }
@@ -149,37 +157,42 @@ async function resolveAndRedirect(bucket, product, versionOrLatest, platform, ct
 }
 
 async function serveFromR2(bucket, key, cacheControl, contentType) {
-  const object = await bucket.get(key);
-  if (!object) {
-    return jsonError(404, `Not found: ${key}`);
+  let body, etag;
+
+  if (bucket) {
+    // R2 path (Phase 2 — after R2 enabled)
+    const object = await bucket.get(key);
+    if (!object) return jsonError(404, `Not found: ${key}`);
+    body  = object.body;
+    etag  = object.httpEtag;
+  } else {
+    // GitHub raw fallback (Phase 1 — no R2)
+    const res = await fetch(`${GITHUB_RAW}/${key}`);
+    if (!res.ok) return jsonError(404, `Not found: ${key}`);
+    body  = res.body;
+    etag  = res.headers.get('etag') || '';
   }
 
   const headers = new Headers({
     ...CORS_HEADERS,
     'Cache-Control': cacheControl,
-    'ETag': object.httpEtag,
   });
+  if (etag) headers.set('ETag', etag);
 
   if (contentType) {
     headers.set('Content-Type', contentType);
   } else {
-    // Infer from extension
     const ext = key.split('.').pop()?.toLowerCase();
     const mimeMap = {
-      svg: 'image/svg+xml',
-      png: 'image/png',
-      ico: 'image/x-icon',
-      zip: 'application/zip',
-      json: 'application/json',
-      icns: 'image/x-icns',
-      dmg: 'application/x-apple-diskimage',
-      msi: 'application/x-msi',
+      svg: 'image/svg+xml', png: 'image/png', ico: 'image/x-icon',
+      zip: 'application/zip', json: 'application/json', icns: 'image/x-icns',
+      dmg: 'application/x-apple-diskimage', msi: 'application/x-msi',
       deb: 'application/vnd.debian.binary-package',
     };
     headers.set('Content-Type', mimeMap[ext] || 'application/octet-stream');
   }
 
-  return new Response(object.body, { status: 200, headers });
+  return new Response(body, { status: 200, headers });
 }
 
 function jsonError(status, message) {

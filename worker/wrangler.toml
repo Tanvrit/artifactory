@@ -6,9 +6,10 @@ compatibility_date = "2025-01-01"
 pattern = "artifacts.tanvrit.com/*"
 zone_name = "tanvrit.com"
 
-[[r2_buckets]]
-binding = "ARTIFACTS"
-bucket_name = "tanvrit-artifacts"
+# R2 binding — uncomment after enabling R2 in Cloudflare Dashboard
+# [[r2_buckets]]
+# binding = "ARTIFACTS"
+# bucket_name = "tanvrit-artifacts"
 
 [vars]
 GITHUB_ORG = "tanvrit"
