@@ -71,6 +71,11 @@ async function routeRequest(path, env, ctx) {
   // Strip leading slash and split segments
   const segments = path.replace(/^\//, '').split('/');
 
+  // --- / (root) — redirect to catalog
+  if (path === '/' || path === '') {
+    return Response.redirect('https://artifacts.tanvrit.com/catalog.json', 302);
+  }
+
   // --- /catalog.json
   if (path === '/catalog.json') {
     return serveFromR2(env.ARTIFACTS, 'manifests/catalog.json', CACHE_CATALOG, 'application/json');
