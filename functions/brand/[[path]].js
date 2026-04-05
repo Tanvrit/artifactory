@@ -2,28 +2,70 @@
  * GET /brand/{...path}
  * Serves branding assets from R2 (if configured) or GitHub raw.
  *
- * Special handling for icon shorthand:
- *   /brand/icons/{product}.svg  →  tries branding/icons/src/{product}/{product}-icon.svg
- *   if not found in R2, falls back to GitHub raw at the same path.
- *
- * Also serves Tanvrit mark/wordmark from branding/icons/src/tanvrit/:
- *   /brand/icons/tanvrit-mark.svg      →  branding/icons/src/tanvrit/tanvrit-mark.svg
- *   /brand/icons/tanvrit-wordmark.svg  →  branding/icons/src/tanvrit/tanvrit-wordmark.svg
+ * Icon shorthand:
+ *   /brand/icons/{product}.svg  →  branding/icons/src/{product}/{product}-icon.svg
+ *   /brand/icons/tanvrit-mark.svg  →  branding/icons/src/tanvrit/tanvrit-mark.svg
  */
 
-import {
-  GITHUB_RAW,
-  CORS_HEADERS,
-  VALID_PRODUCTS,
-  MIME_MAP,
-  jsonError,
-} from '../_shared/constants.js';
+const GITHUB_RAW = 'https://raw.githubusercontent.com/tanvrit/artifactory/main';
 
-const TANVRIT_ICON_FILES = [
-  'tanvrit-mark.svg',
-  'tanvrit-wordmark.svg',
-  'tanvrit-wordmark-light.svg',
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+const VALID_PRODUCTS = [
+  'friendly', 'desipops', 'mandee', 'swyft',
+  'bharat-bandhu', 'school', 'wedding', 'control',
 ];
+
+const TANVRIT_ICONS = [
+  'tanvrit-mark', 'tanvrit-wordmark', 'tanvrit-wordmark-light',
+];
+
+const MIME_MAP = {
+  svg:  'image/svg+xml',
+  png:  'image/png',
+  ico:  'image/x-icon',
+  icns: 'image/x-icns',
+  webp: 'image/webp',
+  zip:  'application/zip',
+  json: 'application/json',
+  dmg:  'application/x-apple-diskimage',
+  msi:  'application/x-msi',
+  deb:  'application/vnd.debian.binary-package',
+  rpm:  'application/x-rpm',
+};
+
+function jsonError(status, message) {
+  return new Response(JSON.stringify({ error: message, status }), {
+    status,
+    headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
+  });
+}
+
+function resolveKey(assetPath) {
+  const parts = assetPath.split('/');
+
+  // Shorthand: icons/{name}.svg
+  if (parts[0] === 'icons' && parts.length === 2) {
+    const filename = parts[1];
+    if (!filename.endsWith('.svg')) return `branding/${assetPath}`;
+    const stem = filename.slice(0, -4); // remove .svg
+
+    // Tanvrit mark / wordmark
+    if (TANVRIT_ICONS.includes(stem)) {
+      return `branding/icons/src/tanvrit/${stem}.svg`;
+    }
+    // Product icons
+    if (VALID_PRODUCTS.includes(stem)) {
+      return `branding/icons/src/${stem}/${stem}-icon.svg`;
+    }
+  }
+
+  return `branding/${assetPath}`;
+}
 
 export async function onRequest(context) {
   const { env, params, request } = context;
@@ -32,18 +74,14 @@ export async function onRequest(context) {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
   }
 
-  // params.path is an array of path segments for [[path]]
-  const segments = Array.isArray(params.path) ? params.path : (params.path ? [params.path] : []);
-  const assetPath = segments.join('/');
+  const rawPath = params.path;
+  const assetPath = Array.isArray(rawPath) ? rawPath.join('/') : (rawPath || '');
 
   if (!assetPath) {
-    return jsonError(400, 'Missing asset path. Usage: /brand/{path}');
+    return jsonError(400, 'Missing asset path');
   }
 
-  // Resolve the R2/GitHub key
   const r2Key = resolveKey(assetPath);
-
-  // Determine content type from extension
   const ext = assetPath.split('.').pop()?.toLowerCase() ?? '';
   const contentType = MIME_MAP[ext] ?? 'application/octet-stream';
 
@@ -52,7 +90,6 @@ export async function onRequest(context) {
   if (env.ARTIFACTS) {
     const obj = await env.ARTIFACTS.get(r2Key);
     if (!obj) {
-      // Try GitHub raw as fallback
       const fallback = await fetch(`${GITHUB_RAW}/${r2Key}`);
       if (!fallback.ok) return jsonError(404, `Asset not found: ${assetPath}`);
       body = fallback.body;
@@ -76,36 +113,4 @@ export async function onRequest(context) {
   if (etag) headers.set('ETag', etag);
 
   return new Response(body, { status: 200, headers });
-}
-
-/**
- * Resolve a request asset path (relative to /brand/) to a storage key.
- *
- * Icon shorthand rules:
- *   icons/{product}.svg     → branding/icons/src/{product}/{product}-icon.svg
- *   icons/tanvrit-mark.svg  → branding/icons/src/tanvrit/tanvrit-mark.svg
- *   icons/{anything}.svg    → branding/icons/{anything}.svg  (passthrough)
- *   (everything else)       → branding/{assetPath}
- */
-function resolveKey(assetPath) {
-  const parts = assetPath.split('/');
-
-  if (parts[0] === 'icons' && parts.length === 2) {
-    const filename = parts[1]; // e.g. "friendly.svg" or "tanvrit-mark.svg"
-
-    // Tanvrit brand files
-    if (TANVRIT_ICON_FILES.includes(filename)) {
-      const stem = filename.replace(/\.svg$/, '');
-      return `branding/icons/src/tanvrit/${stem}.svg`;
-    }
-
-    // Product icon shorthand: {product}.svg → src/{product}/{product}-icon.svg
-    const stem = filename.replace(/\.svg$/, '');
-    if (VALID_PRODUCTS.includes(stem)) {
-      return `branding/icons/src/${stem}/${stem}-icon.svg`;
-    }
-  }
-
-  // Default passthrough: branding/{assetPath}
-  return `branding/${assetPath}`;
 }

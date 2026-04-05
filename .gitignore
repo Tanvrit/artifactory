@@ -9,3 +9,5 @@ secrets/
 *.pem
 *.p12
 *.keystore
+portal/.next/
+portal/out/
