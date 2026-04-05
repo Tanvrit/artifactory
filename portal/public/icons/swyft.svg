@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    Swyft — Ride-Sharing & Delivery Icon
+    Brand: Amber #D97706 → #FBBF24 (store icon / brand amber)
+    Note: In-app UI uses Electric Teal #00FFC8 — this is the STORE icon
+    Safe zone: artwork within 880×880 circle centered at 512,512 (radius 440)
+    Concept: Lightning bolt / speed — swift movement
+    Renderer: sharp
+  -->
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F59E0B"/>
+      <stop offset="100%" stop-color="#92400E"/>
+    </linearGradient>
+    <linearGradient id="bolt" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#FEF3C7" stop-opacity="0.9"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+
+  <!-- Speed lines (motion blur effect) -->
+  <line x1="200" y1="400" x2="380" y2="400" stroke="white" stroke-width="12" stroke-linecap="round" opacity="0.25"/>
+  <line x1="160" y1="460" x2="360" y2="460" stroke="white" stroke-width="16" stroke-linecap="round" opacity="0.2"/>
+  <line x1="200" y1="520" x2="380" y2="520" stroke="white" stroke-width="12" stroke-linecap="round" opacity="0.25"/>
+
+  <!-- Lightning bolt -->
+  <path d="M 580 180 L 420 540 L 540 540 L 420 840 L 680 440 L 540 440 Z"
+        fill="url(#bolt)"
+        stroke="none"/>
+
+  <!-- Subtle inner highlight -->
+  <path d="M 560 220 L 450 500 L 540 500 L 450 760 L 650 470 L 555 470 Z"
+        fill="white" opacity="0.2"/>
+</svg>

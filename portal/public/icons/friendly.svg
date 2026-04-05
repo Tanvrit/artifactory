@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    Friendly — POS & Retail Icon
+    Brand: Blue #1D4ED8 → #3B82F6
+    Safe zone: artwork within 880×880 circle centered at 512,512 (radius 440)
+    Concept: Shopping bag / register outline on blue field
+    Renderer: sharp
+  -->
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563EB"/>
+      <stop offset="100%" stop-color="#1E3A8A"/>
+    </linearGradient>
+    <linearGradient id="bag" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#DBEAFE" stop-opacity="0.90"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+
+  <!-- Shopping bag body -->
+  <rect x="288" y="440" width="448" height="380" rx="32" fill="url(#bag)"/>
+
+  <!-- Bag top handle cutouts -->
+  <rect x="288" y="420" width="448" height="48" rx="16" fill="url(#bag)"/>
+
+  <!-- Bag handles (left and right arcs) -->
+  <path d="M 380 440 Q 380 320 512 320 Q 644 320 644 440"
+        fill="none" stroke="white" stroke-width="36" stroke-linecap="round"/>
+
+  <!-- Friendly F letterform on bag -->
+  <rect x="440" y="500" width="144" height="32" rx="10" fill="#1D4ED8"/>
+  <rect x="440" y="560" width="112" height="28" rx="10" fill="#1D4ED8"/>
+  <rect x="440" y="500" width="32" height="200" rx="10" fill="#1D4ED8"/>
+
+  <!-- Subtle shine on bag -->
+  <ellipse cx="430" cy="480" rx="40" ry="24" fill="white" opacity="0.15" transform="rotate(-30 430 480)"/>
+</svg>

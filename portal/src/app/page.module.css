@@ -1,0 +1,456 @@
+/* ─── Layout ──────────────────────────────────────────────────── */
+
+.wrapper {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.main {
+  flex: 1;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 24px 80px;
+}
+
+/* ─── Hero ───────────────────────────────────────────────────── */
+
+.hero {
+  padding: 64px 0 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.heroTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.wordmark {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wordmarkIcon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.wordmarkText {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--green-bright);
+  letter-spacing: 0.01em;
+}
+
+.updatedBadge {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-faint);
+  background: rgba(240, 253, 244, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
+.heroTitle {
+  font-size: clamp(36px, 5vw, 56px);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+
+.heroSub {
+  font-size: 17px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  max-width: 520px;
+}
+
+.heroStats {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding-top: 4px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.statNum {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--green-bright);
+  letter-spacing: -0.02em;
+}
+
+.statLabel {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-weight: 500;
+}
+
+.statDiv {
+  width: 1px;
+  height: 32px;
+  background: var(--border);
+}
+
+/* ─── Section header ─────────────────────────────────────────── */
+
+.sectionHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.sectionTitle {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
+}
+
+.sectionLine {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ─── Product grid ───────────────────────────────────────────── */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+}
+
+/* ─── Product card ───────────────────────────────────────────── */
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-card);
+}
+
+.card:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-card-hover);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.cardAccent {
+  height: 3px;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.cardBody {
+  padding: 20px 20px 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ─── Card header row ─────────────────────────────────────────── */
+
+.cardHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.productIcon {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: rgba(240, 253, 244, 0.04);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.productIcon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.productIconFallback {
+  font-size: 22px;
+}
+
+.cardMeta {
+  flex: 1;
+  min-width: 0;
+}
+
+.cardName {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  margin-bottom: 3px;
+}
+
+.cardTagline {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.versionPill {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--saffron);
+  background: var(--saffron-bg);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  border-radius: 20px;
+  padding: 3px 9px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
+/* ─── Card divider ───────────────────────────────────────────── */
+
+.cardDivider {
+  height: 1px;
+  background: var(--border);
+  margin: 0 -20px;
+}
+
+/* ─── Platform buttons ───────────────────────────────────────── */
+
+.platforms {
+  padding: 16px 0 20px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.platformBtn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-btn);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, opacity 0.15s ease;
+  text-decoration: none;
+  color: var(--text);
+  min-width: 0;
+}
+
+.platformBtn:hover:not(.platformDisabled) {
+  background: var(--bg-btn-hover);
+  border-color: var(--border-hover);
+}
+
+.platformDisabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.platformIcon {
+  font-size: 18px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.platformText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.platformLabel {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.platformSublabel {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.platformFormat {
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  background: rgba(240, 253, 244, 0.05);
+  border-radius: 4px;
+  padding: 2px 5px;
+  flex-shrink: 0;
+}
+
+.comingSoonTag {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  background: rgba(240, 253, 244, 0.04);
+  border-radius: 4px;
+  padding: 2px 5px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Wide button — spans full width when only one in a row */
+.platformBtnWide {
+  grid-column: 1 / -1;
+}
+
+/* ─── Release notes ──────────────────────────────────────────── */
+
+.releaseNotes {
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.5;
+  padding: 0 0 20px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: auto;
+}
+
+/* ─── Footer ─────────────────────────────────────────────────── */
+
+.footer {
+  border-top: 1px solid var(--border);
+  padding: 28px 24px;
+  text-align: center;
+}
+
+.footerInner {
+  max-width: 1280px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.footerLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.footerWordmark {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--green-bright);
+}
+
+.footerText {
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+.footerLinks {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.footerLink {
+  font-size: 12px;
+  color: var(--text-faint);
+  transition: color 0.15s ease;
+}
+
+.footerLink:hover {
+  color: var(--text-muted);
+}
+
+/* ─── Responsive ─────────────────────────────────────────────── */
+
+@media (max-width: 600px) {
+  .main {
+    padding: 0 16px 60px;
+  }
+
+  .hero {
+    padding: 40px 0 40px;
+  }
+
+  .heroTitle {
+    font-size: 32px;
+  }
+
+  .heroSub {
+    font-size: 15px;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .platforms {
+    grid-template-columns: 1fr;
+  }
+
+  .platformBtnWide {
+    grid-column: auto;
+  }
+
+  .footerInner {
+    flex-direction: column;
+    text-align: center;
+    gap: 12px;
+  }
+
+  .heroStats {
+    gap: 16px;
+  }
+}
+
+@media (max-width: 400px) {
+  .heroTop {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

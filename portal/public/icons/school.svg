@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    School — Education Management Icon
+    Brand: Cyan #0891B2 → #22D3EE
+    Safe zone: artwork within 880×880 circle centered at 512,512 (radius 440)
+    Concept: Open book / graduation cap — education management
+    Renderer: sharp
+  -->
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06B6D4"/>
+      <stop offset="100%" stop-color="#164E63"/>
+    </linearGradient>
+    <linearGradient id="book-l" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#CFFAFE" stop-opacity="0.9"/>
+    </linearGradient>
+    <linearGradient id="book-r" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ECFEFF"/>
+      <stop offset="100%" stop-color="#67E8F9" stop-opacity="0.9"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+
+  <!-- Book spine -->
+  <rect x="492" y="300" width="40" height="480" rx="8" fill="white" opacity="0.95"/>
+
+  <!-- Left page -->
+  <path d="M 240 300 Q 240 280 260 280 L 492 300 L 492 780 L 260 760 Q 240 760 240 740 Z"
+        fill="url(#book-l)"/>
+
+  <!-- Right page -->
+  <path d="M 532 300 L 764 280 Q 784 280 784 300 L 784 740 Q 784 760 764 760 L 532 780 Z"
+        fill="url(#book-r)"/>
+
+  <!-- Left page lines (text lines) -->
+  <rect x="290" y="360" width="168" height="16" rx="8" fill="#0891B2" opacity="0.2"/>
+  <rect x="290" y="400" width="148" height="12" rx="6" fill="#0891B2" opacity="0.15"/>
+  <rect x="290" y="435" width="160" height="12" rx="6" fill="#0891B2" opacity="0.15"/>
+  <rect x="290" y="470" width="120" height="12" rx="6" fill="#0891B2" opacity="0.15"/>
+  <rect x="290" y="530" width="168" height="16" rx="8" fill="#0891B2" opacity="0.2"/>
+  <rect x="290" y="570" width="140" height="12" rx="6" fill="#0891B2" opacity="0.15"/>
+  <rect x="290" y="605" width="158" height="12" rx="6" fill="#0891B2" opacity="0.15"/>
+
+  <!-- Right page lines -->
+  <rect x="566" y="360" width="168" height="16" rx="8" fill="#0891B2" opacity="0.2"/>
+  <rect x="566" y="400" width="148" height="12" rx="6" fill="#0891B2" opacity="0.15"/>
+  <rect x="566" y="435" width="160" height="12" rx="6" fill="#0891B2" opacity="0.15"/>
+  <rect x="566" y="470" width="120" height="12" rx="6" fill="#0891B2" opacity="0.15"/>
+  <rect x="566" y="530" width="168" height="16" rx="8" fill="#0891B2" opacity="0.2"/>
+  <rect x="566" y="570" width="140" height="12" rx="6" fill="#0891B2" opacity="0.15"/>
+  <rect x="566" y="605" width="158" height="12" rx="6" fill="#0891B2" opacity="0.15"/>
+
+  <!-- Graduation cap on top -->
+  <polygon points="512,200 340,280 512,320 684,280" fill="white" opacity="0.95"/>
+  <rect x="672" y="280" width="20" height="80" rx="4" fill="white" opacity="0.8"/>
+  <circle cx="682" cy="368" r="24" fill="white" opacity="0.85"/>
+</svg>

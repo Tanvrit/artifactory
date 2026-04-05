@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    Mandee — Multi-Location Business Management Icon
+    Brand: Purple #7C3AED → #A78BFA
+    Safe zone: artwork within 880×880 circle centered at 512,512 (radius 440)
+    Concept: Multi-node network graph — multi-location management
+    Renderer: sharp
+  -->
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8B5CF6"/>
+      <stop offset="100%" stop-color="#4C1D95"/>
+    </linearGradient>
+    <radialGradient id="node" cx="40%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#F5F3FF"/>
+      <stop offset="100%" stop-color="#C4B5FD"/>
+    </radialGradient>
+    <radialGradient id="center-node" cx="40%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#EDE9FE"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+
+  <!-- Network connector lines -->
+  <line x1="512" y1="512" x2="280" y2="300" stroke="#C4B5FD" stroke-width="16" stroke-linecap="round" opacity="0.6"/>
+  <line x1="512" y1="512" x2="744" y2="300" stroke="#C4B5FD" stroke-width="16" stroke-linecap="round" opacity="0.6"/>
+  <line x1="512" y1="512" x2="280" y2="724" stroke="#C4B5FD" stroke-width="16" stroke-linecap="round" opacity="0.6"/>
+  <line x1="512" y1="512" x2="744" y2="724" stroke="#C4B5FD" stroke-width="16" stroke-linecap="round" opacity="0.6"/>
+  <line x1="512" y1="512" x2="512" y2="240" stroke="#C4B5FD" stroke-width="16" stroke-linecap="round" opacity="0.6"/>
+
+  <!-- Outer nodes (locations) -->
+  <circle cx="280" cy="300"  r="72" fill="url(#node)"/>
+  <circle cx="744" cy="300"  r="72" fill="url(#node)"/>
+  <circle cx="280" cy="724"  r="72" fill="url(#node)"/>
+  <circle cx="744" cy="724"  r="72" fill="url(#node)"/>
+  <circle cx="512" cy="240"  r="56" fill="url(#node)" opacity="0.8"/>
+
+  <!-- Center hub (HQ node) -->
+  <circle cx="512" cy="512" r="96" fill="url(#center-node)"/>
+  <!-- M lettermark in center -->
+  <path d="M 464 560 L 464 468 L 512 520 L 560 468 L 560 560"
+        fill="none" stroke="#7C3AED" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

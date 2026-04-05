@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    Friendly Wedding — Multi-Event Guest Coordination Icon
+    Brand: Liquid Glass / iOS 26 inspired (frosted white, translucent)
+    Safe zone: artwork within 880×880 circle centered at 512,512 (radius 440)
+    Concept: Wedding rings + frosted glass aesthetic
+    Renderer: inkscape (for SVG filter rendering of glass effect)
+    NOTE: This icon requires Inkscape for proper filter rendering.
+          Sharp will render it without the blur/glass effects.
+  -->
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="40%" r="80%">
+      <stop offset="0%" stop-color="#E0E7FF"/>
+      <stop offset="60%" stop-color="#C7D2FE"/>
+      <stop offset="100%" stop-color="#818CF8"/>
+    </radialGradient>
+    <radialGradient id="glass" cx="35%" cy="25%" r="80%">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.95)"/>
+      <stop offset="50%" stop-color="rgba(255,255,255,0.70)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0.40)"/>
+    </radialGradient>
+    <filter id="glass-blur" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="8" result="blur"/>
+      <feOffset dy="4" result="offsetBlur"/>
+      <feMerge>
+        <feMergeNode in="offsetBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="shimmer">
+      <feGaussianBlur stdDeviation="2"/>
+    </filter>
+    <!-- Gold accent gradient -->
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FCD34D"/>
+      <stop offset="100%" stop-color="#F59E0B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background — soft lavender/indigo gradient (works on light wallpapers) -->
+  <rect width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+
+  <!-- Frosted glass panel (main surface) -->
+  <rect x="162" y="162" width="700" height="700" rx="96" fill="url(#glass)" filter="url(#glass-blur)"/>
+
+  <!-- Glass edge shimmer -->
+  <rect x="162" y="162" width="700" height="700" rx="96"
+        fill="none"
+        stroke="rgba(255,255,255,0.8)"
+        stroke-width="3"/>
+
+  <!-- Wedding rings — two interlocked circles -->
+  <!-- Left ring (his) -->
+  <circle cx="400" cy="500" r="160"
+          fill="none"
+          stroke="url(#gold)"
+          stroke-width="40"
+          opacity="0.95"
+          filter="url(#glass-blur)"/>
+
+  <!-- Right ring (hers) -->
+  <circle cx="624" cy="500" r="160"
+          fill="none"
+          stroke="url(#gold)"
+          stroke-width="40"
+          opacity="0.95"
+          filter="url(#glass-blur)"/>
+
+  <!-- Diamond/sparkle on top of left ring -->
+  <polygon points="400,290 420,320 400,340 380,320"
+           fill="white" opacity="0.95"/>
+  <polygon points="400,290 420,320 400,310 380,320"
+           fill="rgba(255,255,255,0.4)"/>
+
+  <!-- Inner shine on rings -->
+  <circle cx="360" cy="440" r="20" fill="white" opacity="0.5" filter="url(#shimmer)"/>
+  <circle cx="664" cy="440" r="20" fill="white" opacity="0.5" filter="url(#shimmer)"/>
+
+  <!-- Small heart at intersection of rings -->
+  <path d="M 512 540
+           C 512 540 468 510 468 480
+           C 468 460 482 450 496 450
+           C 504 450 510 454 512 460
+           C 514 454 520 450 528 450
+           C 542 450 556 460 556 480
+           C 556 510 512 540 512 540 Z"
+        fill="url(#gold)" opacity="0.9"/>
+</svg>

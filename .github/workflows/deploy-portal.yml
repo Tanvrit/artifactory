@@ -1,0 +1,40 @@
+name: Deploy Portal
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'portal/**'
+      - 'manifests/**'
+      - 'functions/**'
+      - '.github/workflows/deploy-portal.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Build & Deploy to Cloudflare Pages
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: portal/package-lock.json
+
+      - name: Install dependencies
+        run: cd portal && npm ci
+
+      - name: Build Next.js
+        run: cd portal && npm run build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ce3f0ef57641c98d52af95c069bbb6a2
+          command: pages deploy portal/out --project-name tanvrit-artifacts-portal --commit-dirty=true

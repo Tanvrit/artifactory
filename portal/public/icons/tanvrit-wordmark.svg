@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="80" viewBox="0 0 400 80">
+  <!--
+    Tanvrit Wordmark — Horizontal
+    Brand: Forest Green #1A5C3A (for dark backgrounds, use light variant)
+    Font: Plus Jakarta Sans 800 weight (simulated with paths)
+  -->
+  <defs>
+    <linearGradient id="text-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#1A5C3A"/>
+      <stop offset="100%" stop-color="#2E9E63"/>
+    </linearGradient>
+  </defs>
+
+  <!-- T-mark icon (small, 64×64) -->
+  <g transform="translate(0, 8) scale(0.0625)">
+    <circle cx="280" cy="380" r="100" fill="#1A5C3A" opacity="0.9"/>
+    <circle cx="512" cy="360" r="120" fill="#1A5C3A"/>
+    <circle cx="744" cy="380" r="100" fill="#1A5C3A" opacity="0.9"/>
+    <circle cx="440" cy="600" r="90"  fill="#1A5C3A" opacity="0.85"/>
+    <circle cx="590" cy="680" r="80"  fill="#1A5C3A" opacity="0.80"/>
+    <circle cx="512" cy="360" r="40"  fill="#F59E0B" opacity="0.9"/>
+  </g>
+
+  <!-- "tanvrit" wordmark text (Plus Jakarta Sans ExtraBold approximation) -->
+  <text x="80" y="56"
+        font-family="'Plus Jakarta Sans', 'Inter', sans-serif"
+        font-weight="800"
+        font-size="48"
+        letter-spacing="-1"
+        fill="url(#text-grad)">tanvrit</text>
+</svg>
