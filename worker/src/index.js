@@ -46,6 +46,23 @@ const PLATFORM_FILE_MAP = {
   'linux-x64-appimage': { ext: 'AppImage', label: 'Linux (AppImage)' },
 };
 
+const PORTAL_ORIGIN = 'https://tanvrit-artifacts-portal.pages.dev';
+
+const TANVRIT_ICONS = ['tanvrit-mark', 'tanvrit-wordmark', 'tanvrit-wordmark-light'];
+
+function resolveBrandKey(assetPath) {
+  const parts = assetPath.split('/');
+  if (parts[0] === 'icons' && parts.length === 2) {
+    const filename = parts[1];
+    if (filename.endsWith('.svg')) {
+      const stem = filename.slice(0, -4);
+      if (TANVRIT_ICONS.includes(stem)) return `branding/icons/src/tanvrit/${stem}.svg`;
+      if (VALID_PRODUCTS.includes(stem)) return `branding/icons/src/${stem}/${stem}-icon.svg`;
+    }
+  }
+  return `branding/${assetPath}`;
+}
+
 export default {
   async fetch(request, env, ctx) {
     if (request.method === 'OPTIONS') {
@@ -59,7 +76,7 @@ export default {
     const path = url.pathname;
 
     try {
-      return await routeRequest(path, env, ctx);
+      return await routeRequest(path, request, env, ctx);
     } catch (err) {
       console.error('Worker error:', err);
       return jsonError(500, 'Internal server error');
@@ -67,13 +84,13 @@ export default {
   }
 };
 
-async function routeRequest(path, env, ctx) {
+async function routeRequest(path, request, env, ctx) {
   // Strip leading slash and split segments
   const segments = path.replace(/^\//, '').split('/');
 
-  // --- / (root) — redirect to catalog
+  // --- / (root) or portal paths — proxy to Pages portal
   if (path === '/' || path === '') {
-    return Response.redirect('https://artifacts.tanvrit.com/catalog.json', 302);
+    return proxyToPortal(request);
   }
 
   // --- /catalog.json
@@ -81,18 +98,19 @@ async function routeRequest(path, env, ctx) {
     return serveFromR2(env.ARTIFACTS, 'manifests/catalog.json', CACHE_CATALOG, 'application/json');
   }
 
-  // --- /brand/{product}/{asset...} or /brand/press-kit.zip
+  // --- /brand/{...} — branding assets with icon shorthand resolution
   if (segments[0] === 'brand') {
     const assetPath = segments.slice(1).join('/');
     if (!assetPath) return jsonError(400, 'Missing brand asset path');
-    const r2Key = `branding/${assetPath}`;
+    const r2Key = resolveBrandKey(assetPath);
     return serveFromR2(env.ARTIFACTS, r2Key, CACHE_BRANDING);
   }
 
   // Product routes: segments[0] = product
   const product = segments[0];
   if (!VALID_PRODUCTS.includes(product)) {
-    return jsonError(404, `Unknown product: ${product}. Valid: ${VALID_PRODUCTS.join(', ')}`);
+    // Not an API route — proxy to portal (handles /_next/, /icons/, etc.)
+    return proxyToPortal(request);
   }
 
   // --- /{product}/latest.json
@@ -125,6 +143,13 @@ async function routeRequest(path, env, ctx) {
   }
 
   return jsonError(404, 'Not found');
+}
+
+function proxyToPortal(request) {
+  const url = new URL(request.url);
+  url.hostname = 'tanvrit-artifacts-portal.pages.dev';
+  url.port = '';
+  return fetch(new Request(url.toString(), request));
 }
 
 async function resolveAndRedirect(bucket, product, versionOrLatest, platform, ctx) {
