@@ -1,6 +1,8 @@
 node_modules/
 .wrangler/
 dist/
+!branding/icons/dist/
+!branding/icons/dist/**
 *.log
 .DS_Store
 .env
