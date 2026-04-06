@@ -1,52 +1,52 @@
 {
-  "updated_at": "2026-04-01T10:00:00Z",
+  "updated_at": "2026-04-06T20:07:29.044Z",
   "products": {
     "friendly": {
       "version": "1.0.0",
       "build": 1,
-      "released_at": "2026-04-01T10:00:00Z",
+      "released_at": "2026-04-06T20:07:28.554Z",
       "manifest_url": "https://artifacts.tanvrit.com/friendly/latest.json"
     },
     "desipops": {
       "version": "0.0.77",
       "build": 77,
-      "released_at": "2026-04-01T10:00:00Z",
+      "released_at": "2026-04-06T20:07:28.623Z",
       "manifest_url": "https://artifacts.tanvrit.com/desipops/latest.json"
     },
     "mandee": {
       "version": "0.1.6",
       "build": 106,
-      "released_at": "2026-04-01T10:00:00Z",
+      "released_at": "2026-04-06T20:07:28.693Z",
       "manifest_url": "https://artifacts.tanvrit.com/mandee/latest.json"
     },
     "swyft": {
       "version": "1.0.0",
       "build": 1,
-      "released_at": "2026-04-01T10:00:00Z",
+      "released_at": "2026-04-06T20:07:28.762Z",
       "manifest_url": "https://artifacts.tanvrit.com/swyft/latest.json"
     },
     "bharat-bandhu": {
       "version": "1.0.0",
       "build": 1,
-      "released_at": "2026-04-01T10:00:00Z",
+      "released_at": "2026-04-06T20:07:28.832Z",
       "manifest_url": "https://artifacts.tanvrit.com/bharat-bandhu/latest.json"
     },
     "school": {
       "version": "1.0.0",
       "build": 1,
-      "released_at": "2026-04-01T10:00:00Z",
+      "released_at": "2026-04-06T20:07:28.901Z",
       "manifest_url": "https://artifacts.tanvrit.com/school/latest.json"
     },
     "wedding": {
       "version": "1.0.0",
       "build": 1,
-      "released_at": "2026-04-01T10:00:00Z",
+      "released_at": "2026-04-06T20:07:28.971Z",
       "manifest_url": "https://artifacts.tanvrit.com/wedding/latest.json"
     },
     "control": {
       "version": "1.0.0",
       "build": 1,
-      "released_at": "2026-04-01T10:00:00Z",
+      "released_at": "2026-04-06T20:07:29.041Z",
       "manifest_url": "https://artifacts.tanvrit.com/control/latest.json"
     }
   }

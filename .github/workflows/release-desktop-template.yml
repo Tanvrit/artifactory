@@ -52,6 +52,16 @@ on:
         type: string
         required: false
         default: ''
+      release_notes:
+        description: 'English release notes (shown in app update prompt)'
+        type: string
+        required: false
+        default: ''
+      release_notes_hi:
+        description: 'Hindi release notes'
+        type: string
+        required: false
+        default: ''
     secrets:
       APPLE_CERTIFICATE:
         description: 'Base64-encoded Apple Developer certificate (.p12)'
@@ -301,5 +311,7 @@ jobs:
               "product": "${{ inputs.product }}",
               "version": "${{ inputs.version }}",
               "build": "${{ github.run_number }}",
-              "released_at": "${{ github.event.head_commit.timestamp || '' }}"
+              "released_at": "${{ github.event.head_commit.timestamp || '' }}",
+              "release_notes": "${{ inputs.release_notes }}",
+              "release_notes_hi": "${{ inputs.release_notes_hi }}"
             }
