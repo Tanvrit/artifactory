@@ -4,7 +4,7 @@
   "tagline": "Weddings, Made Magical",
   "version": "1.0.0",
   "build": 1,
-  "released_at": "2026-04-06T20:07:28.971Z",
+  "released_at": "2026-04-06T20:27:01.438Z",
   "release_notes": "See https://github.com/tanvrit/artifactory/releases/tag/wedding-v1.0.0",
   "release_notes_hi": "",
   "min_required_version": "1.0.0",
@@ -15,7 +15,7 @@
       "sha256": "",
       "size_bytes": 0,
       "format": "dmg",
-      "available": true
+      "available": false
     },
     "web": {
       "url": "https://friendly.wedding",

@@ -46,10 +46,11 @@ function PlatformButton({ platform, entry, product, wide }: PlatformButtonProps)
 
   const label = meta.label;
   const sublabel = meta.sublabel;
-  const emoji = getPlatformEmoji(platform);
+  const isWeb = entry.format === 'web';
+  const emoji = isWeb ? '🌐' : getPlatformEmoji(platform);
   const isAvailable = entry.available;
 
-  const size = formatBytes(entry.size_bytes);
+  const size = isWeb ? '' : formatBytes(entry.size_bytes);
 
   const className = [
     styles.platformBtn,
@@ -70,7 +71,9 @@ function PlatformButton({ platform, entry, product, wide }: PlatformButtonProps)
         </span>
       </span>
       {isAvailable ? (
-        <span className={styles.platformFormat}>.{entry.format}</span>
+        isWeb
+          ? <span className={styles.platformFormat}>↗</span>
+          : <span className={styles.platformFormat}>.{entry.format}</span>
       ) : (
         <span className={styles.comingSoonTag}>Soon</span>
       )}
@@ -89,7 +92,9 @@ function PlatformButton({ platform, entry, product, wide }: PlatformButtonProps)
     <a
       className={className}
       href={entry.url}
-      title={`Download ${label} ${sublabel} (${entry.format.toUpperCase()})`}
+      title={isWeb ? `Open ${label}` : `Download ${label} ${sublabel} (${entry.format.toUpperCase()})`}
+      target={isWeb ? '_blank' : undefined}
+      rel={isWeb ? 'noopener noreferrer' : undefined}
     >
       {inner}
     </a>
@@ -124,6 +129,8 @@ function ProductCard({ slug, name, tagline, color, iconUrl, manifest }: ProductC
     }
   }
 
+  const displayName = manifest?.display_name || name;
+  const displayTagline = manifest?.tagline || tagline;
   const version = manifest?.version ?? '—';
   const releasedAt = manifest?.released_at ? formatDate(manifest.released_at) : null;
   const releaseNotes = manifest?.release_notes;
@@ -149,8 +156,8 @@ function ProductCard({ slug, name, tagline, color, iconUrl, manifest }: ProductC
             />
           </div>
           <div className={styles.cardMeta}>
-            <div className={styles.cardName}>{name}</div>
-            <div className={styles.cardTagline}>{tagline}</div>
+            <div className={styles.cardName}>{displayName}</div>
+            <div className={styles.cardTagline}>{displayTagline}</div>
           </div>
           <span className={styles.versionPill} title={releasedAt ?? undefined}>
             v{version}
@@ -296,7 +303,7 @@ export default async function DownloadsPage() {
           <div className={styles.footerLeft}>
             <span className={styles.footerWordmark}>Tanvrit</span>
             <span className={styles.footerText}>
-              &copy; 2026 Tanvrit Technologies
+              &copy; 2026 Tanvrit
             </span>
           </div>
           <div className={styles.footerLinks}>

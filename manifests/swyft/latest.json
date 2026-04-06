@@ -4,7 +4,7 @@
   "tagline": "Logistics for Bharat",
   "version": "1.0.0",
   "build": 1,
-  "released_at": "2026-04-06T20:07:28.762Z",
+  "released_at": "2026-04-06T20:25:27.421Z",
   "release_notes": "See https://github.com/tanvrit/artifactory/releases/tag/swyft-v1.0.0",
   "release_notes_hi": "",
   "min_required_version": "1.0.0",
@@ -15,7 +15,7 @@
       "sha256": "",
       "size_bytes": 0,
       "format": "dmg",
-      "available": true
+      "available": false
     },
     "macos-x64": {
       "url": "https://artifacts.tanvrit.com/swyft/1.0.0/macos-x64",
@@ -23,7 +23,7 @@
       "sha256": "",
       "size_bytes": 0,
       "format": "dmg",
-      "available": true
+      "available": false
     },
     "windows-x64": {
       "url": "https://artifacts.tanvrit.com/swyft/1.0.0/windows-x64",
@@ -31,7 +31,7 @@
       "sha256": "",
       "size_bytes": 0,
       "format": "msi",
-      "available": true
+      "available": false
     },
     "linux-x64": {
       "url": "https://artifacts.tanvrit.com/swyft/1.0.0/linux-x64",
@@ -39,7 +39,7 @@
       "sha256": "",
       "size_bytes": 0,
       "format": "deb",
-      "available": true
+      "available": false
     }
   }
 }

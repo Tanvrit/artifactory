@@ -16,42 +16,42 @@ export const PRODUCTS = [
   {
     slug: 'mandee',
     name: 'Mandee',
-    tagline: 'Business management, simplified',
+    tagline: 'Business Management, Simplified',
     color: '#7C3AED',
     iconUrl: '/icons/mandee.svg',
   },
   {
     slug: 'swyft',
     name: 'Swyft',
-    tagline: 'Rides & delivery, now',
+    tagline: 'Logistics for Bharat',
     color: '#D97706',
     iconUrl: '/icons/swyft.svg',
   },
   {
     slug: 'bharat-bandhu',
     name: 'Bharat Bandhu',
-    tagline: 'Community & connections',
+    tagline: 'Communities for Bharat',
     color: '#BE185D',
     iconUrl: '/icons/bharat-bandhu.svg',
   },
   {
     slug: 'school',
     name: 'School',
-    tagline: 'Education management',
+    tagline: 'Education Management for Bharat',
     color: '#0891B2',
     iconUrl: '/icons/school.svg',
   },
   {
     slug: 'wedding',
-    name: 'Friendly Wedding',
-    tagline: 'Celebrations made memorable',
+    name: 'Wedding',
+    tagline: 'Weddings, Made Magical',
     color: '#9D174D',
     iconUrl: '/icons/wedding.svg',
   },
   {
     slug: 'control',
-    name: 'Tanvrit Control',
-    tagline: 'Mission control for Tanvrit',
+    name: 'Control',
+    tagline: 'Mission Control for Tanvrit',
     color: '#1A5C3A',
     iconUrl: '/icons/control.svg',
   },
@@ -67,6 +67,8 @@ export const PLATFORM_META: Record<string, { label: string; sublabel: string; ic
   'linux-x64':          { label: 'Linux',   sublabel: 'DEB',           icon: '' },
   'linux-x64-rpm':      { label: 'Linux',   sublabel: 'RPM',           icon: '' },
   'linux-x64-appimage': { label: 'Linux',   sublabel: 'AppImage',      icon: '' },
+  'android':            { label: 'Android', sublabel: 'APK',           icon: '' },
+  'web':                { label: 'Web App', sublabel: 'Open in browser', icon: '' },
 };
 
 // Ordered display groups — first available wins as "primary" CTA
@@ -78,4 +80,6 @@ export const PLATFORM_DISPLAY_ORDER = [
   'linux-x64',
   'linux-x64-rpm',
   'linux-x64-appimage',
+  'android',
+  'web',
 ];
