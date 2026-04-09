@@ -33,7 +33,7 @@ const CACHE_CATALOG  = 'public, max-age=30, s-maxage=30';        // 30 sec — c
 
 const VALID_PRODUCTS = [
   'friendly', 'desipops', 'mandee', 'swyft',
-  'bharat-bandhu', 'school', 'wedding', 'control'
+  'bharat-bandhu', 'school', 'wedding', 'control', 'compute'
 ];
 
 const PLATFORM_FILE_MAP = {
