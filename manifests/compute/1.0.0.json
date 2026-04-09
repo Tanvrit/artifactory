@@ -11,7 +11,7 @@
   "platforms": {
     "macos-arm64": {
       "url": "https://artifacts.tanvrit.com/compute/1.0.0/macos-arm64",
-      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/compute-v1.0.0/TanvritCompute-1.0.0-macos-arm64.dmg",
+      "direct_url": "https://github.com/Tanvrit/artifactory/releases/download/compute-v1.0.0/Tanvrit.Compute-1.0.0.dmg",
       "sha256": "",
       "size_bytes": 147818752,
       "format": "dmg",
