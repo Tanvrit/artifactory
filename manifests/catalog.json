@@ -1,5 +1,5 @@
 {
-    "updated_at": "2026-04-12T08:45:00.000Z",
+    "updated_at": "2026-04-12T00:00:00.000Z",
     "products": {
         "friendly": {
             "version": "1.0.0",
@@ -54,6 +54,12 @@
             "build": 1,
             "released_at": "2026-04-09T00:00:00.000Z",
             "manifest_url": "https://artifacts.tanvrit.com/compute/latest.json"
+        },
+        "automator": {
+            "version": "1.0.0",
+            "build": 1,
+            "released_at": "2026-04-12T00:00:00.000Z",
+            "manifest_url": "https://artifacts.tanvrit.com/automator/latest.json"
         }
     }
 }
