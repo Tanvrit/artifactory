@@ -154,6 +154,7 @@ jobs:
   build-macos-x64:
     name: macOS x64 (Intel)
     runs-on: macos-13
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -271,7 +272,7 @@ jobs:
   # ── Publish to GitHub Releases + update manifest ─────────────
   publish:
     name: Publish Release
-    needs: [build-macos-arm64, build-macos-x64, build-windows, build-linux]
+    needs: [build-macos-arm64, build-windows, build-linux]
     runs-on: ubuntu-latest
 
     steps:
