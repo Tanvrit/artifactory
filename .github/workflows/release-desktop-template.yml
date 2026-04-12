@@ -211,6 +211,7 @@ jobs:
         with: { distribution: temurin, java-version: '21' }
       - uses: gradle/actions/setup-gradle@v4
       - name: Build Windows MSI
+        shell: bash
         run: ./gradlew :${{ inputs.gradle_module }}:packageMsi -PappVersion=${{ inputs.version }} --no-daemon
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
