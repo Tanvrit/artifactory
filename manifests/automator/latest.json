@@ -1,0 +1,45 @@
+{
+  "product": "automator",
+  "display_name": "Tanvrit Automator",
+  "tagline": "Autonomous AI-powered website testing agent",
+  "version": "1.0.0",
+  "build": 1,
+  "released_at": "2026-04-12T00:00:00Z",
+  "release_notes": "Initial release — autonomous AI testing agent with Playwright DOM automation, Ollama LLM integration, flow recording, and replay",
+  "release_notes_hi": "",
+  "min_required_version": "1.0.0",
+  "platforms": {
+    "macos-arm64": {
+      "url": "https://artifacts.tanvrit.com/automator/1.0.0/macos-arm64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/automator-v1.0.0/automator-1.0.0-macos-arm64.dmg",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "dmg",
+      "available": false
+    },
+    "macos-x64": {
+      "url": "https://artifacts.tanvrit.com/automator/1.0.0/macos-x64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/automator-v1.0.0/automator-1.0.0-macos-x64.dmg",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "dmg",
+      "available": false
+    },
+    "windows-x64": {
+      "url": "https://artifacts.tanvrit.com/automator/1.0.0/windows-x64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/automator-v1.0.0/automator-1.0.0-windows-x64.msi",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "msi",
+      "available": false
+    },
+    "linux-x64": {
+      "url": "https://artifacts.tanvrit.com/automator/1.0.0/linux-x64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/automator-v1.0.0/automator-1.0.0-linux-x64.deb",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "deb",
+      "available": false
+    }
+  }
+}
