@@ -2,44 +2,44 @@
   "product": "swyft",
   "display_name": "Swyft",
   "tagline": "Logistics for Bharat",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "build": 1,
-  "released_at": "2026-04-06T20:25:27.421Z",
-  "release_notes": "See https://github.com/tanvrit/artifactory/releases/tag/swyft-v1.0.0",
+  "released_at": "2026-04-12T08:14:51Z",
+  "release_notes": "Auth migration to TanvritAuthScreen, session resume fix, bug fixes",
   "release_notes_hi": "",
   "min_required_version": "1.0.0",
   "platforms": {
     "macos-arm64": {
-      "url": "https://artifacts.tanvrit.com/swyft/1.0.0/macos-arm64",
-      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/swyft-v1.0.0/swyft-1.0.0-macos-arm64.dmg",
-      "sha256": "",
-      "size_bytes": 0,
+      "url": "https://artifacts.tanvrit.com/swyft/1.0.1/macos-arm64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/swyft-v1.0.1/swyft-1.0.1-macos-arm64.dmg",
+      "sha256": "6b01efcb9f06be7ae381c3fe5e891b59f0deb731edea4dc7dc1b590208ddbef7",
+      "size_bytes": 206342767,
       "format": "dmg",
-      "available": false
+      "available": true
     },
     "macos-x64": {
-      "url": "https://artifacts.tanvrit.com/swyft/1.0.0/macos-x64",
-      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/swyft-v1.0.0/swyft-1.0.0-macos-x64.dmg",
+      "url": "https://artifacts.tanvrit.com/swyft/1.0.1/macos-x64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/swyft-v1.0.1/swyft-1.0.1-macos-x64.dmg",
       "sha256": "",
       "size_bytes": 0,
       "format": "dmg",
       "available": false
     },
     "windows-x64": {
-      "url": "https://artifacts.tanvrit.com/swyft/1.0.0/windows-x64",
-      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/swyft-v1.0.0/swyft-1.0.0-windows-x64.msi",
-      "sha256": "",
-      "size_bytes": 0,
+      "url": "https://artifacts.tanvrit.com/swyft/1.0.1/windows-x64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/swyft-v1.0.1/swyft-1.0.1-windows-x64.msi",
+      "sha256": "1bfdf9cd58d091560deff68cbb1ce4a042f261ee9ce38027e39e8497225a9ab1",
+      "size_bytes": 194811669,
       "format": "msi",
-      "available": false
+      "available": true
     },
     "linux-x64": {
-      "url": "https://artifacts.tanvrit.com/swyft/1.0.0/linux-x64",
-      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/swyft-v1.0.0/swyft-1.0.0-linux-x64.deb",
-      "sha256": "",
-      "size_bytes": 0,
+      "url": "https://artifacts.tanvrit.com/swyft/1.0.1/linux-x64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/swyft-v1.0.1/swyft-1.0.1-linux-x64.deb",
+      "sha256": "5236ee9187eb7319dafb20c0a6e1b1f0b2ab04cdd81a6864fb28b3223fca2c08",
+      "size_bytes": 184047168,
       "format": "deb",
-      "available": false
+      "available": true
     }
   }
 }
