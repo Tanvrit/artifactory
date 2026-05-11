@@ -1,0 +1,165 @@
+# ─────────────────────────────────────────────────────────────
+# Reusable Workflow: Build + deploy Web (Cloudflare Pages)
+#
+# Caller example (per-platform release-web.yml):
+#   jobs:
+#     release:
+#       uses: tanvrit/artifactory/.github/workflows/release-web-template.yml@main
+#       with:
+#         product: friendly
+#         gradle_task: ':composeApp:patchWasmIndexHtml'
+#         wasm_output_dir: 'composeApp/build/dist/wasmJs/productionExecutable'
+#         landing_build_dir: 'web'                # optional — when set, npm run build + merge web/out/ into dist/
+#         cf_project_name: 'friendly-app'
+#         assemble_script: 'scripts/assemble-dist.sh'  # optional — overrides default merge logic
+#       secrets: inherit
+#
+# Triggers on push to main (NOT version tags) since web is always-live.
+# Version passed to update-manifest is git rev-parse --short HEAD.
+#
+# Graceful-skip guard: bails out cleanly if composeApp's build.gradle.kts
+# doesn't declare wasmJs() (no Web target).
+# ─────────────────────────────────────────────────────────────
+
+name: Release Web (Reusable — Cloudflare Pages)
+
+on:
+  workflow_call:
+    inputs:
+      product:
+        type: string
+        required: true
+      gradle_task:
+        description: 'Gradle task that produces the Wasm/JS web bundle (default: wasmJsBrowserDistribution)'
+        type: string
+        required: false
+        default: ':composeApp:wasmJsBrowserDistribution'
+      gradle_module:
+        type: string
+        required: false
+        default: 'composeApp'
+      wasm_output_dir:
+        description: 'Path to the Wasm/JS distribution output relative to repo root'
+        type: string
+        required: false
+        default: 'composeApp/build/dist/wasmJs/productionExecutable'
+      landing_build_dir:
+        description: 'Optional landing-site directory (e.g. "web/"). When set, npm ci + next build runs there and web/out/ is merged with the wasm dist.'
+        type: string
+        required: false
+        default: ''
+      cf_project_name:
+        description: 'Cloudflare Pages project name (e.g. "friendly-app", "tanvrit-admin")'
+        type: string
+        required: true
+      cf_branch:
+        type: string
+        required: false
+        default: 'main'
+      assemble_script:
+        description: 'Optional path to a bash script that assembles dist/. When set, overrides the default merge logic.'
+        type: string
+        required: false
+        default: ''
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: true
+      CLOUDFLARE_ACCOUNT_ID:
+        required: true
+      ARTIFACTS_REPO_TOKEN:
+        required: true
+      GH_PACKAGES_TOKEN:
+        description: 'Token for Gradle to pull SDK + core artifacts from GitHub Packages'
+        required: false
+
+jobs:
+  release-web:
+    name: Web (Cloudflare Pages)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify target supported
+        id: guard
+        shell: bash
+        run: |
+          BUILD_FILE="${{ inputs.gradle_module }}/build.gradle.kts"
+          if [ ! -f "$BUILD_FILE" ]; then
+            echo "::notice::skipped: $BUILD_FILE not found for ${{ inputs.product }}"
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! grep -qE 'wasmJs\s*\{|wasmJs\(\)|^\s*js\s*\{' "$BUILD_FILE"; then
+            echo "::notice::skipped: no wasmJs() or js() target declared in $BUILD_FILE — Web deploy cannot run for ${{ inputs.product }}"
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "supported=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        if: steps.guard.outputs.supported == 'true'
+        with: { distribution: zulu, java-version: '21' }
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.supported == 'true'
+        with:
+          node-version: '20'
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.guard.outputs.supported == 'true'
+
+      - name: Build Wasm/JS bundle
+        if: steps.guard.outputs.supported == 'true'
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+        run: ./gradlew ${{ inputs.gradle_task }} --parallel --no-daemon
+
+      - name: Build landing site
+        if: steps.guard.outputs.supported == 'true' && inputs.landing_build_dir != ''
+        run: |
+          cd ${{ inputs.landing_build_dir }}
+          npm ci
+          npm run build
+
+      - name: Assemble distribution (custom script)
+        if: steps.guard.outputs.supported == 'true' && inputs.assemble_script != ''
+        run: |
+          chmod +x "${{ inputs.assemble_script }}"
+          "${{ inputs.assemble_script }}"
+
+      - name: Assemble distribution (default merge logic)
+        if: steps.guard.outputs.supported == 'true' && inputs.assemble_script == ''
+        run: |
+          rm -rf dist
+          if [ -n "${{ inputs.landing_build_dir }}" ]; then
+            mkdir -p dist/app
+            cp -r "${{ inputs.landing_build_dir }}"/out/. dist/
+            cp -r "${{ inputs.wasm_output_dir }}"/. dist/app/
+            printf '/app/* /app/index.html 200\n' > dist/_redirects
+          else
+            mkdir -p dist
+            cp -r "${{ inputs.wasm_output_dir }}"/. dist/
+          fi
+
+      - name: Deploy to Cloudflare Pages
+        if: steps.guard.outputs.supported == 'true' && github.event_name == 'push'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=${{ inputs.cf_project_name }} --branch=${{ inputs.cf_branch }}
+
+      - name: Dispatch manifest update
+        if: steps.guard.outputs.supported == 'true' && github.event_name == 'push'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+          repository: tanvrit/artifactory
+          event-type: update-manifest
+          client-payload: |
+            {
+              "product": "${{ inputs.product }}",
+              "version": "${{ github.sha }}",
+              "platform": "web",
+              "build": "${{ github.run_number }}",
+              "released_at": "${{ github.event.head_commit.timestamp || '' }}"
+            }
