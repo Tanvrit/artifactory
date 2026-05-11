@@ -64,7 +64,7 @@ const PRODUCTS = [
     id: 'bharat-bandhu',
     src: 'bharat-bandhu/bharat-bandhu-icon.svg',
     renderer: 'sharp',
-    platforms: ['android', 'ios', 'web'],
+    platforms: ['android', 'ios', 'macos', 'windows', 'linux', 'web'],
   },
   {
     id: 'school',
@@ -76,13 +76,19 @@ const PRODUCTS = [
     id: 'wedding',
     src: 'wedding/wedding-icon.svg',
     renderer: 'inkscape',  // SVG filters require Inkscape
-    platforms: ['android', 'ios', 'web'],
+    platforms: ['android', 'ios', 'macos', 'windows', 'linux', 'web'],
   },
   {
     id: 'control',
-    src: 'control/control-icon.svg',
+    src: 'tanvrit/tanvrit-mark.svg',  // internal tool — uses Tanvrit corporate mark
     renderer: 'sharp',
-    platforms: ['macos'],
+    platforms: ['android', 'ios', 'macos', 'windows', 'linux', 'web'],
+  },
+  {
+    id: 'compute',
+    src: 'tanvrit/tanvrit-mark.svg',  // internal tool — uses Tanvrit corporate mark
+    renderer: 'sharp',
+    platforms: ['android', 'ios', 'macos', 'windows', 'linux', 'web'],
   },
 ];
 

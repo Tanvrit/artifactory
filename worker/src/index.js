@@ -98,6 +98,7 @@ async function routeRequest(path, request, env, ctx) {
     return serveFromR2(env.ARTIFACTS, 'manifests/catalog.json', CACHE_CATALOG, 'application/json');
   }
 
+
   // --- /brand/{...} — branding assets with icon shorthand resolution
   if (segments[0] === 'brand') {
     const assetPath = segments.slice(1).join('/');
@@ -182,8 +183,69 @@ async function resolveAndRedirect(bucket, product, versionOrLatest, platform, ct
     return jsonError(503, `Build for ${product} ${platform} is not yet available`);
   }
 
-  const redirectUrl = platformData.direct_url || platformData.url;
-  return Response.redirect(redirectUrl, 302);
+  // Prefer the R2 mirror when the manifest exposes one (set since the
+  // release-desktop-template's "Mirror binaries to Cloudflare R2" step
+  // started running). Falls back to the GitHub Releases CDN otherwise.
+  const r2Url     = platformData.r2_url;
+  const directUrl = r2Url || platformData.direct_url || platformData.url;
+  // R2 URLs (artifacts.tanvrit.com/releases/...) are served directly by this
+  // same worker through the public R2 bucket — no CDN redirect chain to
+  // resolve, so we can return a plain 302 instead of proxyBinary's GitHub
+  // resolve dance.
+  if (r2Url) {
+    return Response.redirect(r2Url, 302);
+  }
+  return proxyBinary(directUrl, platformInfo);
+}
+
+// Resolve the binary download URL and redirect the client to the CDN-signed URL.
+//
+// GitHub releases: github.com/releases/... → 302 → release-assets.githubusercontent.com/...?jwt=...
+// Cloudflare Worker IPs are blocked by GitHub's release CDN for proxying, so instead:
+//   1. Worker resolves github.com redirect → gets the signed CDN URL
+//   2. Worker redirects client to that signed CDN URL (time-limited, opaque blob ID)
+//
+// When R2 is enabled (Phase 2), binaries will be stored in R2 and served directly.
+async function proxyBinary(url, platformInfo) {
+  const filename = url.split('/').pop() || `download.${platformInfo.ext}`;
+
+  // Resolve github.com release URL → CDN signed URL
+  const resolveResp = await fetch(url, {
+    method: 'GET',
+    headers: { 'User-Agent': 'Tanvrit-Artifacts-Proxy/1.0' },
+    redirect: 'manual',
+  });
+
+  let downloadUrl = url;
+  if (resolveResp.status === 301 || resolveResp.status === 302 ||
+      resolveResp.status === 307 || resolveResp.status === 308) {
+    const location = resolveResp.headers.get('location');
+    if (location) downloadUrl = location;
+  } else if (resolveResp.ok) {
+    // Direct URL (no redirect needed) — stream it
+    const headers = new Headers({
+      ...CORS_HEADERS,
+      'Content-Type': 'application/octet-stream',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': CACHE_BINARY,
+      'X-Content-Type-Options': 'nosniff',
+    });
+    const cl = resolveResp.headers.get('Content-Length');
+    if (cl) headers.set('Content-Length', cl);
+    return new Response(resolveResp.body, { status: 200, headers });
+  } else {
+    return jsonError(502, `Binary temporarily unavailable (upstream ${resolveResp.status})`);
+  }
+
+  // Redirect client to the CDN-signed URL (opaque blob URL, not github.com)
+  return new Response(null, {
+    status: 302,
+    headers: {
+      ...CORS_HEADERS,
+      'Location': downloadUrl,
+      'Cache-Control': 'no-store',
+    },
+  });
 }
 
 async function serveFromR2(bucket, key, cacheControl, contentType) {
@@ -215,9 +277,10 @@ async function serveFromR2(bucket, key, cacheControl, contentType) {
     const ext = key.split('.').pop()?.toLowerCase();
     const mimeMap = {
       svg: 'image/svg+xml', png: 'image/png', ico: 'image/x-icon',
-      zip: 'application/zip', json: 'application/json', icns: 'image/x-icns',
-      dmg: 'application/x-apple-diskimage', msi: 'application/x-msi',
-      deb: 'application/vnd.debian.binary-package',
+      webp: 'image/webp', zip: 'application/zip', json: 'application/json',
+      icns: 'image/x-icns', dmg: 'application/x-apple-diskimage',
+      msi: 'application/x-msi', deb: 'application/vnd.debian.binary-package',
+      rpm: 'application/x-rpm', appimage: 'application/x-executable',
     };
     headers.set('Content-Type', mimeMap[ext] || 'application/octet-stream');
   }

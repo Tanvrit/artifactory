@@ -48,5 +48,8 @@ export async function onRequest(context) {
     return jsonError(404, `No download URL for ${product} ${platform}`);
   }
 
-  return Response.redirect(redirectUrl, 302);
+  return new Response(null, {
+    status: 302,
+    headers: { ...CORS_HEADERS, 'Location': redirectUrl, 'Cache-Control': 'no-store' },
+  });
 }

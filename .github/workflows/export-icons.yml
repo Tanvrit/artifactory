@@ -78,7 +78,7 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: |
           # Dispatch to each product repo to pick up new icons
-          for repo in "tanvrit/friendly" "tanvrit/mandee" "tanvrit/school" "tanvrit/swyft"; do
+          for repo in "tanvrit/friendly" "tanvrit/mandee" "tanvrit/school" "tanvrit/swyft" "tanvrit/desipops" "tanvrit/bharat-bandhu" "tanvrit/wedding" "tanvrit/control"; do
             gh api repos/$repo/dispatches \
               --method POST \
               --field event_type=branding-updated \

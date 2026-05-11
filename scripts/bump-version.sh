@@ -24,6 +24,7 @@ declare -A PRODUCT_PROPS=(
   [school]="platforms/school/gradle.properties"
   [wedding]="platforms/wedding/gradle.properties"
   [control]="control/gradle.properties"
+  [compute]="platforms/compute/gradle.properties"
 )
 
 # Show all current versions
@@ -126,7 +127,7 @@ case "${1:-}" in
     echo "Usage: ./bump-version.sh <product> <version>"
     echo "       ./bump-version.sh --list"
     echo ""
-    echo "Products: friendly, desipops, mandee, swyft, bharat-bandhu, school, wedding, control"
+    echo "Products: friendly, desipops, mandee, swyft, bharat-bandhu, school, wedding, control, compute"
     exit 1
     ;;
   *)

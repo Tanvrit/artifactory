@@ -13,7 +13,7 @@ const CORS_HEADERS = {
 
 const VALID_PRODUCTS = [
   'friendly', 'desipops', 'mandee', 'swyft',
-  'bharat-bandhu', 'school', 'wedding', 'control',
+  'bharat-bandhu', 'school', 'wedding', 'control', 'compute',
 ];
 
 const TANVRIT_ICONS = ['tanvrit-mark', 'tanvrit-wordmark', 'tanvrit-wordmark-light'];

@@ -55,6 +55,13 @@ export const PRODUCTS = [
     color: '#1A5C3A',
     iconUrl: '/icons/control.svg',
   },
+  {
+    slug: 'compute',
+    name: 'Tanvrit Compute',
+    tagline: 'Distributed Compute Portal',
+    color: '#2563EB',
+    iconUrl: '/icons/compute.svg',
+  },
 ] as const;
 
 export type ProductSlug = typeof PRODUCTS[number]['slug'];

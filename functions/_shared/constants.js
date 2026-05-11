@@ -15,6 +15,7 @@ export const VALID_PRODUCTS = [
   'school',
   'wedding',
   'control',
+  'compute',
 ];
 
 export const PLATFORM_FILE_MAP = {

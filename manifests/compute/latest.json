@@ -11,7 +11,7 @@
   "platforms": {
     "macos-arm64": {
       "url": "https://artifacts.tanvrit.com/compute/1.0.0/macos-arm64",
-      "direct_url": "https://github.com/Tanvrit/artifactory/releases/download/compute-v1.0.0/Tanvrit.Compute-1.0.0.dmg",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/compute-v1.0.0/Tanvrit.Compute-1.0.0.dmg",
       "sha256": "",
       "size_bytes": 147818752,
       "format": "dmg",
@@ -19,7 +19,7 @@
     },
     "windows-x64": {
       "url": "https://artifacts.tanvrit.com/compute/1.0.0/windows-x64",
-      "direct_url": "https://github.com/tanvrit/compute/releases/latest",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/compute-v1.0.0/Tanvrit.Compute-1.0.0.msi",
       "sha256": "",
       "size_bytes": 0,
       "format": "msi",
@@ -27,7 +27,7 @@
     },
     "linux-x64": {
       "url": "https://artifacts.tanvrit.com/compute/1.0.0/linux-x64",
-      "direct_url": "https://github.com/tanvrit/compute/releases/latest",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/compute-v1.0.0/Tanvrit.Compute-1.0.0.deb",
       "sha256": "",
       "size_bytes": 0,
       "format": "deb",

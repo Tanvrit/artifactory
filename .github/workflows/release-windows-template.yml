@@ -1,0 +1,210 @@
+# ─────────────────────────────────────────────────────────────
+# Reusable Workflow: Build + publish Windows x64 MSI
+#
+# Caller example:
+#   jobs:
+#     release:
+#       uses: tanvrit/artifactory/.github/workflows/release-windows-template.yml@main
+#       with:
+#         product: friendly
+#         version: 1.2.0
+#         gradle_module: composeApp
+#         main_class: com.friendly.MainKt
+#         package_name: com.friendly
+#       secrets: inherit
+#
+# Produces: <product>-<version>-windows-x64.msi + .sha256
+# Authenticode signing activates when WINDOWS_SIGNING_CERT is set; otherwise
+# the MSI ships unsigned (SmartScreen warns — "More info → Run anyway").
+#
+# Graceful-skip guard: bails out cleanly if the caller's composeApp doesn't
+# declare a jvm() target.
+# ─────────────────────────────────────────────────────────────
+
+name: Release Windows (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      product:
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+      gradle_module:
+        type: string
+        required: true
+        default: 'composeApp'
+      main_class:
+        type: string
+        required: true
+      package_name:
+        type: string
+        required: true
+      windows_upgrade_uuid:
+        description: 'Stable Windows MSI upgrade UUID (immutable per product)'
+        type: string
+        required: false
+        default: ''
+      release_notes:
+        type: string
+        required: false
+        default: ''
+      release_notes_hi:
+        type: string
+        required: false
+        default: ''
+    secrets:
+      WINDOWS_SIGNING_CERT:
+        description: 'Base64-encoded Authenticode .pfx — when set, MSI is signed; otherwise MSI ships unsigned'
+        required: false
+      WINDOWS_SIGNING_PASSWORD:
+        required: false
+      ARTIFACTS_REPO_TOKEN:
+        required: true
+      CF_ACCOUNT_ID:
+        required: true
+      R2_ACCESS_KEY_ID:
+        required: false
+      R2_SECRET_ACCESS_KEY:
+        required: false
+
+jobs:
+  build-windows:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify target supported
+        id: guard
+        shell: bash
+        run: |
+          BUILD_FILE="${{ inputs.gradle_module }}/build.gradle.kts"
+          if [ ! -f "$BUILD_FILE" ]; then
+            echo "::notice::skipped: $BUILD_FILE not found for ${{ inputs.product }}"
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! grep -qE '^\s*(jvm\(|jvm \{|jvm\("desktop")' "$BUILD_FILE"; then
+            echo "::notice::skipped: jvm() target not declared in $BUILD_FILE — Windows MSI build cannot run for ${{ inputs.product }}"
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "supported=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.guard.outputs.supported == 'true'
+        with:
+          repository: tanvrit/artifactory
+          path: _branding
+          token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+          sparse-checkout: branding/icons/dist/${{ inputs.product }}
+
+      - name: Copy icons
+        if: steps.guard.outputs.supported == 'true'
+        shell: bash
+        run: |
+          mkdir -p ${{ inputs.gradle_module }}/icons
+          ICON="_branding/branding/icons/dist/${{ inputs.product }}/windows/${{ inputs.product }}.ico"
+          [ -f "$ICON" ] && cp "$ICON" "${{ inputs.gradle_module }}/icons/" || true
+
+      - uses: actions/setup-java@v4
+        if: steps.guard.outputs.supported == 'true'
+        with: { distribution: temurin, java-version: '21' }
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.guard.outputs.supported == 'true'
+
+      - name: Build Windows MSI
+        if: steps.guard.outputs.supported == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./gradlew :${{ inputs.gradle_module }}:packageMsi -PappVersion=${{ inputs.version }} --no-daemon
+
+      - name: Rename + checksum artifact
+        if: steps.guard.outputs.supported == 'true'
+        shell: bash
+        run: |
+          MSI=$(find ${{ inputs.gradle_module }}/build/compose/binaries -name "*.msi" | head -1)
+          ARTIFACT="${{ inputs.product }}-${{ inputs.version }}-windows-x64.msi"
+          mv "$MSI" "$ARTIFACT"
+          echo "MSI_ARTIFACT=$ARTIFACT" >> "$GITHUB_ENV"
+          sha256sum "$ARTIFACT" > "${ARTIFACT}.sha256"
+
+      # Authenticode signing — activates when WINDOWS_SIGNING_CERT is set
+      # (post-v1 once an OV/EV cert is procured). Without the secret, the
+      # MSI ships unsigned and SmartScreen warns the first few installs.
+      - name: Sign Windows MSI
+        if: steps.guard.outputs.supported == 'true' && env.CERT_PRESENT == 'true'
+        shell: pwsh
+        env:
+          CERT_PRESENT: ${{ secrets.WINDOWS_SIGNING_CERT != '' && 'true' || 'false' }}
+          WINDOWS_SIGNING_CERT: ${{ secrets.WINDOWS_SIGNING_CERT }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          $cert = Join-Path $env:RUNNER_TEMP "signing.pfx"
+          [IO.File]::WriteAllBytes($cert, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT))
+          $signtool = "${env:ProgramFiles(x86)}\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe"
+          if (-not (Test-Path $signtool)) { $signtool = "signtool" }
+          & $signtool sign /f $cert /p $env:WINDOWS_SIGNING_PASSWORD `
+            /tr "http://timestamp.digicert.com" /td sha256 /fd sha256 /v `
+            $env:MSI_ARTIFACT
+          # Re-hash post-signing (signature mutates the file bytes)
+          Get-FileHash -Algorithm SHA256 $env:MSI_ARTIFACT | ForEach-Object {
+            "$($_.Hash.ToLower())  $env:MSI_ARTIFACT" | Out-File "${env:MSI_ARTIFACT}.sha256" -Encoding ascii
+          }
+          Remove-Item $cert -Force
+
+      - name: Upload to GitHub Release
+        if: steps.guard.outputs.supported == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: tanvrit/artifactory
+          tag_name: ${{ inputs.product }}-v${{ inputs.version }}
+          name: "${{ inputs.product }} v${{ inputs.version }}"
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: false
+          files: |
+            ${{ inputs.product }}-${{ inputs.version }}-windows-x64.msi
+            ${{ inputs.product }}-${{ inputs.version }}-windows-x64.msi.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+
+      - name: Mirror to Cloudflare R2
+        if: steps.guard.outputs.supported == 'true' && env.R2_KEY_PRESENT == 'true'
+        shell: bash
+        env:
+          R2_KEY_PRESENT: ${{ secrets.R2_ACCESS_KEY_ID != '' && 'true' || 'false' }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          PRODUCT: ${{ inputs.product }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          ENDPOINT="https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          DEST="s3://tanvrit-artifacts/releases/${PRODUCT}/${VERSION}"
+          for f in ${PRODUCT}-${VERSION}-windows-x64.msi ${PRODUCT}-${VERSION}-windows-x64.msi.sha256; do
+            aws s3 cp "$f" "${DEST}/$f" --endpoint-url "$ENDPOINT" --no-progress
+          done
+
+      - name: Dispatch manifest update
+        if: steps.guard.outputs.supported == 'true'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+          repository: tanvrit/artifactory
+          event-type: update-manifest
+          client-payload: |
+            {
+              "product": "${{ inputs.product }}",
+              "version": "${{ inputs.version }}",
+              "platform": "windows-x64",
+              "build": "${{ github.run_number }}",
+              "released_at": "${{ github.event.head_commit.timestamp || '' }}",
+              "release_notes": "${{ inputs.release_notes }}",
+              "release_notes_hi": "${{ inputs.release_notes_hi }}"
+            }

@@ -15,6 +15,7 @@ export interface Manifest {
   build: number;
   released_at: string;
   release_notes: string;
+  release_notes_hi?: string;
   min_required_version: string;
   platforms: Record<string, PlatformEntry>;
 }

@@ -23,12 +23,12 @@ export async function onRequest(context) {
   if (env.ARTIFACTS) {
     const obj = await env.ARTIFACTS.get('manifests/catalog.json');
     if (!obj) return jsonError(404, 'catalog.json not found');
-    body = await obj.text();
+    body = obj.body;
     etag = obj.httpEtag;
   } else {
     const res = await fetch(`${GITHUB_RAW}/manifests/catalog.json`);
     if (!res.ok) return jsonError(404, 'catalog.json not found');
-    body = await res.text();
+    body = res.body;
     etag = res.headers.get('etag') || '';
   }
 
