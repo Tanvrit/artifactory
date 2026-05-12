@@ -1,0 +1,167 @@
+# ─────────────────────────────────────────────────────────────
+# Reusable Workflow: Build + deploy Web (Firebase Hosting variant)
+#
+# Used by products on Firebase Hosting (currently: desipops). For
+# Cloudflare Pages products, use release-web-template.yml instead.
+#
+# Caller example:
+#   jobs:
+#     release:
+#       uses: tanvrit/artifactory/.github/workflows/release-firebase-template.yml@main
+#       with:
+#         product: desipops
+#         firebase_project_id: desipops-d17ed
+#         gradle_task: ':composeApp:wasmJsBrowserDistribution'
+#         wasm_output_dir: 'composeApp/build/dist/wasmJs/productionExecutable'
+#         landing_build_dir: 'web'
+#         service_account_secret_name: FIREBASE_SERVICE_ACCOUNT_DESIPOPS_D17ED
+#       secrets: inherit
+#
+# Triggers on push to main + workflow_dispatch.
+# Graceful-skip guard: no wasmJs() target → exit 0.
+# ─────────────────────────────────────────────────────────────
+
+name: Release Firebase (Reusable — Firebase Hosting)
+
+on:
+  workflow_call:
+    inputs:
+      product:
+        type: string
+        required: true
+      firebase_project_id:
+        description: 'Firebase project ID (e.g. desipops-d17ed)'
+        type: string
+        required: true
+      firebase_channel_id:
+        description: 'Hosting channel ID (default: live)'
+        type: string
+        required: false
+        default: 'live'
+      gradle_task:
+        type: string
+        required: false
+        default: ':composeApp:wasmJsBrowserDistribution'
+      gradle_module:
+        type: string
+        required: false
+        default: 'composeApp'
+      wasm_output_dir:
+        type: string
+        required: false
+        default: 'composeApp/build/dist/wasmJs/productionExecutable'
+      landing_build_dir:
+        description: 'Optional landing-site dir for npm ci + npm run build'
+        type: string
+        required: false
+        default: ''
+      assemble_script:
+        description: 'Optional bash script that assembles dist/ — overrides default merge logic'
+        type: string
+        required: false
+        default: ''
+    secrets:
+      # Caller passes its product-specific service-account secret here via
+      # secrets: inherit. The secret name itself is conventionally
+      # FIREBASE_SERVICE_ACCOUNT_<PRODUCT> per the existing pattern.
+      FIREBASE_SERVICE_ACCOUNT_JSON:
+        description: 'Firebase service-account JSON (generic name; caller can map its product-specific secret to this)'
+        required: false
+      ARTIFACTS_REPO_TOKEN:
+        required: true
+      GH_PACKAGES_TOKEN:
+        required: false
+
+jobs:
+  release-firebase:
+    name: Web (Firebase Hosting)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify target supported
+        id: guard
+        shell: bash
+        run: |
+          BUILD_FILE="${{ inputs.gradle_module }}/build.gradle.kts"
+          if [ ! -f "$BUILD_FILE" ]; then
+            echo "::notice::skipped: $BUILD_FILE not found for ${{ inputs.product }}"
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! grep -qE 'wasmJs\s*\{|wasmJs\(\)|^\s*js\s*\{' "$BUILD_FILE"; then
+            echo "::notice::skipped: no wasmJs() / js() target in $BUILD_FILE — Web deploy cannot run for ${{ inputs.product }}"
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "supported=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        if: steps.guard.outputs.supported == 'true'
+        with: { distribution: zulu, java-version: '21' }
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.supported == 'true'
+        with:
+          node-version: '20'
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.guard.outputs.supported == 'true'
+
+      - name: Build Wasm/JS bundle
+        if: steps.guard.outputs.supported == 'true'
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+        run: ./gradlew ${{ inputs.gradle_task }} --parallel --no-daemon
+
+      - name: Build landing site
+        if: steps.guard.outputs.supported == 'true' && inputs.landing_build_dir != ''
+        run: |
+          cd ${{ inputs.landing_build_dir }}
+          npm ci
+          npm run build
+
+      - name: Assemble distribution (custom script)
+        if: steps.guard.outputs.supported == 'true' && inputs.assemble_script != ''
+        run: |
+          chmod +x "${{ inputs.assemble_script }}"
+          "${{ inputs.assemble_script }}"
+
+      - name: Assemble distribution (default merge logic)
+        if: steps.guard.outputs.supported == 'true' && inputs.assemble_script == ''
+        run: |
+          rm -rf dist
+          if [ -n "${{ inputs.landing_build_dir }}" ]; then
+            mkdir -p dist/app
+            cp -r "${{ inputs.landing_build_dir }}"/out/. dist/
+            cp -r "${{ inputs.wasm_output_dir }}"/. dist/app/
+          else
+            mkdir -p dist
+            cp -r "${{ inputs.wasm_output_dir }}"/. dist/
+          fi
+
+      - name: Deploy to Firebase Hosting
+        if: steps.guard.outputs.supported == 'true' && env.SA_PRESENT == 'true' && github.event_name == 'push'
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        env:
+          SA_PRESENT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON != '' && 'true' || 'false' }}
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          channelId: ${{ inputs.firebase_channel_id }}
+          projectId: ${{ inputs.firebase_project_id }}
+
+      - name: Dispatch manifest update
+        if: steps.guard.outputs.supported == 'true' && github.event_name == 'push'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+          repository: tanvrit/artifactory
+          event-type: update-manifest
+          client-payload: |
+            {
+              "product": "${{ inputs.product }}",
+              "version": "${{ github.sha }}",
+              "platform": "web",
+              "build": "${{ github.run_number }}",
+              "released_at": "${{ github.event.head_commit.timestamp || '' }}"
+            }

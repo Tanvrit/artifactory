@@ -1,0 +1,230 @@
+# ─────────────────────────────────────────────────────────────
+# Reusable Workflow: Build + publish Android signed APK + AAB
+#
+# Caller example:
+#   jobs:
+#     release:
+#       uses: tanvrit/artifactory/.github/workflows/release-android-template.yml@main
+#       with:
+#         product: friendly
+#         version: 1.2.0
+#         gradle_module: composeApp
+#         application_id: com.tanvrit.friendly
+#         package_name: com.friendly
+#         play_track: 'internal'   # internal | alpha | beta | production
+#       secrets: inherit
+#
+# Produces:
+#   <product>-<version>-android.apk + .sha256
+#   <product>-<version>-android.aab + .sha256
+#
+# Signing: activates when ANDROID_SIGNING_KEYSTORE secret is present.
+# Without it, the build still runs (debug-signed) — the artifact ships
+# but cannot be installed on devices that require release signing or
+# uploaded to the Play Store.
+#
+# Play Store upload: gated on PLAY_STORE_SERVICE_ACCOUNT_JSON. Without
+# it, the APK + AAB land in GitHub Releases + R2 and an engineer
+# manually uploads via Play Console.
+#
+# Graceful-skip guard: no androidTarget() in composeApp/build.gradle.kts
+# → exit 0 with skip notice.
+# ─────────────────────────────────────────────────────────────
+
+name: Release Android (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      product:
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+      gradle_module:
+        type: string
+        required: true
+        default: 'composeApp'
+      application_id:
+        description: 'Android application ID (e.g. com.tanvrit.friendly)'
+        type: string
+        required: true
+      package_name:
+        type: string
+        required: true
+      play_track:
+        description: 'Play Store track for upload (internal | alpha | beta | production)'
+        type: string
+        required: false
+        default: 'internal'
+      release_notes:
+        type: string
+        required: false
+        default: ''
+      release_notes_hi:
+        type: string
+        required: false
+        default: ''
+    secrets:
+      ANDROID_SIGNING_KEYSTORE:
+        description: 'Base64-encoded .jks keystore'
+        required: false
+      ANDROID_SIGNING_KEYSTORE_PASSWORD:
+        required: false
+      ANDROID_SIGNING_KEY_ALIAS:
+        required: false
+      ANDROID_SIGNING_KEY_PASSWORD:
+        required: false
+      PLAY_STORE_SERVICE_ACCOUNT_JSON:
+        description: 'Google Play Console service-account JSON — when set, APK/AAB uploaded to the named play_track'
+        required: false
+      ARTIFACTS_REPO_TOKEN:
+        required: true
+      CF_ACCOUNT_ID:
+        required: true
+      R2_ACCESS_KEY_ID:
+        required: false
+      R2_SECRET_ACCESS_KEY:
+        required: false
+      GH_PACKAGES_TOKEN:
+        required: false
+
+jobs:
+  build-android:
+    name: Android (signed APK + AAB)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify target supported
+        id: guard
+        shell: bash
+        run: |
+          BUILD_FILE="${{ inputs.gradle_module }}/build.gradle.kts"
+          if [ ! -f "$BUILD_FILE" ]; then
+            echo "::notice::skipped: $BUILD_FILE not found for ${{ inputs.product }}"
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! grep -qE 'androidTarget\s*\{|androidTarget\(\)|^\s*android\s*\{' "$BUILD_FILE"; then
+            echo "::notice::skipped: no androidTarget() / android block in $BUILD_FILE — Android build cannot run for ${{ inputs.product }}"
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "supported=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        if: steps.guard.outputs.supported == 'true'
+        with: { distribution: temurin, java-version: '21' }
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.guard.outputs.supported == 'true'
+
+      # Decode the keystore into a temp file. Android Gradle plugin reads
+      # signing config from env vars our build.gradle.kts blocks reference
+      # (RELEASE_STORE_FILE, RELEASE_STORE_PASSWORD, etc.).
+      - name: Decode signing keystore
+        if: steps.guard.outputs.supported == 'true' && env.KEYSTORE_PRESENT == 'true'
+        env:
+          KEYSTORE_PRESENT: ${{ secrets.ANDROID_SIGNING_KEYSTORE != '' && 'true' || 'false' }}
+          ANDROID_SIGNING_KEYSTORE: ${{ secrets.ANDROID_SIGNING_KEYSTORE }}
+        run: |
+          set -euo pipefail
+          KS="$RUNNER_TEMP/release.keystore"
+          echo "$ANDROID_SIGNING_KEYSTORE" | base64 --decode > "$KS"
+          echo "RELEASE_STORE_FILE=$KS" >> "$GITHUB_ENV"
+          echo "RELEASE_STORE_PASSWORD=${{ secrets.ANDROID_SIGNING_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "RELEASE_KEY_ALIAS=${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}" >> "$GITHUB_ENV"
+          echo "RELEASE_KEY_PASSWORD=${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+
+      - name: Build APK + AAB
+        if: steps.guard.outputs.supported == 'true'
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          ./gradlew :${{ inputs.gradle_module }}:assembleRelease \
+                    :${{ inputs.gradle_module }}:bundleRelease \
+                    -PappVersion=${{ inputs.version }} \
+                    --no-daemon
+
+      - name: Rename + checksum artifacts
+        if: steps.guard.outputs.supported == 'true'
+        run: |
+          APK=$(find ${{ inputs.gradle_module }}/build/outputs/apk/release -name "*.apk" | head -1)
+          AAB=$(find ${{ inputs.gradle_module }}/build/outputs/bundle/release -name "*.aab" | head -1)
+          APK_DEST="${{ inputs.product }}-${{ inputs.version }}-android.apk"
+          AAB_DEST="${{ inputs.product }}-${{ inputs.version }}-android.aab"
+          [ -n "$APK" ] && mv "$APK" "$APK_DEST" && sha256sum "$APK_DEST" > "${APK_DEST}.sha256"
+          [ -n "$AAB" ] && mv "$AAB" "$AAB_DEST" && sha256sum "$AAB_DEST" > "${AAB_DEST}.sha256"
+
+      - name: Upload to GitHub Release
+        if: steps.guard.outputs.supported == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: tanvrit/artifactory
+          tag_name: ${{ inputs.product }}-v${{ inputs.version }}
+          name: "${{ inputs.product }} v${{ inputs.version }}"
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: false
+          files: |
+            ${{ inputs.product }}-${{ inputs.version }}-android.apk
+            ${{ inputs.product }}-${{ inputs.version }}-android.apk.sha256
+            ${{ inputs.product }}-${{ inputs.version }}-android.aab
+            ${{ inputs.product }}-${{ inputs.version }}-android.aab.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+
+      - name: Mirror to Cloudflare R2
+        if: steps.guard.outputs.supported == 'true' && env.R2_KEY_PRESENT == 'true'
+        env:
+          R2_KEY_PRESENT: ${{ secrets.R2_ACCESS_KEY_ID != '' && 'true' || 'false' }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          PRODUCT: ${{ inputs.product }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          ENDPOINT="https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          DEST="s3://tanvrit-artifacts/releases/${PRODUCT}/${VERSION}"
+          for f in ${PRODUCT}-${VERSION}-android.apk ${PRODUCT}-${VERSION}-android.apk.sha256 \
+                   ${PRODUCT}-${VERSION}-android.aab ${PRODUCT}-${VERSION}-android.aab.sha256; do
+            [ -f "$f" ] && aws s3 cp "$f" "${DEST}/$f" --endpoint-url "$ENDPOINT" --no-progress
+          done
+
+      # Play Store upload — activates only when both keystore + Play SA
+      # are set. Internal track by default; promotion to higher tracks
+      # is an out-of-band Play Console action.
+      - name: Upload to Google Play
+        if: steps.guard.outputs.supported == 'true' && env.PLAY_SA_PRESENT == 'true'
+        env:
+          PLAY_SA_PRESENT: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON != '' && 'true' || 'false' }}
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
+          packageName: ${{ inputs.application_id }}
+          releaseFiles: ${{ inputs.product }}-${{ inputs.version }}-android.aab
+          track: ${{ inputs.play_track }}
+          status: completed
+          changesNotSentForReview: false
+
+      - name: Dispatch manifest update
+        if: steps.guard.outputs.supported == 'true'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+          repository: tanvrit/artifactory
+          event-type: update-manifest
+          client-payload: |
+            {
+              "product": "${{ inputs.product }}",
+              "version": "${{ inputs.version }}",
+              "platform": "android",
+              "build": "${{ github.run_number }}",
+              "released_at": "${{ github.event.head_commit.timestamp || '' }}",
+              "release_notes": "${{ inputs.release_notes }}",
+              "release_notes_hi": "${{ inputs.release_notes_hi }}"
+            }

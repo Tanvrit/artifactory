@@ -1,0 +1,277 @@
+# ─────────────────────────────────────────────────────────────
+# Reusable Workflow: Build + publish iOS signed .ipa
+#
+# Caller example:
+#   jobs:
+#     release:
+#       uses: tanvrit/artifactory/.github/workflows/release-ios-template.yml@main
+#       with:
+#         product: friendly
+#         version: 1.2.0
+#         bundle_id: com.tanvrit.friendly
+#         xcodeproj_path: iosApp/iosApp.xcodeproj
+#         scheme: iosApp
+#         configuration: Release
+#         export_method: app-store
+#       secrets: inherit
+#
+# Produces: <product>-<version>-ios.ipa + .sha256
+#
+# Signing: activates when IOS_SIGNING_CERT secret is present. Without it,
+# xcodebuild archive runs unsigned and exportArchive will fail at the
+# code-signing step — the run completes with a clear error rather than
+# producing a broken unsigned .ipa. For v1, signing is REQUIRED to ship
+# an .ipa at all (unlike macOS DMG which can ship ad-hoc-signed).
+#
+# TestFlight upload: gated on APP_STORE_CONNECT_API_KEY_P8. v1 ships just
+# the .ipa to GH Release + R2; v2 will add the xcrun altool upload step.
+#
+# Graceful-skip guard: no iosArm64() in composeApp/build.gradle.kts or
+# no iosApp/ Xcode project → exit 0 with skip notice.
+# ─────────────────────────────────────────────────────────────
+
+name: Release iOS (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      product:
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+      gradle_module:
+        type: string
+        required: false
+        default: 'composeApp'
+      bundle_id:
+        type: string
+        required: true
+      xcodeproj_path:
+        type: string
+        required: false
+        default: 'iosApp/iosApp.xcodeproj'
+      scheme:
+        type: string
+        required: false
+        default: 'iosApp'
+      configuration:
+        type: string
+        required: false
+        default: 'Release'
+      export_method:
+        description: 'app-store | ad-hoc | development | enterprise'
+        type: string
+        required: false
+        default: 'app-store'
+      release_notes:
+        type: string
+        required: false
+        default: ''
+      release_notes_hi:
+        type: string
+        required: false
+        default: ''
+    secrets:
+      IOS_SIGNING_CERT:
+        description: 'Base64-encoded Apple Distribution .p12'
+        required: false
+      IOS_SIGNING_CERT_PASSWORD:
+        required: false
+      IOS_PROVISIONING_PROFILE:
+        description: 'Base64-encoded .mobileprovision'
+        required: false
+      APP_STORE_CONNECT_API_KEY_ID:
+        description: 'App Store Connect API Key ID — when set, .ipa uploads to TestFlight'
+        required: false
+      APP_STORE_CONNECT_API_ISSUER_ID:
+        required: false
+      APP_STORE_CONNECT_API_KEY_P8:
+        description: 'Base64-encoded .p8 private key'
+        required: false
+      ARTIFACTS_REPO_TOKEN:
+        required: true
+      CF_ACCOUNT_ID:
+        required: true
+      R2_ACCESS_KEY_ID:
+        required: false
+      R2_SECRET_ACCESS_KEY:
+        required: false
+
+jobs:
+  build-ios:
+    name: iOS (.ipa)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify target supported
+        id: guard
+        shell: bash
+        run: |
+          BUILD_FILE="${{ inputs.gradle_module }}/build.gradle.kts"
+          if [ ! -f "$BUILD_FILE" ]; then
+            echo "::notice::skipped: $BUILD_FILE not found for ${{ inputs.product }}"
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! grep -qE 'iosArm64\s*\(|iosSimulatorArm64\s*\(' "$BUILD_FILE"; then
+            echo "::notice::skipped: no iosArm64() / iosSimulatorArm64() target in $BUILD_FILE — iOS build cannot run for ${{ inputs.product }}"
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ ! -d "$(dirname '${{ inputs.xcodeproj_path }}')" ]; then
+            echo "::notice::skipped: ${{ inputs.xcodeproj_path }} not found — iOS build cannot run for ${{ inputs.product }}"
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "supported=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        if: steps.guard.outputs.supported == 'true'
+        with: { distribution: temurin, java-version: '21' }
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.guard.outputs.supported == 'true'
+
+      # Import the Apple Distribution cert + provisioning profile into a
+      # temporary keychain. Same one-way pattern as the macOS DMG template.
+      - name: Import iOS signing assets
+        if: steps.guard.outputs.supported == 'true' && env.CERT_PRESENT == 'true'
+        env:
+          CERT_PRESENT: ${{ secrets.IOS_SIGNING_CERT != '' && 'true' || 'false' }}
+          IOS_SIGNING_CERT: ${{ secrets.IOS_SIGNING_CERT }}
+          IOS_SIGNING_CERT_PASSWORD: ${{ secrets.IOS_SIGNING_CERT_PASSWORD }}
+          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/ios.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          CERT_PATH="$RUNNER_TEMP/ios-cert.p12"
+          PROFILE_PATH="$RUNNER_TEMP/profile.mobileprovision"
+
+          echo "$IOS_SIGNING_CERT" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$IOS_SIGNING_CERT_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | xargs)
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Install the provisioning profile in the standard location.
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          if [ -n "${IOS_PROVISIONING_PROFILE:-}" ]; then
+            echo "$IOS_PROVISIONING_PROFILE" | base64 --decode > "$PROFILE_PATH"
+            UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /dev/stdin <<< "$(security cms -D -i "$PROFILE_PATH")" 2>/dev/null || echo "$(uuidgen)")
+            cp "$PROFILE_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/"${UUID}.mobileprovision"
+          fi
+
+          rm -f "$CERT_PATH"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+      - name: Build KMP framework
+        if: steps.guard.outputs.supported == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./gradlew :${{ inputs.gradle_module }}:linkPodReleaseFrameworkIosArm64 --no-daemon
+
+      - name: xcodebuild archive
+        if: steps.guard.outputs.supported == 'true'
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project "${{ inputs.xcodeproj_path }}" \
+            -scheme "${{ inputs.scheme }}" \
+            -configuration "${{ inputs.configuration }}" \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/${{ inputs.product }}.xcarchive" \
+            archive
+        env:
+          DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: xcodebuild -exportArchive
+        if: steps.guard.outputs.supported == 'true'
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/exportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>${{ inputs.export_method }}</string>
+            <key>teamID</key><string>${{ secrets.APPLE_TEAM_ID }}</string>
+            <key>signingStyle</key><string>manual</string>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$RUNNER_TEMP/${{ inputs.product }}.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/exportOptions.plist"
+
+      - name: Rename + checksum artifact
+        if: steps.guard.outputs.supported == 'true'
+        run: |
+          IPA=$(find "$RUNNER_TEMP/export" -name "*.ipa" | head -1)
+          ARTIFACT="${{ inputs.product }}-${{ inputs.version }}-ios.ipa"
+          mv "$IPA" "$ARTIFACT"
+          shasum -a 256 "$ARTIFACT" > "${ARTIFACT}.sha256"
+
+      - name: Cleanup keychain
+        if: always() && env.KEYCHAIN_PATH != ''
+        run: security delete-keychain "$KEYCHAIN_PATH" || true
+
+      - name: Upload to GitHub Release
+        if: steps.guard.outputs.supported == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: tanvrit/artifactory
+          tag_name: ${{ inputs.product }}-v${{ inputs.version }}
+          name: "${{ inputs.product }} v${{ inputs.version }}"
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: false
+          files: |
+            ${{ inputs.product }}-${{ inputs.version }}-ios.ipa
+            ${{ inputs.product }}-${{ inputs.version }}-ios.ipa.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+
+      - name: Mirror to Cloudflare R2
+        if: steps.guard.outputs.supported == 'true' && env.R2_KEY_PRESENT == 'true'
+        env:
+          R2_KEY_PRESENT: ${{ secrets.R2_ACCESS_KEY_ID != '' && 'true' || 'false' }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          PRODUCT: ${{ inputs.product }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          ENDPOINT="https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          DEST="s3://tanvrit-artifacts/releases/${PRODUCT}/${VERSION}"
+          for f in ${PRODUCT}-${VERSION}-ios.ipa ${PRODUCT}-${VERSION}-ios.ipa.sha256; do
+            aws s3 cp "$f" "${DEST}/$f" --endpoint-url "$ENDPOINT" --no-progress
+          done
+
+      - name: Dispatch manifest update
+        if: steps.guard.outputs.supported == 'true'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+          repository: tanvrit/artifactory
+          event-type: update-manifest
+          client-payload: |
+            {
+              "product": "${{ inputs.product }}",
+              "version": "${{ inputs.version }}",
+              "platform": "ios",
+              "build": "${{ github.run_number }}",
+              "released_at": "${{ github.event.head_commit.timestamp || '' }}",
+              "release_notes": "${{ inputs.release_notes }}",
+              "release_notes_hi": "${{ inputs.release_notes_hi }}"
+            }
