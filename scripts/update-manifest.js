@@ -29,26 +29,60 @@ const R2_RELEASES  = `${BASE_URL}/releases`;
 
 // ── Product metadata ──────────────────────────────────────────────────────────
 const PRODUCT_META = {
-  friendly:        { display_name: 'Friendly',      tagline: 'POS & Retail for Bharat',          min_version_bump: 'minor' },
-  desipops:        { display_name: 'DesiPops',      tagline: 'Entertainment for Bharat',          min_version_bump: 'minor' },
-  mandee:          { display_name: 'Mandee',        tagline: 'Business Management, Simplified',   min_version_bump: 'minor' },
-  swyft:           { display_name: 'Swyft',         tagline: 'Logistics for Bharat',              min_version_bump: 'minor' },
-  'bharat-bandhu': { display_name: 'Bharat Bandhu', tagline: 'Communities for Bharat',            min_version_bump: 'patch' },
-  school:          { display_name: 'School',        tagline: 'Education Management for Bharat',   min_version_bump: 'minor' },
-  wedding:         { display_name: 'Wedding',       tagline: 'Weddings, Made Magical',            min_version_bump: 'minor' },
-  control:         { display_name: 'Control',       tagline: 'Mission Control for Tanvrit',       min_version_bump: 'patch' },
+  friendly:          { display_name: 'Friendly',         tagline: 'POS & Retail for Bharat',          min_version_bump: 'minor' },
+  desipops:          { display_name: 'DesiPops',         tagline: 'Entertainment for Bharat',         min_version_bump: 'minor' },
+  // `mandee` retained as a forward-compat alias — manifest URLs under
+  // /releases/mandee/ stay resolvable. New releases use 'mandee-business'.
+  mandee:            { display_name: 'Mandee',           tagline: 'Business Management, Simplified',  min_version_bump: 'minor', deprecated_use: 'mandee-business' },
+  'mandee-business': { display_name: 'Mandee',           tagline: 'Business Management, Simplified',  min_version_bump: 'minor' },
+  swyft:             { display_name: 'Swyft',            tagline: 'Logistics for Bharat',             min_version_bump: 'minor' },
+  'bharat-bandhu':   { display_name: 'Bharat Bandhu',    tagline: 'Communities for Bharat',           min_version_bump: 'patch' },
+  school:            { display_name: 'School',           tagline: 'Education Management for Bharat',  min_version_bump: 'minor' },
+  wedding:           { display_name: 'Wedding',          tagline: 'Weddings, Made Magical',           min_version_bump: 'minor' },
+  control:           { display_name: 'Control',          tagline: 'Mission Control for Tanvrit',      min_version_bump: 'patch' },
+  ai:                { display_name: 'Tanvrit AI',       tagline: 'AI for Bharat',                    min_version_bump: 'minor' },
+  auditor:           { display_name: 'Tanvrit Auditor',  tagline: 'Audit + Compliance',               min_version_bump: 'patch' },
+  automator:         { display_name: 'Tanvrit Automator',tagline: 'Workflow Automation',              min_version_bump: 'patch' },
+  compute:           { display_name: 'Tanvrit Compute',  tagline: 'Distributed Compute for Bharat',   min_version_bump: 'patch' },
+  market:            { display_name: 'Tanvrit Market',   tagline: 'Markets for Bharat',               min_version_bump: 'minor' },
+  tanvrit:           { display_name: 'Tanvrit Shell',    tagline: 'One launcher for the Tanvrit suite',min_version_bump: 'minor' },
+  admin:             { display_name: 'Tanvrit Admin',    tagline: 'Admin Console for Tanvrit',        min_version_bump: 'patch' },
 };
 
 // ── Per-product platform lists ────────────────────────────────────────────────
+// Every entry lists ALL 8 OS keys per the "every platform has every target"
+// rule. A platform whose source target isn't declared yet (or whose first real
+// build hasn't shipped) will have `available: false` in the manifest snapshot
+// until that workflow produces its first artifact — the entry is still here so
+// the manifest schema is uniform and the UI can show "coming soon" badges.
+const ALL_OS_KEYS = [
+  'android',
+  'ios',
+  'macos-arm64',
+  'macos-x64',
+  'macos-universal',
+  'windows-x64',
+  'linux-x64',
+  'linux-x64-app',
+  'web',
+];
 const PLATFORM_CONFIGS = {
-  friendly:        ['macos-arm64', 'macos-x64', 'windows-x64', 'linux-x64'],
-  desipops:        ['macos-arm64', 'macos-x64', 'windows-x64', 'linux-x64'],
-  mandee:          ['macos-arm64', 'macos-x64', 'windows-x64', 'linux-x64'],
-  swyft:           ['macos-arm64', 'macos-x64', 'windows-x64', 'linux-x64'],
-  school:          ['macos-arm64', 'macos-x64', 'windows-x64', 'linux-x64'],
-  wedding:         ['macos-arm64', 'web'],
-  'bharat-bandhu': ['android'],
-  control:         ['macos-universal', 'macos-arm64'],
+  friendly:          ALL_OS_KEYS,
+  desipops:          ALL_OS_KEYS,
+  mandee:            ALL_OS_KEYS,
+  'mandee-business': ALL_OS_KEYS,
+  swyft:             ALL_OS_KEYS,
+  school:            ALL_OS_KEYS,
+  wedding:           ALL_OS_KEYS,
+  'bharat-bandhu':   ALL_OS_KEYS,
+  control:           ALL_OS_KEYS,
+  ai:                ALL_OS_KEYS,
+  auditor:           ALL_OS_KEYS,
+  automator:         ALL_OS_KEYS,
+  compute:           ALL_OS_KEYS,
+  market:            ALL_OS_KEYS,
+  tanvrit:           ALL_OS_KEYS,
+  admin:             ALL_OS_KEYS,
 };
 
 const PLATFORM_EXT = {
