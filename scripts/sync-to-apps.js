@@ -100,6 +100,66 @@ const SYNC_MAP = {
   control: [
     { from: 'control/macos/control.icns', to: 'control/app/src/main/resources/control.icns', isFile: true },
   ],
+  ai: [
+    { from: 'ai/android/mipmap-mdpi',    to: 'platforms/ai/composeApp/src/androidMain/res/mipmap-mdpi' },
+    { from: 'ai/android/mipmap-hdpi',    to: 'platforms/ai/composeApp/src/androidMain/res/mipmap-hdpi' },
+    { from: 'ai/android/mipmap-xhdpi',   to: 'platforms/ai/composeApp/src/androidMain/res/mipmap-xhdpi' },
+    { from: 'ai/android/mipmap-xxhdpi',  to: 'platforms/ai/composeApp/src/androidMain/res/mipmap-xxhdpi' },
+    { from: 'ai/android/mipmap-xxxhdpi', to: 'platforms/ai/composeApp/src/androidMain/res/mipmap-xxxhdpi' },
+    { from: 'ai/android/mipmap-anydpi-v26', to: 'platforms/ai/composeApp/src/androidMain/res/mipmap-anydpi-v26' },
+    { from: 'ai/ios/AppIcon.appiconset', to: 'platforms/ai/iosApp/iosApp/Assets.xcassets/AppIcon.appiconset' },
+    { from: 'ai/macos/ai.icns',          to: 'platforms/ai/composeApp/src/desktopMain/resources/ai.icns', isFile: true },
+    { from: 'ai/windows/ai.ico',         to: 'platforms/ai/composeApp/src/desktopMain/resources/ai.ico', isFile: true },
+    { from: 'ai/linux/ai-256.png',       to: 'platforms/ai/composeApp/src/desktopMain/resources/ai-256.png', isFile: true },
+  ],
+  auditor: [
+    { from: 'auditor/android/mipmap-mdpi',    to: 'platforms/auditor/composeApp/src/androidMain/res/mipmap-mdpi' },
+    { from: 'auditor/android/mipmap-hdpi',    to: 'platforms/auditor/composeApp/src/androidMain/res/mipmap-hdpi' },
+    { from: 'auditor/android/mipmap-xhdpi',   to: 'platforms/auditor/composeApp/src/androidMain/res/mipmap-xhdpi' },
+    { from: 'auditor/android/mipmap-xxhdpi',  to: 'platforms/auditor/composeApp/src/androidMain/res/mipmap-xxhdpi' },
+    { from: 'auditor/android/mipmap-xxxhdpi', to: 'platforms/auditor/composeApp/src/androidMain/res/mipmap-xxxhdpi' },
+    { from: 'auditor/android/mipmap-anydpi-v26', to: 'platforms/auditor/composeApp/src/androidMain/res/mipmap-anydpi-v26' },
+    { from: 'auditor/ios/AppIcon.appiconset', to: 'platforms/auditor/iosApp/iosApp/Assets.xcassets/AppIcon.appiconset' },
+    { from: 'auditor/macos/auditor.icns',     to: 'platforms/auditor/composeApp/src/desktopMain/resources/auditor.icns', isFile: true },
+    { from: 'auditor/windows/auditor.ico',    to: 'platforms/auditor/composeApp/src/desktopMain/resources/auditor.ico', isFile: true },
+    { from: 'auditor/linux/auditor-256.png',  to: 'platforms/auditor/composeApp/src/desktopMain/resources/auditor-256.png', isFile: true },
+  ],
+  automator: [
+    { from: 'automator/android/mipmap-mdpi',    to: 'platforms/automator/composeApp/src/androidMain/res/mipmap-mdpi' },
+    { from: 'automator/android/mipmap-hdpi',    to: 'platforms/automator/composeApp/src/androidMain/res/mipmap-hdpi' },
+    { from: 'automator/android/mipmap-xhdpi',   to: 'platforms/automator/composeApp/src/androidMain/res/mipmap-xhdpi' },
+    { from: 'automator/android/mipmap-xxhdpi',  to: 'platforms/automator/composeApp/src/androidMain/res/mipmap-xxhdpi' },
+    { from: 'automator/android/mipmap-xxxhdpi', to: 'platforms/automator/composeApp/src/androidMain/res/mipmap-xxxhdpi' },
+    { from: 'automator/android/mipmap-anydpi-v26', to: 'platforms/automator/composeApp/src/androidMain/res/mipmap-anydpi-v26' },
+    { from: 'automator/ios/AppIcon.appiconset', to: 'platforms/automator/iosApp/iosApp/Assets.xcassets/AppIcon.appiconset' },
+    { from: 'automator/windows/automator.ico',  to: 'platforms/automator/composeApp/icons/automator.ico', isFile: true },
+    // NOTE: automator.icns + automator-256.png already exist in composeApp/icons/ from prior manual work;
+    // don't overwrite via sync. If you want a Tanvrit-mark-derived icon, delete the existing files first.
+  ],
+  market: [
+    { from: 'market/android/mipmap-mdpi',    to: 'platforms/market/ui/ui-android/src/main/res/mipmap-mdpi' },
+    { from: 'market/android/mipmap-hdpi',    to: 'platforms/market/ui/ui-android/src/main/res/mipmap-hdpi' },
+    { from: 'market/android/mipmap-xhdpi',   to: 'platforms/market/ui/ui-android/src/main/res/mipmap-xhdpi' },
+    { from: 'market/android/mipmap-xxhdpi',  to: 'platforms/market/ui/ui-android/src/main/res/mipmap-xxhdpi' },
+    { from: 'market/android/mipmap-xxxhdpi', to: 'platforms/market/ui/ui-android/src/main/res/mipmap-xxxhdpi' },
+    { from: 'market/android/mipmap-anydpi-v26', to: 'platforms/market/ui/ui-android/src/main/res/mipmap-anydpi-v26' },
+    // market's compose.desktop config in ui/ui-desktop/build.gradle.kts references
+    // src/desktopMain/resources/icon.icns + icon.png (generic names, not <product>.icns).
+    { from: 'market/macos/market.icns',     to: 'platforms/market/ui/ui-desktop/src/desktopMain/resources/icon.icns', isFile: true },
+    { from: 'market/linux/market-256.png',  to: 'platforms/market/ui/ui-desktop/src/desktopMain/resources/icon.png', isFile: true },
+  ],
+  admin: [
+    { from: 'admin/android/mipmap-mdpi',    to: 'platforms/admin/app/src/androidMain/res/mipmap-mdpi' },
+    { from: 'admin/android/mipmap-hdpi',    to: 'platforms/admin/app/src/androidMain/res/mipmap-hdpi' },
+    { from: 'admin/android/mipmap-xhdpi',   to: 'platforms/admin/app/src/androidMain/res/mipmap-xhdpi' },
+    { from: 'admin/android/mipmap-xxhdpi',  to: 'platforms/admin/app/src/androidMain/res/mipmap-xxhdpi' },
+    { from: 'admin/android/mipmap-xxxhdpi', to: 'platforms/admin/app/src/androidMain/res/mipmap-xxxhdpi' },
+    { from: 'admin/android/mipmap-anydpi-v26', to: 'platforms/admin/app/src/androidMain/res/mipmap-anydpi-v26' },
+    { from: 'admin/ios/AppIcon.appiconset', to: 'platforms/admin/iosApp/iosApp/Assets.xcassets/AppIcon.appiconset' },
+    { from: 'admin/macos/admin.icns',       to: 'platforms/admin/app/icons/admin.icns', isFile: true },
+    { from: 'admin/windows/admin.ico',      to: 'platforms/admin/app/icons/admin.ico', isFile: true },
+    { from: 'admin/linux/admin-256.png',    to: 'platforms/admin/app/icons/admin-256.png', isFile: true },
+  ],
 };
 
 // ── Copy helpers ─────────────────────────────────────────────

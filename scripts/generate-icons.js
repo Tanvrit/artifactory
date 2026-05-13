@@ -90,6 +90,36 @@ const PRODUCTS = [
     renderer: 'sharp',
     platforms: ['android', 'ios', 'macos', 'windows', 'linux', 'web'],
   },
+  {
+    id: 'ai',
+    src: 'tanvrit/tanvrit-mark.svg',  // placeholder — designed branding pending
+    renderer: 'sharp',
+    platforms: ['android', 'ios', 'macos', 'windows', 'linux', 'web'],
+  },
+  {
+    id: 'auditor',
+    src: 'tanvrit/tanvrit-mark.svg',  // placeholder — designed branding pending
+    renderer: 'sharp',
+    platforms: ['android', 'ios', 'macos', 'windows', 'linux', 'web'],
+  },
+  {
+    id: 'automator',
+    src: 'tanvrit/tanvrit-mark.svg',  // placeholder — existing composeApp/icons/automator.icns kept as override
+    renderer: 'sharp',
+    platforms: ['android', 'ios', 'macos', 'windows', 'linux', 'web'],
+  },
+  {
+    id: 'market',
+    src: 'tanvrit/tanvrit-mark.svg',  // placeholder — designed branding pending
+    renderer: 'sharp',
+    platforms: ['android', 'ios', 'macos', 'windows', 'linux', 'web'],
+  },
+  {
+    id: 'admin',
+    src: 'tanvrit/tanvrit-mark.svg',  // internal tool — uses Tanvrit corporate mark
+    renderer: 'sharp',
+    platforms: ['android', 'ios', 'macos', 'windows', 'linux', 'web'],
+  },
 ];
 
 // ── Platform Export Specs ────────────────────────────────────
