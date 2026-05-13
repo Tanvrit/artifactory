@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    Tanvrit Compute — Distributed Compute Portal App Icon
+    Brand: Electric Blue #2563EB on Deep Slate #0F172A
+    Safe zone: artwork within 880×880 circle centered at 512,512 (radius 440)
+    Concept: Interconnected nodes — distributed compute network
+    Renderer: sharp
+  -->
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#1E293B"/>
+      <stop offset="100%" stop-color="#0F172A"/>
+    </radialGradient>
+    <linearGradient id="blue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#60A5FA"/>
+      <stop offset="100%" stop-color="#1D4ED8"/>
+    </linearGradient>
+    <linearGradient id="blue-bright" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#BAE6FD"/>
+      <stop offset="100%" stop-color="#3B82F6"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background — deep slate -->
+  <rect width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+
+  <!-- Connection lines between outer nodes and center -->
+  <line x1="512" y1="512" x2="296" y2="296" stroke="#3B82F6" stroke-width="20" stroke-linecap="round" opacity="0.55"/>
+  <line x1="512" y1="512" x2="728" y2="296" stroke="#3B82F6" stroke-width="20" stroke-linecap="round" opacity="0.55"/>
+  <line x1="512" y1="512" x2="296" y2="728" stroke="#3B82F6" stroke-width="20" stroke-linecap="round" opacity="0.55"/>
+  <line x1="512" y1="512" x2="728" y2="728" stroke="#3B82F6" stroke-width="20" stroke-linecap="round" opacity="0.55"/>
+
+  <!-- Cross-connections between outer nodes (faint ring) -->
+  <line x1="296" y1="296" x2="728" y2="296" stroke="#2563EB" stroke-width="10" stroke-linecap="round" opacity="0.30"/>
+  <line x1="728" y1="296" x2="728" y2="728" stroke="#2563EB" stroke-width="10" stroke-linecap="round" opacity="0.30"/>
+  <line x1="728" y1="728" x2="296" y2="728" stroke="#2563EB" stroke-width="10" stroke-linecap="round" opacity="0.30"/>
+  <line x1="296" y1="728" x2="296" y2="296" stroke="#2563EB" stroke-width="10" stroke-linecap="round" opacity="0.30"/>
+
+  <!-- Outer nodes -->
+  <circle cx="296" cy="296" r="52" fill="#1E3A5F" stroke="url(#blue)" stroke-width="10" filter="url(#glow)"/>
+  <circle cx="728" cy="296" r="52" fill="#1E3A5F" stroke="url(#blue)" stroke-width="10" filter="url(#glow)"/>
+  <circle cx="296" cy="728" r="52" fill="#1E3A5F" stroke="url(#blue)" stroke-width="10" filter="url(#glow)"/>
+  <circle cx="728" cy="728" r="52" fill="#1E3A5F" stroke="url(#blue)" stroke-width="10" filter="url(#glow)"/>
+
+  <!-- Center node (primary — larger, brighter) -->
+  <circle cx="512" cy="512" r="96" fill="url(#blue)" filter="url(#glow)"/>
+  <circle cx="512" cy="512" r="68" fill="none" stroke="#BAE6FD" stroke-width="6" opacity="0.45"/>
+
+  <!-- Saffron accent line at top -->
+  <rect x="400" y="236" width="224" height="8" rx="4" fill="#F59E0B" opacity="0.55"/>
+</svg>

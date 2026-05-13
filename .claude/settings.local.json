@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat)",
+      "Bash(bash /tmp/scan.sh)",
+      "Bash(npm run:*)",
+      "Bash(npm install:*)",
+      "Bash(npx next:*)",
+      "Bash(node -e ':*)",
+      "Bash(npx wrangler:*)",
+      "Bash(npm --version)",
+      "Bash(wrangler whoami:*)",
+      "Bash(wrangler deploy:*)",
+      "Bash(wrangler pages:*)",
+      "Bash(wrangler r2:*)",
+      "Bash(node:*)",
+      "Bash(curl -s https://artifacts.tanvrit.com/catalog.json)",
+      "Bash(curl -sv https://artifacts.tanvrit.com/catalog.json)",
+      "Bash(curl -s --max-time 10 \"https://artifacts.tanvrit.com/catalog.json\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s --max-time 10 \"https://artifacts.tanvrit.com/brand/icons/compute.svg\" -I)",
+      "Bash(wait)",
+      "Bash(:)",
+      "Bash(curl -s \"https://artifacts.tanvrit.com/catalog.json\")",
+      "Bash(curl -s \"https://artifacts.tanvrit.com/compute/latest.json\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code} %{content_type}\" \"https://artifacts.tanvrit.com/brand/icons/compute.svg\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code} %{content_type}\" \"https://artifacts.tanvrit.com/brand/icons/friendly.svg\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code} %{content_type}\" \"https://artifacts.tanvrit.com/brand/icons/dist/compute/macos/compute.icns\")",
+      "Bash(curl -s -o /dev/null -w '%{http_code}' https://artifacts.tanvrit.com/brand/__TRACKED_VAR__)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "tanvrit-ai"
+  ]
+}
