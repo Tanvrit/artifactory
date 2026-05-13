@@ -110,7 +110,8 @@ jobs:
         shell: bash
         run: |
           # Graceful skip if the caller's composeApp doesn't declare a jvm() target.
-          BUILD_FILE="${{ inputs.gradle_module }}/build.gradle.kts"
+          # Translate gradle-path (`ui:ui-android`) to filesystem path (`ui/ui-android`)
+          BUILD_FILE="$(echo '${{ inputs.gradle_module }}' | tr ':' '/')/build.gradle.kts"
           if [ ! -f "$BUILD_FILE" ]; then
             echo "::notice::skipped: $BUILD_FILE not found for ${{ inputs.product }}"
             echo "supported=false" >> "$GITHUB_OUTPUT"
@@ -273,7 +274,8 @@ jobs:
         id: guard
         shell: bash
         run: |
-          BUILD_FILE="${{ inputs.gradle_module }}/build.gradle.kts"
+          # Translate gradle-path (`ui:ui-android`) to filesystem path (`ui/ui-android`)
+          BUILD_FILE="$(echo '${{ inputs.gradle_module }}' | tr ':' '/')/build.gradle.kts"
           if [ ! -f "$BUILD_FILE" ]; then
             echo "::notice::skipped: $BUILD_FILE not found for ${{ inputs.product }}"
             echo "supported=false" >> "$GITHUB_OUTPUT"
