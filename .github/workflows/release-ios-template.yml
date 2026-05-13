@@ -195,8 +195,14 @@ jobs:
             echo "::notice::No linkPod*/link* iOS framework task found in :${MODULE}; xcodebuild's pbxproj shellScript will invoke embedAndSignAppleFrameworkForXcode directly."
           fi
 
+      # xcodebuild archive requires code signing — gated on IOS_SIGNING_CERT
+      # presence so workflows on platforms without org-secrets graceful-skip
+      # instead of red-failing.
       - name: xcodebuild archive
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && env.CERT_PRESENT == 'true'
+        env:
+          CERT_PRESENT: ${{ secrets.IOS_SIGNING_CERT != '' && 'true' || 'false' }}
+          DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           xcodebuild \
@@ -206,11 +212,18 @@ jobs:
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/${{ inputs.product }}.xcarchive" \
             archive
+
+      - name: iOS signing skipped notice
+        if: steps.guard.outputs.supported == 'true' && env.CERT_PRESENT == 'false'
         env:
-          DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          CERT_PRESENT: ${{ secrets.IOS_SIGNING_CERT != '' && 'true' || 'false' }}
+        run: |
+          echo "::notice::skipped: IOS_SIGNING_CERT not present. KMP framework built but xcodebuild archive + .ipa export skipped. Provision org secret to enable."
 
       - name: xcodebuild -exportArchive
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && env.CERT_PRESENT == 'true'
+        env:
+          CERT_PRESENT: ${{ secrets.IOS_SIGNING_CERT != '' && 'true' || 'false' }}
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/exportOptions.plist" <<EOF
@@ -231,7 +244,9 @@ jobs:
             -exportOptionsPlist "$RUNNER_TEMP/exportOptions.plist"
 
       - name: Rename + checksum artifact
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && env.CERT_PRESENT == 'true'
+        env:
+          CERT_PRESENT: ${{ secrets.IOS_SIGNING_CERT != '' && 'true' || 'false' }}
         run: |
           IPA=$(find "$RUNNER_TEMP/export" -name "*.ipa" | head -1)
           ARTIFACT="${{ inputs.product }}-${{ inputs.version }}-ios.ipa"
