@@ -174,11 +174,26 @@ jobs:
           rm -f "$CERT_PATH"
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
+      # Build the KMP iOS framework. The actual task name depends on the
+      # module's binary configuration:
+      #   - framework{} only → :linkReleaseFrameworkIosArm64
+      #   - cocoapods plugin → :linkPodReleaseFrameworkIosArm64
+      # Try both, then fall through (xcodebuild also runs
+      # embedAndSignAppleFrameworkForXcode via the pbxproj shellScript).
       - name: Build KMP framework
         if: steps.guard.outputs.supported == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./gradlew :${{ inputs.gradle_module }}:linkPodReleaseFrameworkIosArm64 --no-daemon
+        run: |
+          set -euo pipefail
+          MODULE="${{ inputs.gradle_module }}"
+          if ./gradlew ":${MODULE}:tasks" --quiet 2>/dev/null | grep -q "linkPodReleaseFrameworkIosArm64"; then
+            ./gradlew ":${MODULE}:linkPodReleaseFrameworkIosArm64" --no-daemon
+          elif ./gradlew ":${MODULE}:tasks" --quiet 2>/dev/null | grep -q "linkReleaseFrameworkIosArm64"; then
+            ./gradlew ":${MODULE}:linkReleaseFrameworkIosArm64" --no-daemon
+          else
+            echo "::notice::No linkPod*/link* iOS framework task found in :${MODULE}; xcodebuild's pbxproj shellScript will invoke embedAndSignAppleFrameworkForXcode directly."
+          fi
 
       - name: xcodebuild archive
         if: steps.guard.outputs.supported == 'true'
