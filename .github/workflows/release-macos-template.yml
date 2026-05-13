@@ -124,7 +124,9 @@ jobs:
           echo "supported=true" >> "$GITHUB_OUTPUT"
 
       - name: Fetch branding icons from artifactory
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
+        env:
+          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
         uses: actions/checkout@v4
         with:
           repository: tanvrit/artifactory
@@ -208,7 +210,7 @@ jobs:
         run: security delete-keychain "$KEYCHAIN_PATH" || true
 
       - name: Upload to GitHub Release
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
         uses: softprops/action-gh-release@v2
         with:
           repository: tanvrit/artifactory
@@ -222,6 +224,7 @@ jobs:
             ${{ inputs.product }}-${{ inputs.version }}-macos-arm64.dmg.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
 
       - name: Mirror to Cloudflare R2
         if: steps.guard.outputs.supported == 'true' && env.R2_KEY_PRESENT == 'true'
@@ -284,7 +287,9 @@ jobs:
           echo "supported=true" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v4
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
+        env:
+          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
         with:
           repository: tanvrit/artifactory
           path: _branding
@@ -351,7 +356,7 @@ jobs:
         run: security delete-keychain "$KEYCHAIN_PATH" || true
 
       - name: Upload to GitHub Release
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
         uses: softprops/action-gh-release@v2
         with:
           repository: tanvrit/artifactory
@@ -365,6 +370,7 @@ jobs:
             ${{ inputs.product }}-${{ inputs.version }}-macos-x64.dmg.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
 
       - name: Mirror to Cloudflare R2
         if: steps.guard.outputs.supported == 'true' && env.R2_KEY_PRESENT == 'true'
@@ -385,7 +391,9 @@ jobs:
           done
 
       - name: Dispatch manifest update
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
+        env:
+          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}

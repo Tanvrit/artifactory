@@ -90,7 +90,9 @@ jobs:
           echo "supported=true" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v4
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
+        env:
+          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
         with:
           repository: tanvrit/artifactory
           path: _branding
@@ -191,7 +193,7 @@ jobs:
           fi
 
       - name: Upload to GitHub Release (DEB + AppImage)
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
         uses: softprops/action-gh-release@v2
         with:
           repository: tanvrit/artifactory
@@ -207,6 +209,7 @@ jobs:
             ${{ inputs.product }}-${{ inputs.version }}-linux-x64.AppImage.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
 
       - name: Mirror to Cloudflare R2
         if: steps.guard.outputs.supported == 'true' && env.R2_KEY_PRESENT == 'true'
@@ -228,7 +231,9 @@ jobs:
           done
 
       - name: Dispatch manifest update (DEB)
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
+        env:
+          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
@@ -246,7 +251,9 @@ jobs:
             }
 
       - name: Dispatch manifest update (AppImage)
-        if: steps.guard.outputs.supported == 'true' && steps.appimage.outputs.appimage_built == 'true'
+        if: steps.guard.outputs.supported == 'true' && steps.appimage.outputs.appimage_built == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
+        env:
+          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}

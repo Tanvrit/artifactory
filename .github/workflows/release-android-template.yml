@@ -161,7 +161,7 @@ jobs:
           [ -n "$AAB" ] && mv "$AAB" "$AAB_DEST" && sha256sum "$AAB_DEST" > "${AAB_DEST}.sha256"
 
       - name: Upload to GitHub Release
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
         uses: softprops/action-gh-release@v2
         with:
           repository: tanvrit/artifactory
@@ -177,6 +177,7 @@ jobs:
             ${{ inputs.product }}-${{ inputs.version }}-android.aab.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
 
       - name: Mirror to Cloudflare R2
         if: steps.guard.outputs.supported == 'true' && env.R2_KEY_PRESENT == 'true'
@@ -214,7 +215,9 @@ jobs:
           changesNotSentForReview: false
 
       - name: Dispatch manifest update
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
+        env:
+          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
