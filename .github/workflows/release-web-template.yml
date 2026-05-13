@@ -63,11 +63,13 @@ on:
         default: ''
     secrets:
       CLOUDFLARE_API_TOKEN:
-        required: true
+        description: 'When absent, the Deploy step is skipped — workflow still builds artifacts.'
+        required: false
       CLOUDFLARE_ACCOUNT_ID:
-        required: true
+        required: false
       ARTIFACTS_REPO_TOKEN:
-        required: true
+        description: 'When absent, manifest dispatch is skipped.'
+        required: false
       GH_PACKAGES_TOKEN:
         description: 'Token for Gradle to pull SDK + core artifacts from GitHub Packages'
         required: false
@@ -141,15 +143,23 @@ jobs:
           fi
 
       - name: Deploy to Cloudflare Pages
-        if: steps.guard.outputs.supported == 'true' && github.event_name == 'push'
+        if: steps.guard.outputs.supported == 'true' && github.event_name == 'push' && env.CF_TOKEN_PRESENT == 'true'
+        env:
+          CF_TOKEN_PRESENT: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && 'true' || 'false' }}
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist --project-name=${{ inputs.cf_project_name }} --branch=${{ inputs.cf_branch }}
 
+      - name: Cloudflare deploy skipped notice
+        if: steps.guard.outputs.supported == 'true' && github.event_name == 'push' && secrets.CLOUDFLARE_API_TOKEN == ''
+        run: echo "::notice::skipped: CLOUDFLARE_API_TOKEN not present — built dist/ but did not deploy. Provision org secret to enable."
+
       - name: Dispatch manifest update
-        if: steps.guard.outputs.supported == 'true' && github.event_name == 'push'
+        if: steps.guard.outputs.supported == 'true' && github.event_name == 'push' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
+        env:
+          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}

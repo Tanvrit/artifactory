@@ -83,12 +83,13 @@ on:
       APPLE_TEAM_ID:
         required: false
       ARTIFACTS_REPO_TOKEN:
-        description: 'PAT with write access to tanvrit/artifactory (for icon checkout + release upload + manifest dispatch)'
-        required: true
+        description: 'PAT with write access to tanvrit/artifactory. When absent, GitHub Release upload + manifest dispatch are skipped.'
+        required: false
       CF_R2_TOKEN:
         required: false
       CF_ACCOUNT_ID:
-        required: true
+        description: 'When absent, R2 mirror is skipped.'
+        required: false
       R2_ACCESS_KEY_ID:
         description: 'R2 S3-API access key — when set, binaries are mirrored to R2 alongside GitHub Releases'
         required: false

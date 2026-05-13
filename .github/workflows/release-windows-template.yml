@@ -62,9 +62,11 @@ on:
       WINDOWS_SIGNING_PASSWORD:
         required: false
       ARTIFACTS_REPO_TOKEN:
-        required: true
+        description: 'When absent, GitHub Release upload + manifest dispatch are skipped.'
+        required: false
       CF_ACCOUNT_ID:
-        required: true
+        description: 'When absent, R2 mirror is skipped.'
+        required: false
       R2_ACCESS_KEY_ID:
         required: false
       R2_SECRET_ACCESS_KEY:

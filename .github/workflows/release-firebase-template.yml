@@ -68,7 +68,8 @@ on:
         description: 'Firebase service-account JSON (generic name; caller can map its product-specific secret to this)'
         required: false
       ARTIFACTS_REPO_TOKEN:
-        required: true
+        description: 'When absent, manifest dispatch is skipped.'
+        required: false
       GH_PACKAGES_TOKEN:
         required: false
 
