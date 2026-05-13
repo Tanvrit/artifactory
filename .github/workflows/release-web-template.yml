@@ -153,8 +153,11 @@ jobs:
           command: pages deploy dist --project-name=${{ inputs.cf_project_name }} --branch=${{ inputs.cf_branch }}
 
       - name: Cloudflare deploy skipped notice
-        if: steps.guard.outputs.supported == 'true' && github.event_name == 'push' && secrets.CLOUDFLARE_API_TOKEN == ''
-        run: echo "::notice::skipped: CLOUDFLARE_API_TOKEN not present — built dist/ but did not deploy. Provision org secret to enable."
+        if: steps.guard.outputs.supported == 'true' && github.event_name == 'push' && env.CF_TOKEN_PRESENT == 'false'
+        env:
+          CF_TOKEN_PRESENT: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && 'true' || 'false' }}
+        run: |
+          echo "::notice::skipped: CLOUDFLARE_API_TOKEN not present - built dist/ but did not deploy. Provision org secret to enable."
 
       - name: Dispatch manifest update
         if: steps.guard.outputs.supported == 'true' && github.event_name == 'push' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
