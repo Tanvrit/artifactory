@@ -145,6 +145,10 @@ jobs:
 
       - name: Deploy to Cloudflare Pages
         if: steps.guard.outputs.supported == 'true' && github.event_name == 'push' && env.CF_TOKEN_PRESENT == 'true'
+        # Continue on error so missing Cloudflare project (e.g. tanvrit-shell-app
+        # not yet created at the user level) doesn't red the whole pipeline.
+        # The Wasm artifact still built successfully; deploy just didn't ship.
+        continue-on-error: true
         env:
           CF_TOKEN_PRESENT: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && 'true' || 'false' }}
         uses: cloudflare/wrangler-action@v3
@@ -162,6 +166,9 @@ jobs:
 
       - name: Dispatch manifest update
         if: steps.guard.outputs.supported == 'true' && github.event_name == 'push' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
+        # Continue on error — the manifest update is a nice-to-have; token may
+        # lack cross-repo dispatch permission. Main artifact already built.
+        continue-on-error: true
         env:
           ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
         uses: peter-evans/repository-dispatch@v3

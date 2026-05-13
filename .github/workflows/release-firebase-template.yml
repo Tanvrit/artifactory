@@ -154,6 +154,7 @@ jobs:
 
       - name: Dispatch manifest update
         if: steps.guard.outputs.supported == 'true' && github.event_name == 'push' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
+        continue-on-error: true
         env:
           ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
         uses: peter-evans/repository-dispatch@v3

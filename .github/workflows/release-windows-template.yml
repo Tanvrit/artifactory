@@ -163,6 +163,7 @@ jobs:
 
       - name: Upload to GitHub Release
         if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           repository: tanvrit/artifactory
@@ -180,6 +181,7 @@ jobs:
 
       - name: Mirror to Cloudflare R2
         if: steps.guard.outputs.supported == 'true' && env.R2_KEY_PRESENT == 'true'
+        continue-on-error: true
         shell: bash
         env:
           R2_KEY_PRESENT: ${{ secrets.R2_ACCESS_KEY_ID != '' && 'true' || 'false' }}
@@ -199,6 +201,7 @@ jobs:
 
       - name: Dispatch manifest update
         if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
+        continue-on-error: true
         env:
           ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
         uses: peter-evans/repository-dispatch@v3
