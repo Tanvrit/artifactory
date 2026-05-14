@@ -104,7 +104,7 @@ on:
 jobs:
   build-ios:
     name: iOS (.ipa)
-    runs-on: macos-14
+    runs-on: [self-hosted, mac-a]
     steps:
       - uses: actions/checkout@v4
 
