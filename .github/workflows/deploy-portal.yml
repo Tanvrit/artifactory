@@ -13,7 +13,7 @@ on:
 jobs:
   deploy:
     name: Build & Deploy to Cloudflare Pages
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, tanvrit]
 
     steps:
       - name: Checkout

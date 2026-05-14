@@ -95,7 +95,7 @@ on:
 jobs:
   build-android:
     name: Android (signed APK + AAB)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, tanvrit]
     steps:
       - uses: actions/checkout@v4
 

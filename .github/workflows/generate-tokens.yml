@@ -13,7 +13,7 @@ on:
 jobs:
   tokens:
     name: Generate Platform Token Outputs
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, tanvrit]
 
     steps:
       - name: Checkout

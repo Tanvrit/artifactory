@@ -77,7 +77,7 @@ on:
 jobs:
   release-web:
     name: Web (Cloudflare Pages)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, tanvrit]
     steps:
       - uses: actions/checkout@v4
 
