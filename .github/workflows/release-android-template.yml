@@ -146,10 +146,12 @@ jobs:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
+          # --no-configuration-cache: AGP 9.x + Gradle 9.x trips a serialization
+          # error in ProcessNavigationXmlTask when config cache is on.
           ./gradlew :${{ inputs.gradle_module }}:assembleRelease \
                     :${{ inputs.gradle_module }}:bundleRelease \
                     -PappVersion=${{ inputs.version }} \
-                    --no-daemon
+                    --no-daemon --no-configuration-cache
 
       - name: Rename + checksum artifacts
         if: steps.guard.outputs.supported == 'true'
