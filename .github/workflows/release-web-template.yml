@@ -114,7 +114,12 @@ jobs:
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
-        run: ./gradlew ${{ inputs.gradle_task }} --parallel --no-daemon
+        # --no-configuration-cache: Kotlin/Wasm + Gradle 9.x + CMP 1.11.0 hits
+        # "Failed to query the value of task ':kotlinWasmNpmInstall' property
+        # 'packageJsonFiles'" when configuration cache is on. Disabling per-build
+        # so every consumer of this template builds clean; the local deploy.sh
+        # already passes --no-daemon for the same reason.
+        run: ./gradlew ${{ inputs.gradle_task }} --parallel --no-daemon --no-configuration-cache
 
       - name: Build landing site
         if: steps.guard.outputs.supported == 'true' && inputs.landing_build_dir != ''
