@@ -75,7 +75,7 @@ on:
 jobs:
   build-windows:
     name: Windows x64
-    runs-on: windows-latest
+    runs-on: [self-hosted, tanvrit]
     steps:
       - uses: actions/checkout@v4
 
