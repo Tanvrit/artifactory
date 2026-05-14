@@ -125,7 +125,7 @@ jobs:
         if: steps.guard.outputs.supported == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./gradlew :${{ inputs.gradle_module }}:packageMsi -PappVersion=${{ inputs.version }} --no-daemon
+        run: ./gradlew :${{ inputs.gradle_module }}:packageMsi -PappVersion=${{ inputs.version }} --no-daemon --no-configuration-cache
 
       - name: Rename + checksum artifact
         if: steps.guard.outputs.supported == 'true'

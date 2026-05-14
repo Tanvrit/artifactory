@@ -113,7 +113,7 @@ jobs:
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
-        run: ./gradlew ${{ inputs.gradle_task }} --parallel --no-daemon
+        run: ./gradlew ${{ inputs.gradle_task }} --parallel --no-daemon --no-configuration-cache
 
       - name: Build landing site
         if: steps.guard.outputs.supported == 'true' && inputs.landing_build_dir != ''

@@ -194,7 +194,7 @@ jobs:
         run: |
           ./gradlew :${{ inputs.gradle_module }}:packageDmg \
             -PappVersion=${{ inputs.version }} \
-            --no-daemon
+            --no-daemon --no-configuration-cache
 
       - name: Rename + checksum artifact
         if: steps.guard.outputs.supported == 'true'
@@ -346,7 +346,7 @@ jobs:
           APPLE_NOTARIZATION_APPLE_ID: ${{ secrets.APPLE_NOTARIZATION_APPLE_ID }}
           APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: ./gradlew :${{ inputs.gradle_module }}:packageDmg -PappVersion=${{ inputs.version }} --no-daemon
+        run: ./gradlew :${{ inputs.gradle_module }}:packageDmg -PappVersion=${{ inputs.version }} --no-daemon --no-configuration-cache
 
       - name: Rename + checksum artifact
         if: steps.guard.outputs.supported == 'true'

@@ -124,7 +124,7 @@ jobs:
         if: steps.guard.outputs.supported == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./gradlew :${{ inputs.gradle_module }}:packageDeb -PappVersion=${{ inputs.version }} --no-daemon
+        run: ./gradlew :${{ inputs.gradle_module }}:packageDeb -PappVersion=${{ inputs.version }} --no-daemon --no-configuration-cache
 
       - name: Rename + checksum DEB
         if: steps.guard.outputs.supported == 'true'
@@ -143,7 +143,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ./gradlew :${{ inputs.gradle_module }}:createDistributable -PappVersion=${{ inputs.version }} --no-daemon
+          ./gradlew :${{ inputs.gradle_module }}:createDistributable -PappVersion=${{ inputs.version }} --no-daemon --no-configuration-cache
 
           APP_DIR=$(find ${{ inputs.gradle_module }}/build/compose/binaries -type d -name "app" | head -1)
           if [ -z "$APP_DIR" ]; then
