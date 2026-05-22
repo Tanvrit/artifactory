@@ -65,6 +65,19 @@ on:
         type: string
         required: false
         default: 'app-store'
+      xcode_version:
+        description: |
+          Major.minor Xcode version to select on the build runner (e.g., "16.2").
+          Required for App Store submission since 2026-04-28 — Apple enforces
+          iOS 26 SDK which ships with Xcode 16.x. When set, the workflow runs
+          `xcode-select` to point at /Applications/Xcode_<version>.app. When
+          empty, falls back to whatever `xcode-select -p` resolves on the
+          runner — which may produce an .ipa built against an older SDK and
+          fail App Store Connect submission. Set this to the Xcode version
+          your TestFlight pipeline expects.
+        type: string
+        required: false
+        default: ''
       release_notes:
         type: string
         required: false
@@ -136,6 +149,40 @@ jobs:
         with: { distribution: temurin, java-version: '21' }
       - uses: gradle/actions/setup-gradle@v4
         if: steps.guard.outputs.supported == 'true'
+
+      # R33: pin the Xcode version used by `xcodebuild` so we always build
+      # against the SDK Apple currently requires for App Store submission
+      # (iOS 26 SDK enforced 2026-04-28). Without this step, the runner's
+      # active `xcode-select` decides — meaning a host upgrade silently
+      # changes our build SDK and could break or unblock submissions
+      # without anyone noticing.
+      - name: Select Xcode version
+        if: steps.guard.outputs.supported == 'true' && inputs.xcode_version != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ inputs.xcode_version }}"
+          XCODE_APP="/Applications/Xcode_${VERSION}.app"
+          if [ ! -d "$XCODE_APP" ]; then
+            # Some self-hosted layouts use Xcode-${VERSION} (no underscore).
+            XCODE_APP_ALT="/Applications/Xcode-${VERSION}.app"
+            if [ -d "$XCODE_APP_ALT" ]; then
+              XCODE_APP="$XCODE_APP_ALT"
+            else
+              echo "::error::Xcode ${VERSION} not installed on this runner. Available: $(ls /Applications | grep -i Xcode || echo 'none')"
+              exit 1
+            fi
+          fi
+          sudo xcode-select -switch "${XCODE_APP}/Contents/Developer"
+          echo "Active Xcode:"
+          xcode-select -p
+          xcodebuild -version
+
+      - name: Xcode version unpinned notice
+        if: steps.guard.outputs.supported == 'true' && inputs.xcode_version == ''
+        shell: bash
+        run: |
+          echo "::warning::xcode_version input not set — building with whatever Xcode is active on this runner ($(xcode-select -p)). Apple enforces iOS 26 SDK for submissions since 2026-04-28; if this run is for App Store, set xcode_version to '16.x' to pin."
 
       # Import the Apple Distribution cert + provisioning profile into a
       # temporary keychain. Same one-way pattern as the macOS DMG template.
