@@ -14,6 +14,10 @@ jobs:
   deploy:
     name: Build & Deploy to Cloudflare Pages
     runs-on: [self-hosted, tanvrit]
+    # Self-hosted runner required: local npm + wrangler cache; artifacts.tanvrit.com
+    # portal portal build takes ~12min on ubuntu-latest without cache warmth.
+    # R24: Deploys artifacts.tanvrit.com portal to Cloudflare Pages production.
+    environment: production
 
     steps:
       - name: Checkout
