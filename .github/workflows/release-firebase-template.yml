@@ -76,7 +76,8 @@ on:
 jobs:
   release-firebase:
     name: Web (Firebase Hosting)
-    runs-on: [self-hosted, tanvrit]
+    runs-on:
+      group: tanvrit
     steps:
       - uses: actions/checkout@v4
 

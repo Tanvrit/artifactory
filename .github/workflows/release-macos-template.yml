@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────
-# Reusable Workflow: Build + publish macOS DMG (arm64 + x64)
+# Reusable Workflow: Build + publish macOS DMG (Apple Silicon / arm64)
 #
 # Caller example (per-platform release-macos.yml):
 #   jobs:
@@ -16,18 +16,27 @@
 #
 # Produces (per release):
 #   <product>-<version>-macos-arm64.dmg  + .sha256  (signed + notarized)
-#   <product>-<version>-macos-x64.dmg    + .sha256  (signed + notarized)
+#
+# arm64-only: the build runs on mac-a (Apple Silicon). Intel/x64 DMGs are
+# intentionally retired — mac-b is reserved for server deploys.
+#
+# Signing: AUTOMATIC, off the mac-a login keychain. The "Developer ID
+# Application" identity is created once via the Apple Developer account
+# signed into Xcode on mac-a; the build resolves it with
+# `security find-identity` — no base64 .p12 secret is imported.
+# Notarization uses a keychain profile (`notary_profile`, default
+# "tanvrit-notary") created once on mac-a via `xcrun notarytool
+# store-credentials`, so no Apple ID / app-specific password is passed.
 #
 # Uploads to GitHub Releases AND mirrors to Cloudflare R2 at
 #   tanvrit-artifacts/releases/<product>/<version>/<file>
-# Dispatches an `update-manifest` event with platform="macos-arm64"
-# (and a second event with "macos-x64") so the manifest's per-platform
-# entries flip from `available: false` to `available: true` independently
-# of the other OS workflows.
+# Dispatches an `update-manifest` event with platform="macos-arm64" so the
+# manifest's per-platform entry flips from `available: false` to `true`
+# independently of the other OS workflows.
 #
 # Graceful-skip guard: if the caller's composeApp/build.gradle.kts
 # (or the explicit `gradle_module`) doesn't declare a `jvm()` target,
-# both jobs no-op with a clear skip reason.
+# the job no-ops with a clear skip reason.
 # ─────────────────────────────────────────────────────────────
 
 name: Release macOS (Reusable)
@@ -60,6 +69,11 @@ on:
         description: 'macOS bundle ID (e.g. com.tanvrit.friendly)'
         type: string
         required: true
+      notary_profile:
+        description: 'Name of the notarytool keychain profile created on mac-a via `xcrun notarytool store-credentials`.'
+        type: string
+        required: false
+        default: 'tanvrit-notary'
       release_notes:
         description: 'English release notes'
         type: string
@@ -71,16 +85,8 @@ on:
         required: false
         default: ''
     secrets:
-      APPLE_CERTIFICATE:
-        description: 'Base64-encoded Apple Developer ID Application certificate (.p12) — when set, DMG is signed + notarized. When absent, DMG ships unsigned (Gatekeeper warns).'
-        required: false
-      APPLE_CERTIFICATE_PASSWORD:
-        required: false
-      APPLE_NOTARIZATION_APPLE_ID:
-        required: false
-      APPLE_NOTARIZATION_PASSWORD:
-        required: false
       APPLE_TEAM_ID:
+        description: '10-char Apple Developer Team ID (DEVELOPMENT_TEAM). Signing identity + notarization come from the mac-a login keychain, not secrets.'
         required: false
       ARTIFACTS_REPO_TOKEN:
         description: 'PAT with write access to tanvrit/artifactory. When absent, GitHub Release upload + manifest dispatch are skipped.'
@@ -101,7 +107,9 @@ jobs:
   # ── macOS Apple Silicon ──────────────────────────────────────────────────
   build-macos-arm64:
     name: macOS arm64 (Apple Silicon)
-    runs-on: [self-hosted, mac-a]
+    runs-on:
+      group: tanvrit
+      labels: [mac-a]
     steps:
       - uses: actions/checkout@v4
 
@@ -153,62 +161,60 @@ jobs:
         with:
           cache-encryption-key: ${{ secrets.GRADLE_CACHE_KEY || '' }}
 
-      # Import Apple Developer ID Application cert into a temporary keychain
-      # so jpackage's codesign step can sign the .app bundle inside the DMG.
-      # Cleanup happens unconditionally so a failed run doesn't leak the cert.
-      - name: Import Apple signing certificate
+      # Resolve the "Developer ID Application" identity already present in
+      # the mac-a login keychain (created via the signed-in Xcode account).
+      # No cert import — jpackage's codesign step picks up SIGNING_IDENTITY.
+      - name: Resolve local signing identity
         id: signing
-        if: steps.guard.outputs.supported == 'true' && env.APPLE_CERT_PRESENT == 'true'
-        env:
-          APPLE_CERT_PRESENT: ${{ secrets.APPLE_CERTIFICATE != '' && 'true' || 'false' }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        if: steps.guard.outputs.supported == 'true'
         run: |
           set -euo pipefail
-          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
-          KEYCHAIN_PASSWORD="$(uuidgen)"
-          CERT_PATH="$RUNNER_TEMP/cert.p12"
-          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | xargs)
-          security set-key-partition-list -S apple-tool:,apple:,codesign: \
-            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -o '"Developer ID Application: .*"' | head -1 | tr -d '"')
+          IDENTITY=$(security find-identity -v -p codesigning | grep -o '"Developer ID Application: .*"' | head -1 | tr -d '"')
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::No 'Developer ID Application' identity in the mac-a login keychain. Sign into the Apple Developer account in Xcode and create the certificate (one-time bootstrap)."
+            exit 1
+          fi
           echo "SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
-          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
-          rm -f "$CERT_PATH"
-          echo "✓ Imported Apple cert; identity: $IDENTITY"
+          echo "✓ Using local identity: $IDENTITY"
 
       - name: Build macOS DMG (arm64)
         if: steps.guard.outputs.supported == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SIGNING_IDENTITY: ${{ env.SIGNING_IDENTITY || '' }}
-          APPLE_NOTARIZATION_APPLE_ID: ${{ secrets.APPLE_NOTARIZATION_APPLE_ID }}
-          APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           ./gradlew :${{ inputs.gradle_module }}:packageDmg \
             -PappVersion=${{ inputs.version }} \
             --no-daemon --no-configuration-cache
 
-      - name: Rename + checksum artifact
+      - name: Rename artifact
         if: steps.guard.outputs.supported == 'true'
         id: rename
         run: |
           DMG=$(find ${{ inputs.gradle_module }}/build/compose/binaries -name "*.dmg" | head -1)
           ARTIFACT="${{ inputs.product }}-${{ inputs.version }}-macos-arm64.dmg"
           mv "$DMG" "$ARTIFACT"
-          shasum -a 256 "$ARTIFACT" > "${ARTIFACT}.sha256"
           echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
 
-      - name: Cleanup keychain
-        if: always() && env.KEYCHAIN_PATH != ''
-        run: security delete-keychain "$KEYCHAIN_PATH" || true
+      # Notarize + staple using the keychain profile stored on mac-a
+      # (`xcrun notarytool store-credentials <notary_profile>`). Stapling
+      # rewrites the DMG, so the checksum is computed AFTER this step.
+      - name: Notarize + staple DMG
+        if: steps.guard.outputs.supported == 'true'
+        run: |
+          set -euo pipefail
+          ARTIFACT="${{ steps.rename.outputs.artifact_name }}"
+          xcrun notarytool submit "$ARTIFACT" \
+            --keychain-profile "${{ inputs.notary_profile }}" \
+            --wait
+          xcrun stapler staple "$ARTIFACT"
+
+      - name: Checksum artifact
+        if: steps.guard.outputs.supported == 'true'
+        run: |
+          ARTIFACT="${{ steps.rename.outputs.artifact_name }}"
+          shasum -a 256 "$ARTIFACT" > "${ARTIFACT}.sha256"
 
       - name: Upload to GitHub Release
         if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
@@ -260,158 +266,6 @@ jobs:
               "product": "${{ inputs.product }}",
               "version": "${{ inputs.version }}",
               "platform": "macos-arm64",
-              "build": "${{ github.run_number }}",
-              "released_at": "${{ github.event.head_commit.timestamp || '' }}",
-              "release_notes": "${{ inputs.release_notes }}",
-              "release_notes_hi": "${{ inputs.release_notes_hi }}"
-            }
-
-  # ── macOS Intel ──────────────────────────────────────────────────────────
-  build-macos-x64:
-    name: macOS x64 (Intel)
-    runs-on: [self-hosted, mac-b]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Verify target supported
-        id: guard
-        shell: bash
-        run: |
-          # Translate gradle-path (`ui:ui-android`) to filesystem path (`ui/ui-android`)
-          BUILD_FILE="$(echo '${{ inputs.gradle_module }}' | tr ':' '/')/build.gradle.kts"
-          if [ ! -f "$BUILD_FILE" ]; then
-            echo "::notice::skipped: $BUILD_FILE not found for ${{ inputs.product }}"
-            echo "supported=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if ! grep -qE '^\s*(jvm\(|jvm \{|jvm\("desktop")' "$BUILD_FILE"; then
-            echo "::notice::skipped: jvm() target not declared in $BUILD_FILE — macOS x64 DMG build cannot run for ${{ inputs.product }}"
-            echo "supported=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "supported=true" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/checkout@v4
-        if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
-        env:
-          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
-        with:
-          repository: tanvrit/artifactory
-          path: _branding
-          token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
-          sparse-checkout: branding/icons/dist/${{ inputs.product }}
-      - name: Copy icons
-        if: steps.guard.outputs.supported == 'true'
-        run: |
-          mkdir -p ${{ inputs.gradle_module }}/icons
-          ICON="_branding/branding/icons/dist/${{ inputs.product }}/macos/${{ inputs.product }}.icns"
-          [ -f "$ICON" ] && cp "$ICON" ${{ inputs.gradle_module }}/icons/ || true
-
-      - uses: actions/setup-java@v4
-        if: steps.guard.outputs.supported == 'true'
-        with: { distribution: temurin, java-version: '21' }
-      - uses: gradle/actions/setup-gradle@v4
-        if: steps.guard.outputs.supported == 'true'
-
-      - name: Import Apple signing certificate
-        if: steps.guard.outputs.supported == 'true' && env.APPLE_CERT_PRESENT == 'true'
-        env:
-          APPLE_CERT_PRESENT: ${{ secrets.APPLE_CERTIFICATE != '' && 'true' || 'false' }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          set -euo pipefail
-          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
-          KEYCHAIN_PASSWORD="$(uuidgen)"
-          CERT_PATH="$RUNNER_TEMP/cert.p12"
-          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | xargs)
-          security set-key-partition-list -S apple-tool:,apple:,codesign: \
-            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep -o '"Developer ID Application: .*"' | head -1 | tr -d '"')
-          echo "SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
-          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
-          rm -f "$CERT_PATH"
-
-      - name: Build macOS DMG (x64)
-        if: steps.guard.outputs.supported == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SIGNING_IDENTITY: ${{ env.SIGNING_IDENTITY || '' }}
-          APPLE_NOTARIZATION_APPLE_ID: ${{ secrets.APPLE_NOTARIZATION_APPLE_ID }}
-          APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: ./gradlew :${{ inputs.gradle_module }}:packageDmg -PappVersion=${{ inputs.version }} --no-daemon --no-configuration-cache
-
-      - name: Rename + checksum artifact
-        if: steps.guard.outputs.supported == 'true'
-        run: |
-          DMG=$(find ${{ inputs.gradle_module }}/build/compose/binaries -name "*.dmg" | head -1)
-          ARTIFACT="${{ inputs.product }}-${{ inputs.version }}-macos-x64.dmg"
-          mv "$DMG" "$ARTIFACT"
-          shasum -a 256 "$ARTIFACT" > "${ARTIFACT}.sha256"
-
-      - name: Cleanup keychain
-        if: always() && env.KEYCHAIN_PATH != ''
-        run: security delete-keychain "$KEYCHAIN_PATH" || true
-
-      - name: Upload to GitHub Release
-        if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
-        continue-on-error: true
-        uses: softprops/action-gh-release@v2
-        with:
-          repository: tanvrit/artifactory
-          tag_name: ${{ inputs.product }}-v${{ inputs.version }}
-          name: "${{ inputs.product }} v${{ inputs.version }}"
-          draft: false
-          prerelease: false
-          fail_on_unmatched_files: false
-          files: |
-            ${{ inputs.product }}-${{ inputs.version }}-macos-x64.dmg
-            ${{ inputs.product }}-${{ inputs.version }}-macos-x64.dmg.sha256
-        env:
-          GITHUB_TOKEN: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
-          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
-
-      - name: Mirror to Cloudflare R2
-        if: steps.guard.outputs.supported == 'true' && env.R2_KEY_PRESENT == 'true'
-        continue-on-error: true
-        env:
-          R2_KEY_PRESENT: ${{ secrets.R2_ACCESS_KEY_ID != '' && 'true' || 'false' }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          PRODUCT: ${{ inputs.product }}
-          VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          ENDPOINT="https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
-          DEST="s3://tanvrit-artifacts/releases/${PRODUCT}/${VERSION}"
-          for f in ${PRODUCT}-${VERSION}-macos-x64.dmg ${PRODUCT}-${VERSION}-macos-x64.dmg.sha256; do
-            aws s3 cp "$f" "${DEST}/$f" --endpoint-url "$ENDPOINT" --no-progress
-          done
-
-      - name: Dispatch manifest update
-        if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
-        continue-on-error: true
-        env:
-          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
-          repository: tanvrit/artifactory
-          event-type: update-manifest
-          client-payload: |
-            {
-              "product": "${{ inputs.product }}",
-              "version": "${{ inputs.version }}",
-              "platform": "macos-x64",
               "build": "${{ github.run_number }}",
               "released_at": "${{ github.event.head_commit.timestamp || '' }}",
               "release_notes": "${{ inputs.release_notes }}",

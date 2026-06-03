@@ -17,14 +17,16 @@
 #
 # Produces: <product>-<version>-ios.ipa + .sha256
 #
-# Signing: activates when IOS_SIGNING_CERT secret is present. Without it,
-# xcodebuild archive runs unsigned and exportArchive will fail at the
-# code-signing step — the run completes with a clear error rather than
-# producing a broken unsigned .ipa. For v1, signing is REQUIRED to ship
-# an .ipa at all (unlike macOS DMG which can ship ad-hoc-signed).
+# Signing: AUTOMATIC, off the mac-a runner's login keychain. The Apple
+# Developer account is signed into Xcode on mac-a (one-time, interactive),
+# so xcodebuild archive/export use CODE_SIGN_STYLE=Automatic with
+# -allowProvisioningUpdates — Xcode fetches/creates the distribution cert
+# and provisioning profile on demand. No base64 .p12 / .mobileprovision
+# secrets are imported; the only input is APPLE_TEAM_ID (DEVELOPMENT_TEAM).
 #
-# TestFlight upload: gated on APP_STORE_CONNECT_API_KEY_P8. v1 ships just
-# the .ipa to GH Release + R2; v2 will add the xcrun altool upload step.
+# Scope: sign + export only. The .ipa ships to GH Release + R2. Store /
+# TestFlight upload is a deliberate follow-up (wires the ASC API key that
+# is already staged on mac-a at ~/.appstoreconnect/private_keys/).
 #
 # Graceful-skip guard: no iosArm64() in composeApp/build.gradle.kts or
 # no iosApp/ Xcode project → exit 0 with skip notice.
@@ -87,21 +89,13 @@ on:
         required: false
         default: ''
     secrets:
-      IOS_SIGNING_CERT:
-        description: 'Base64-encoded Apple Distribution .p12'
-        required: false
-      IOS_SIGNING_CERT_PASSWORD:
-        required: false
-      IOS_PROVISIONING_PROFILE:
-        description: 'Base64-encoded .mobileprovision'
-        required: false
-      APP_STORE_CONNECT_API_KEY_ID:
-        description: 'App Store Connect API Key ID — when set, .ipa uploads to TestFlight'
-        required: false
-      APP_STORE_CONNECT_API_ISSUER_ID:
-        required: false
-      APP_STORE_CONNECT_API_KEY_P8:
-        description: 'Base64-encoded .p8 private key'
+      APPLE_TEAM_ID:
+        description: |
+          10-char Apple Developer Team ID, used as DEVELOPMENT_TEAM for
+          automatic signing. The signing certificate + provisioning profile
+          come from the mac-a login keychain / signed-in Xcode account, not
+          from secrets. When absent, archive/export still run but Xcode must
+          be able to infer a single team from the account.
         required: false
       ARTIFACTS_REPO_TOKEN:
         description: 'When absent, GitHub Release upload + manifest dispatch are skipped.'
@@ -117,7 +111,9 @@ on:
 jobs:
   build-ios:
     name: iOS (.ipa)
-    runs-on: [self-hosted, mac-a]
+    runs-on:
+      group: tanvrit
+      labels: [mac-a]
     steps:
       - uses: actions/checkout@v4
 
@@ -137,8 +133,17 @@ jobs:
             echo "supported=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ ! -d "$(dirname '${{ inputs.xcodeproj_path }}')" ]; then
-            echo "::notice::skipped: ${{ inputs.xcodeproj_path }} not found — iOS build cannot run for ${{ inputs.product }}"
+          # The Xcode project must exist as a checked-in .xcodeproj, OR be
+          # generatable from an XcodeGen project.yml in the iosApp dir.
+          # Anything else (Swift sources only, like ai/) graceful-skips
+          # rather than red-failing inside xcodebuild archive.
+          IOS_DIR="$(dirname '${{ inputs.xcodeproj_path }}')"
+          if [ -d "${{ inputs.xcodeproj_path }}" ]; then
+            echo "needs_xcodegen=false" >> "$GITHUB_OUTPUT"
+          elif [ -f "${IOS_DIR}/project.yml" ]; then
+            echo "needs_xcodegen=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::skipped: neither ${{ inputs.xcodeproj_path }} nor ${IOS_DIR}/project.yml found — iOS build cannot run for ${{ inputs.product }}"
             echo "supported=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -149,6 +154,14 @@ jobs:
         with: { distribution: temurin, java-version: '21' }
       - uses: gradle/actions/setup-gradle@v4
         if: steps.guard.outputs.supported == 'true'
+
+      # Generate the .xcodeproj from project.yml for XcodeGen-based platforms
+      # (e.g. auditor, compute). XcodeGen is preinstalled on the mac-a runner.
+      - name: Generate Xcode project (XcodeGen)
+        if: steps.guard.outputs.supported == 'true' && steps.guard.outputs.needs_xcodegen == 'true'
+        run: |
+          set -euo pipefail
+          xcodegen generate --spec "$(dirname '${{ inputs.xcodeproj_path }}')/project.yml"
 
       # R33: pin the Xcode version used by `xcodebuild` so we always build
       # against the SDK Apple currently requires for App Store submission
@@ -184,42 +197,10 @@ jobs:
         run: |
           echo "::warning::xcode_version input not set — building with whatever Xcode is active on this runner ($(xcode-select -p)). Apple enforces iOS 26 SDK for submissions since 2026-04-28; if this run is for App Store, set xcode_version to '16.x' to pin."
 
-      # Import the Apple Distribution cert + provisioning profile into a
-      # temporary keychain. Same one-way pattern as the macOS DMG template.
-      - name: Import iOS signing assets
-        if: steps.guard.outputs.supported == 'true' && env.CERT_PRESENT == 'true'
-        env:
-          CERT_PRESENT: ${{ secrets.IOS_SIGNING_CERT != '' && 'true' || 'false' }}
-          IOS_SIGNING_CERT: ${{ secrets.IOS_SIGNING_CERT }}
-          IOS_SIGNING_CERT_PASSWORD: ${{ secrets.IOS_SIGNING_CERT_PASSWORD }}
-          IOS_PROVISIONING_PROFILE: ${{ secrets.IOS_PROVISIONING_PROFILE }}
-        run: |
-          set -euo pipefail
-          KEYCHAIN_PATH="$RUNNER_TEMP/ios.keychain-db"
-          KEYCHAIN_PASSWORD="$(uuidgen)"
-          CERT_PATH="$RUNNER_TEMP/ios-cert.p12"
-          PROFILE_PATH="$RUNNER_TEMP/profile.mobileprovision"
-
-          echo "$IOS_SIGNING_CERT" | base64 --decode > "$CERT_PATH"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" -P "$IOS_SIGNING_CERT_PASSWORD" \
-            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | xargs)
-          security set-key-partition-list -S apple-tool:,apple:,codesign: \
-            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          # Install the provisioning profile in the standard location.
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          if [ -n "${IOS_PROVISIONING_PROFILE:-}" ]; then
-            echo "$IOS_PROVISIONING_PROFILE" | base64 --decode > "$PROFILE_PATH"
-            UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /dev/stdin <<< "$(security cms -D -i "$PROFILE_PATH")" 2>/dev/null || echo "$(uuidgen)")
-            cp "$PROFILE_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/"${UUID}.mobileprovision"
-          fi
-
-          rm -f "$CERT_PATH"
-          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+      # No cert/profile import: signing is automatic off the mac-a login
+      # keychain where the Apple Developer account is signed into Xcode.
+      # `xcodebuild -allowProvisioningUpdates` fetches/creates the
+      # distribution cert + provisioning profile on demand.
 
       # Build the KMP iOS framework. The actual task name depends on the
       # module's binary configuration:
@@ -242,13 +223,12 @@ jobs:
             echo "::notice::No linkPod*/link* iOS framework task found in :${MODULE}; xcodebuild's pbxproj shellScript will invoke embedAndSignAppleFrameworkForXcode directly."
           fi
 
-      # xcodebuild archive requires code signing — gated on IOS_SIGNING_CERT
-      # presence so workflows on platforms without org-secrets graceful-skip
-      # instead of red-failing.
+      # Automatic signing: Xcode resolves the cert + provisioning profile
+      # from the signed-in account on mac-a. -allowProvisioningUpdates lets
+      # it create/download a matching profile on demand for the bundle id.
       - name: xcodebuild archive
-        if: steps.guard.outputs.supported == 'true' && env.CERT_PRESENT == 'true'
+        if: steps.guard.outputs.supported == 'true'
         env:
-          CERT_PRESENT: ${{ secrets.IOS_SIGNING_CERT != '' && 'true' || 'false' }}
           DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
@@ -258,19 +238,13 @@ jobs:
             -configuration "${{ inputs.configuration }}" \
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/${{ inputs.product }}.xcarchive" \
+            -allowProvisioningUpdates \
+            CODE_SIGN_STYLE=Automatic \
+            DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
             archive
 
-      - name: iOS signing skipped notice
-        if: steps.guard.outputs.supported == 'true' && env.CERT_PRESENT == 'false'
-        env:
-          CERT_PRESENT: ${{ secrets.IOS_SIGNING_CERT != '' && 'true' || 'false' }}
-        run: |
-          echo "::notice::skipped: IOS_SIGNING_CERT not present. KMP framework built but xcodebuild archive + .ipa export skipped. Provision org secret to enable."
-
       - name: xcodebuild -exportArchive
-        if: steps.guard.outputs.supported == 'true' && env.CERT_PRESENT == 'true'
-        env:
-          CERT_PRESENT: ${{ secrets.IOS_SIGNING_CERT != '' && 'true' || 'false' }}
+        if: steps.guard.outputs.supported == 'true'
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/exportOptions.plist" <<EOF
@@ -280,7 +254,7 @@ jobs:
           <dict>
             <key>method</key><string>${{ inputs.export_method }}</string>
             <key>teamID</key><string>${{ secrets.APPLE_TEAM_ID }}</string>
-            <key>signingStyle</key><string>manual</string>
+            <key>signingStyle</key><string>automatic</string>
           </dict>
           </plist>
           EOF
@@ -288,21 +262,16 @@ jobs:
             -exportArchive \
             -archivePath "$RUNNER_TEMP/${{ inputs.product }}.xcarchive" \
             -exportPath "$RUNNER_TEMP/export" \
-            -exportOptionsPlist "$RUNNER_TEMP/exportOptions.plist"
+            -exportOptionsPlist "$RUNNER_TEMP/exportOptions.plist" \
+            -allowProvisioningUpdates
 
       - name: Rename + checksum artifact
-        if: steps.guard.outputs.supported == 'true' && env.CERT_PRESENT == 'true'
-        env:
-          CERT_PRESENT: ${{ secrets.IOS_SIGNING_CERT != '' && 'true' || 'false' }}
+        if: steps.guard.outputs.supported == 'true'
         run: |
           IPA=$(find "$RUNNER_TEMP/export" -name "*.ipa" | head -1)
           ARTIFACT="${{ inputs.product }}-${{ inputs.version }}-ios.ipa"
           mv "$IPA" "$ARTIFACT"
           shasum -a 256 "$ARTIFACT" > "${ARTIFACT}.sha256"
-
-      - name: Cleanup keychain
-        if: always() && env.KEYCHAIN_PATH != ''
-        run: security delete-keychain "$KEYCHAIN_PATH" || true
 
       - name: Upload to GitHub Release
         if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'

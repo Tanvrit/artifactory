@@ -68,7 +68,8 @@ on:
 jobs:
   build-linux:
     name: Linux x64
-    runs-on: [self-hosted, tanvrit]
+    runs-on:
+      group: tanvrit
     steps:
       - uses: actions/checkout@v4
 

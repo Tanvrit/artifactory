@@ -13,8 +13,8 @@ on:
 jobs:
   tokens:
     name: Generate Platform Token Outputs
-    runs-on: [self-hosted, tanvrit]
-
+    runs-on:
+      group: tanvrit
     steps:
       - name: Checkout
         uses: actions/checkout@v4

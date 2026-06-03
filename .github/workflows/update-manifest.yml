@@ -27,8 +27,8 @@ on:
 jobs:
   update:
     name: Update ${{ github.event.client_payload.product || github.event.inputs.product }} manifest
-    runs-on: [self-hosted, tanvrit]
-
+    runs-on:
+      group: tanvrit
     steps:
       - name: Checkout
         uses: actions/checkout@v4

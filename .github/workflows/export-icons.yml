@@ -17,7 +17,9 @@ on:
 jobs:
   generate:
     name: Generate Platform Icons
-    runs-on: [self-hosted, mac-a]  # macOS for iconutil (.icns generation)
+    runs-on:
+      group: tanvrit
+      labels: [mac-a]
 
     steps:
       - name: Checkout
