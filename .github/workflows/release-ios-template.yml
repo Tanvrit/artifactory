@@ -24,9 +24,11 @@
 # and provisioning profile on demand. No base64 .p12 / .mobileprovision
 # secrets are imported; the only input is APPLE_TEAM_ID (DEVELOPMENT_TEAM).
 #
-# Scope: sign + export only. The .ipa ships to GH Release + R2. Store /
-# TestFlight upload is a deliberate follow-up (wires the ASC API key that
-# is already staged on the macOS runner at ~/.appstoreconnect/private_keys/).
+# Scope: sign + export + TestFlight upload. The .ipa ships to:
+#   1. TestFlight (xcrun altool) — when asc_api_key_id input is set and
+#      AuthKey_<id>.p8 exists at ~/.appstoreconnect/private_keys/ on the runner
+#   2. GitHub Releases (tanvrit/artifactory) — when ARTIFACTS_REPO_TOKEN is set
+#   3. Cloudflare R2 mirror — when R2 credentials are set
 #
 # Graceful-skip guard: no iosArm64() in composeApp/build.gradle.kts or
 # no iosApp/ Xcode project → exit 0 with skip notice.
@@ -85,6 +87,20 @@ on:
         type: string
         required: false
         default: 'F846F22MFM'
+      asc_api_key_id:
+        description: |
+          App Store Connect API Key ID (10-char alphanumeric, visible in ASC → Users & Access → Integrations → App Store Connect API).
+          The matching AuthKey_<id>.p8 must exist on the macOS runner at ~/.appstoreconnect/private_keys/.
+          When set, the .ipa is uploaded to TestFlight via xcrun altool after signing.
+          Leave empty to skip the TestFlight upload step.
+        type: string
+        required: false
+        default: ''
+      asc_api_issuer_id:
+        description: 'App Store Connect API Issuer ID (UUID shown in the same ASC page as the key).'
+        type: string
+        required: false
+        default: ''
       release_notes:
         type: string
         required: false
@@ -269,6 +285,32 @@ jobs:
           ARTIFACT="${{ inputs.product }}-${{ inputs.version }}-ios.ipa"
           mv "$IPA" "$ARTIFACT"
           shasum -a 256 "$ARTIFACT" > "${ARTIFACT}.sha256"
+
+      # Upload .ipa to TestFlight using xcrun altool + ASC API key.
+      # Authentication: API Key stored at ~/.appstoreconnect/private_keys/AuthKey_<id>.p8
+      # on the macOS runner — no secret import needed. Step is skipped gracefully
+      # if asc_api_key_id is empty or the .p8 file is missing.
+      - name: Upload to TestFlight (xcrun altool)
+        if: steps.guard.outputs.supported == 'true' && inputs.asc_api_key_id != ''
+        continue-on-error: true
+        env:
+          ASC_API_KEY_ID: ${{ inputs.asc_api_key_id }}
+          ASC_API_ISSUER_ID: ${{ inputs.asc_api_issuer_id }}
+          ARTIFACT: ${{ inputs.product }}-${{ inputs.version }}-ios.ipa
+        run: |
+          set -euo pipefail
+          KEY_FILE="$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_API_KEY_ID}.p8"
+          if [[ ! -f "$KEY_FILE" ]]; then
+            echo "::warning::TestFlight upload skipped — AuthKey_${ASC_API_KEY_ID}.p8 not found at $KEY_FILE. Place the .p8 file on the macOS runner to enable uploads."
+            exit 0
+          fi
+          echo "Uploading $ARTIFACT to TestFlight..."
+          xcrun altool --upload-package "$ARTIFACT" \
+            --type ios \
+            --apiKey  "$ASC_API_KEY_ID" \
+            --apiIssuer "$ASC_API_ISSUER_ID" \
+            --verbose
+          echo "✓ Uploaded to TestFlight"
 
       - name: Upload to GitHub Release
         if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'

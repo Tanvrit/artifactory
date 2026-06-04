@@ -28,11 +28,12 @@
 # "tanvrit-notary") created once on the macOS runner via `xcrun notarytool
 # store-credentials`, so no Apple ID / app-specific password is passed.
 #
-# Uploads to GitHub Releases AND mirrors to Cloudflare R2 at
-#   tanvrit-artifacts/releases/<product>/<version>/<file>
-# Dispatches an `update-manifest` event with platform="macos-arm64" so the
-# manifest's per-platform entry flips from `available: false` to `true`
-# independently of the other OS workflows.
+# Distribution:
+#   1. App Store Connect (xcrun altool) — when asc_api_key_id input is set and
+#      AuthKey_<id>.p8 exists at ~/.appstoreconnect/private_keys/ on the runner
+#   2. GitHub Releases (tanvrit/artifactory) — when ARTIFACTS_REPO_TOKEN is set
+#   3. Cloudflare R2 mirror — when R2 credentials are set
+# Dispatches update-manifest (platform="macos-arm64") after upload.
 #
 # Graceful-skip guard: if the caller's composeApp/build.gradle.kts
 # (or the explicit `gradle_module`) doesn't declare a `jvm()` target,
@@ -74,6 +75,20 @@ on:
         type: string
         required: false
         default: 'F846F22MFM'
+      asc_api_key_id:
+        description: |
+          App Store Connect API Key ID (10-char alphanumeric, visible in ASC → Users & Access → Integrations → App Store Connect API).
+          The matching AuthKey_<id>.p8 must exist on the macOS runner at ~/.appstoreconnect/private_keys/.
+          When set, the notarized DMG is uploaded to App Store Connect via xcrun altool after stapling.
+          Leave empty to skip the upload step (direct-download-only distribution).
+        type: string
+        required: false
+        default: ''
+      asc_api_issuer_id:
+        description: 'App Store Connect API Issuer ID (UUID shown in the same ASC page as the key).'
+        type: string
+        required: false
+        default: ''
       notary_profile:
         description: 'Name of the notarytool keychain profile created on the macOS runner via `xcrun notarytool store-credentials`.'
         type: string
@@ -217,6 +232,33 @@ jobs:
         run: |
           ARTIFACT="${{ steps.rename.outputs.artifact_name }}"
           shasum -a 256 "$ARTIFACT" > "${ARTIFACT}.sha256"
+
+      # Upload notarized DMG to App Store Connect using xcrun altool + ASC API key.
+      # The DMG has already been notarized + stapled above, so it's accepted by ASC.
+      # Authentication: API Key stored at ~/.appstoreconnect/private_keys/AuthKey_<id>.p8
+      # on the macOS runner — no secret import needed. Step is skipped gracefully
+      # if asc_api_key_id is empty or the .p8 file is missing.
+      - name: Upload to App Store Connect (xcrun altool)
+        if: steps.guard.outputs.supported == 'true' && inputs.asc_api_key_id != ''
+        continue-on-error: true
+        env:
+          ASC_API_KEY_ID: ${{ inputs.asc_api_key_id }}
+          ASC_API_ISSUER_ID: ${{ inputs.asc_api_issuer_id }}
+          ARTIFACT: ${{ steps.rename.outputs.artifact_name }}
+        run: |
+          set -euo pipefail
+          KEY_FILE="$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_API_KEY_ID}.p8"
+          if [[ ! -f "$KEY_FILE" ]]; then
+            echo "::warning::App Store upload skipped — AuthKey_${ASC_API_KEY_ID}.p8 not found at $KEY_FILE. Place the .p8 file on the macOS runner to enable uploads."
+            exit 0
+          fi
+          echo "Uploading $ARTIFACT to App Store Connect..."
+          xcrun altool --upload-package "$ARTIFACT" \
+            --type macos \
+            --apiKey  "$ASC_API_KEY_ID" \
+            --apiIssuer "$ASC_API_ISSUER_ID" \
+            --verbose
+          echo "✓ Uploaded to App Store Connect"
 
       - name: Upload to GitHub Release
         if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
