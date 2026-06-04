@@ -17,16 +17,16 @@
 #
 # Produces: <product>-<version>-ios.ipa + .sha256
 #
-# Signing: AUTOMATIC, off the mac-a runner's login keychain. The Apple
-# Developer account is signed into Xcode on mac-a (one-time, interactive),
-# so xcodebuild archive/export use CODE_SIGN_STYLE=Automatic with
-# -allowProvisioningUpdates — Xcode fetches/creates the distribution cert
+# Signing: AUTOMATIC, off the macOS runner's login keychain. The Apple
+# Developer account is signed into Xcode on the macOS runner (one-time,
+# interactive), so xcodebuild archive/export use CODE_SIGN_STYLE=Automatic
+# with -allowProvisioningUpdates — Xcode fetches/creates the distribution cert
 # and provisioning profile on demand. No base64 .p12 / .mobileprovision
 # secrets are imported; the only input is APPLE_TEAM_ID (DEVELOPMENT_TEAM).
 #
 # Scope: sign + export only. The .ipa ships to GH Release + R2. Store /
 # TestFlight upload is a deliberate follow-up (wires the ASC API key that
-# is already staged on mac-a at ~/.appstoreconnect/private_keys/).
+# is already staged on the macOS runner at ~/.appstoreconnect/private_keys/).
 #
 # Graceful-skip guard: no iosArm64() in composeApp/build.gradle.kts or
 # no iosApp/ Xcode project → exit 0 with skip notice.
@@ -93,9 +93,9 @@ on:
         description: |
           10-char Apple Developer Team ID, used as DEVELOPMENT_TEAM for
           automatic signing. The signing certificate + provisioning profile
-          come from the mac-a login keychain / signed-in Xcode account, not
-          from secrets. When absent, archive/export still run but Xcode must
-          be able to infer a single team from the account.
+          come from the macOS runner login keychain / signed-in Xcode account,
+          not from secrets. When absent, archive/export still run but Xcode
+          must be able to infer a single team from the account.
         required: false
       ARTIFACTS_REPO_TOKEN:
         description: 'When absent, GitHub Release upload + manifest dispatch are skipped.'
@@ -113,7 +113,7 @@ jobs:
     name: iOS (.ipa)
     runs-on:
       group: tanvrit
-      labels: [mac-a]
+      labels: [macos]
     steps:
       - uses: actions/checkout@v4
 
@@ -156,7 +156,7 @@ jobs:
         if: steps.guard.outputs.supported == 'true'
 
       # Generate the .xcodeproj from project.yml for XcodeGen-based platforms
-      # (e.g. auditor, compute). XcodeGen is preinstalled on the mac-a runner.
+      # (e.g. auditor, compute). XcodeGen is preinstalled on the macOS runner.
       - name: Generate Xcode project (XcodeGen)
         if: steps.guard.outputs.supported == 'true' && steps.guard.outputs.needs_xcodegen == 'true'
         run: |
@@ -197,7 +197,7 @@ jobs:
         run: |
           echo "::warning::xcode_version input not set — building with whatever Xcode is active on this runner ($(xcode-select -p)). Apple enforces iOS 26 SDK for submissions since 2026-04-28; if this run is for App Store, set xcode_version to '16.x' to pin."
 
-      # No cert/profile import: signing is automatic off the mac-a login
+      # No cert/profile import: signing is automatic off the macOS runner login
       # keychain where the Apple Developer account is signed into Xcode.
       # `xcodebuild -allowProvisioningUpdates` fetches/creates the
       # distribution cert + provisioning profile on demand.
@@ -224,7 +224,7 @@ jobs:
           fi
 
       # Automatic signing: Xcode resolves the cert + provisioning profile
-      # from the signed-in account on mac-a. -allowProvisioningUpdates lets
+      # from the signed-in account on the macOS runner. -allowProvisioningUpdates lets
       # it create/download a matching profile on demand for the bundle id.
       - name: xcodebuild archive
         if: steps.guard.outputs.supported == 'true'

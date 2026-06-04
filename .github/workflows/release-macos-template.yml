@@ -17,15 +17,15 @@
 # Produces (per release):
 #   <product>-<version>-macos-arm64.dmg  + .sha256  (signed + notarized)
 #
-# arm64-only: the build runs on mac-a (Apple Silicon). Intel/x64 DMGs are
-# intentionally retired — mac-b is reserved for server deploys.
+# arm64-only: the build runs on the macOS runner (`labels: [macos]`). Intel/x64
+# DMGs are intentionally retired.
 #
-# Signing: AUTOMATIC, off the mac-a login keychain. The "Developer ID
+# Signing: AUTOMATIC, off the macOS runner's login keychain. The "Developer ID
 # Application" identity is created once via the Apple Developer account
-# signed into Xcode on mac-a; the build resolves it with
+# signed into Xcode on the macOS runner; the build resolves it with
 # `security find-identity` — no base64 .p12 secret is imported.
 # Notarization uses a keychain profile (`notary_profile`, default
-# "tanvrit-notary") created once on mac-a via `xcrun notarytool
+# "tanvrit-notary") created once on the macOS runner via `xcrun notarytool
 # store-credentials`, so no Apple ID / app-specific password is passed.
 #
 # Uploads to GitHub Releases AND mirrors to Cloudflare R2 at
@@ -70,7 +70,7 @@ on:
         type: string
         required: true
       notary_profile:
-        description: 'Name of the notarytool keychain profile created on mac-a via `xcrun notarytool store-credentials`.'
+        description: 'Name of the notarytool keychain profile created on the macOS runner via `xcrun notarytool store-credentials`.'
         type: string
         required: false
         default: 'tanvrit-notary'
@@ -86,7 +86,7 @@ on:
         default: ''
     secrets:
       APPLE_TEAM_ID:
-        description: '10-char Apple Developer Team ID (DEVELOPMENT_TEAM). Signing identity + notarization come from the mac-a login keychain, not secrets.'
+        description: '10-char Apple Developer Team ID (DEVELOPMENT_TEAM). Signing identity + notarization come from the macOS runner login keychain, not secrets.'
         required: false
       ARTIFACTS_REPO_TOKEN:
         description: 'PAT with write access to tanvrit/artifactory. When absent, GitHub Release upload + manifest dispatch are skipped.'
@@ -109,7 +109,7 @@ jobs:
     name: macOS arm64 (Apple Silicon)
     runs-on:
       group: tanvrit
-      labels: [mac-a]
+      labels: [macos]
     steps:
       - uses: actions/checkout@v4
 
@@ -162,7 +162,7 @@ jobs:
           cache-encryption-key: ${{ secrets.GRADLE_CACHE_KEY || '' }}
 
       # Resolve the "Developer ID Application" identity already present in
-      # the mac-a login keychain (created via the signed-in Xcode account).
+      # the macOS runner login keychain (created via the signed-in Xcode account).
       # No cert import — jpackage's codesign step picks up SIGNING_IDENTITY.
       - name: Resolve local signing identity
         id: signing
@@ -171,7 +171,7 @@ jobs:
           set -euo pipefail
           IDENTITY=$(security find-identity -v -p codesigning | grep -o '"Developer ID Application: .*"' | head -1 | tr -d '"')
           if [ -z "$IDENTITY" ]; then
-            echo "::error::No 'Developer ID Application' identity in the mac-a login keychain. Sign into the Apple Developer account in Xcode and create the certificate (one-time bootstrap)."
+            echo "::error::No 'Developer ID Application' identity in the macOS runner login keychain. Sign into the Apple Developer account in Xcode and create the certificate (one-time bootstrap)."
             exit 1
           fi
           echo "SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
@@ -197,7 +197,7 @@ jobs:
           mv "$DMG" "$ARTIFACT"
           echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
 
-      # Notarize + staple using the keychain profile stored on mac-a
+      # Notarize + staple using the keychain profile stored on the macOS runner
       # (`xcrun notarytool store-credentials <notary_profile>`). Stapling
       # rewrites the DMG, so the checksum is computed AFTER this step.
       - name: Notarize + staple DMG
