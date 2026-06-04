@@ -69,6 +69,11 @@ on:
         description: 'macOS bundle ID (e.g. com.tanvrit.friendly)'
         type: string
         required: true
+      apple_team_id:
+        description: '10-char Apple Developer Team ID (DEVELOPMENT_TEAM) — not a secret, visible in Apple Developer portal.'
+        type: string
+        required: false
+        default: 'F846F22MFM'
       notary_profile:
         description: 'Name of the notarytool keychain profile created on the macOS runner via `xcrun notarytool store-credentials`.'
         type: string
@@ -85,9 +90,6 @@ on:
         required: false
         default: ''
     secrets:
-      APPLE_TEAM_ID:
-        description: '10-char Apple Developer Team ID (DEVELOPMENT_TEAM). Signing identity + notarization come from the macOS runner login keychain, not secrets.'
-        required: false
       ARTIFACTS_REPO_TOKEN:
         description: 'PAT with write access to tanvrit/artifactory. When absent, GitHub Release upload + manifest dispatch are skipped.'
         required: false
@@ -182,7 +184,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SIGNING_IDENTITY: ${{ env.SIGNING_IDENTITY || '' }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_TEAM_ID: ${{ inputs.apple_team_id }}
         run: |
           ./gradlew :${{ inputs.gradle_module }}:packageDmg \
             -PappVersion=${{ inputs.version }} \

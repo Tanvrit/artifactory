@@ -80,6 +80,11 @@ on:
         type: string
         required: false
         default: ''
+      apple_team_id:
+        description: '10-char Apple Developer Team ID (DEVELOPMENT_TEAM) — not a secret, visible in Apple Developer portal.'
+        type: string
+        required: false
+        default: 'F846F22MFM'
       release_notes:
         type: string
         required: false
@@ -89,14 +94,6 @@ on:
         required: false
         default: ''
     secrets:
-      APPLE_TEAM_ID:
-        description: |
-          10-char Apple Developer Team ID, used as DEVELOPMENT_TEAM for
-          automatic signing. The signing certificate + provisioning profile
-          come from the macOS runner login keychain / signed-in Xcode account,
-          not from secrets. When absent, archive/export still run but Xcode
-          must be able to infer a single team from the account.
-        required: false
       ARTIFACTS_REPO_TOKEN:
         description: 'When absent, GitHub Release upload + manifest dispatch are skipped.'
         required: false
@@ -229,7 +226,7 @@ jobs:
       - name: xcodebuild archive
         if: steps.guard.outputs.supported == 'true'
         env:
-          DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          DEVELOPMENT_TEAM: ${{ inputs.apple_team_id }}
         run: |
           set -euo pipefail
           xcodebuild \
@@ -253,7 +250,7 @@ jobs:
           <plist version="1.0">
           <dict>
             <key>method</key><string>${{ inputs.export_method }}</string>
-            <key>teamID</key><string>${{ secrets.APPLE_TEAM_ID }}</string>
+            <key>teamID</key><string>${{ inputs.apple_team_id }}</string>
             <key>signingStyle</key><string>automatic</string>
           </dict>
           </plist>
