@@ -79,6 +79,7 @@ jobs:
     name: Web (Cloudflare Pages)
     runs-on:
       group: tanvrit
+      labels: [Linux]
     steps:
       - uses: actions/checkout@v4
 

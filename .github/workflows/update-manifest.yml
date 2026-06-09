@@ -29,6 +29,7 @@ jobs:
     name: Update ${{ github.event.client_payload.product || github.event.inputs.product }} manifest
     runs-on:
       group: tanvrit
+      labels: [Linux]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -78,6 +78,7 @@ jobs:
     name: Web (Firebase Hosting)
     runs-on:
       group: tanvrit
+      labels: [Linux]
     steps:
       - uses: actions/checkout@v4
 

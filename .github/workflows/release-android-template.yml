@@ -97,6 +97,7 @@ jobs:
     name: Android (signed APK + AAB)
     runs-on:
       group: tanvrit
+      labels: [Linux]
     steps:
       - uses: actions/checkout@v4
 

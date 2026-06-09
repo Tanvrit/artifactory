@@ -15,6 +15,7 @@ jobs:
     name: Generate Platform Token Outputs
     runs-on:
       group: tanvrit
+      labels: [Linux]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

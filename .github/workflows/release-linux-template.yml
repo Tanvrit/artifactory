@@ -70,6 +70,7 @@ jobs:
     name: Linux x64
     runs-on:
       group: tanvrit
+      labels: [Linux]
     steps:
       - uses: actions/checkout@v4
 
