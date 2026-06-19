@@ -150,6 +150,27 @@ jobs:
             cp -r "${{ inputs.wasm_output_dir }}"/. dist/
           fi
 
+          # ── Self-consistent index.html + source-map hygiene ──────────────
+          # Compose for Web hashes the production bundle (composeApp.<hash>.js)
+          # but the generated index.html still references the unhashed
+          # composeApp.js, which 404s — leaving a blank app. Patch every
+          # index.html under dist to point at the real hashed bundle. This is
+          # idempotent: apps whose output already matches are left untouched.
+          find dist -name index.html | while read -r idx; do
+            d=$(dirname "$idx")
+            hashed=$(ls "$d"/composeApp.*.js 2>/dev/null | grep -vE '\.map$|\.LICENSE' | head -1 | xargs -r basename)
+            if [ -n "$hashed" ] && [ "$hashed" != "composeApp.js" ]; then
+              sed -i "s|composeApp\.js|$hashed|g" "$idx"
+              echo "patched $idx -> $hashed"
+            fi
+          done
+          # Stub source maps + strip the //# sourceMappingURL pointer so the
+          # obfuscated Kotlin source can't be reconstructed from a prod deploy.
+          find dist -name '*.js.map' | while read -r m; do printf '{}' > "$m"; done
+          find dist -name 'composeApp.*.js' ! -name '*.map' ! -name '*.LICENSE*' | while read -r j; do
+            sed -i 's|//#[[:space:]]*sourceMappingURL=.*$||' "$j"
+          done
+
       - name: Deploy to Cloudflare Pages
         if: steps.guard.outputs.supported == 'true' && github.event_name == 'push' && env.CF_TOKEN_PRESENT == 'true'
         # Continue on error so missing Cloudflare project (e.g. tanvrit-shell-app
