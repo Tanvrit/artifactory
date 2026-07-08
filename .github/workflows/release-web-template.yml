@@ -77,9 +77,20 @@ on:
 jobs:
   release-web:
     name: Web (Cloudflare Pages)
+    # `xbuild` is a capability label carried by BOTH the Linux self-hosted runners
+    # and the macOS self-hosted runner (but NOT the Windows node, which stays
+    # reserved for release-windows MSI packaging — see e9bf855). Targeting it lets
+    # the web deploy run on whichever of Linux/macOS is idle, so a busy or offline
+    # Linux runner no longer stalls the deploy, while still keeping Windows out.
+    # GitHub label-matching is AND-only, so a single shared label is the only way
+    # to express "Linux OR macOS, never Windows". The build (Gradle Wasm + Node +
+    # wrangler) and the assembly steps below are OS-portable (no GNU-only
+    # sed/xargs) so a macOS run produces a byte-identical dist.
+    # NOTE: each Linux + the macOS runner must carry the `xbuild` label
+    # (Settings → Actions → Runners → runner → Labels → add `xbuild`).
     runs-on:
       group: tanvrit
-      labels: [Linux]
+      labels: [xbuild]
     steps:
       - uses: actions/checkout@v4
 
@@ -156,11 +167,16 @@ jobs:
           # composeApp.js, which 404s — leaving a blank app. Patch every
           # index.html under dist to point at the real hashed bundle. This is
           # idempotent: apps whose output already matches are left untouched.
+          # Portable across GNU (Linux) and BSD (macOS) coreutils: no `xargs -r`
+          # (BSD xargs lacks it) and `sed -i.bak … && rm` (BSD `sed -i` requires a
+          # backup-suffix arg; `.bak` works on both), so the same assembly runs on
+          # either self-hosted runner OS.
           find dist -name index.html | while read -r idx; do
             d=$(dirname "$idx")
-            hashed=$(ls "$d"/composeApp.*.js 2>/dev/null | grep -vE '\.map$|\.LICENSE' | head -1 | xargs -r basename)
+            hashed=$(ls "$d"/composeApp.*.js 2>/dev/null | grep -vE '\.map$|\.LICENSE' | head -1)
+            [ -n "$hashed" ] && hashed=$(basename "$hashed")
             if [ -n "$hashed" ] && [ "$hashed" != "composeApp.js" ]; then
-              sed -i "s|composeApp\.js|$hashed|g" "$idx"
+              sed -i.bak "s|composeApp\.js|$hashed|g" "$idx" && rm -f "$idx.bak"
               echo "patched $idx -> $hashed"
             fi
           done
@@ -168,7 +184,7 @@ jobs:
           # obfuscated Kotlin source can't be reconstructed from a prod deploy.
           find dist -name '*.js.map' | while read -r m; do printf '{}' > "$m"; done
           find dist -name 'composeApp.*.js' ! -name '*.map' ! -name '*.LICENSE*' | while read -r j; do
-            sed -i 's|//#[[:space:]]*sourceMappingURL=.*$||' "$j"
+            sed -i.bak 's|//#[[:space:]]*sourceMappingURL=.*$||' "$j" && rm -f "$j.bak"
           done
 
       - name: Deploy to Cloudflare Pages
