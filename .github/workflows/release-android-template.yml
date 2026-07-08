@@ -66,6 +66,17 @@ on:
         type: string
         required: false
         default: ''
+      runner_labels:
+        description: >-
+          JSON array of self-hosted runner labels (within the "tanvrit" group) the
+          job may run on. Default ["Linux"] keeps the historical behaviour. Pass
+          ["self-hosted"] to let macOS self-hosted runners pick up the Android build
+          when the Linux runner is busy/offline (labels are AND-matched, so the
+          shared "self-hosted" label is the only way to allow either OS). The
+          Android/Gradle build runs on macOS too, so it is a safe fallback.
+        type: string
+        required: false
+        default: '["Linux"]'
     secrets:
       ANDROID_SIGNING_KEYSTORE:
         description: 'Base64-encoded .jks keystore'
@@ -97,7 +108,7 @@ jobs:
     name: Android (signed APK + AAB)
     runs-on:
       group: tanvrit
-      labels: [Linux]
+      labels: ${{ fromJSON(inputs.runner_labels) }}
     steps:
       - uses: actions/checkout@v4
 

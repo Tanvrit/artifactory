@@ -61,6 +61,17 @@ on:
         type: string
         required: false
         default: ''
+      runner_labels:
+        description: >-
+          JSON array of self-hosted runner labels (within the "tanvrit" group) the
+          job may run on. Default ["Linux"] keeps the historical behaviour. Pass
+          ["self-hosted"] to let macOS self-hosted runners pick up the job when the
+          Linux runner is busy/offline (labels are AND-matched, so a label BOTH
+          OSes carry — self-hosted — is the only way to allow either). The web build
+          is OS-agnostic (Node + Gradle), so macOS is a safe fallback.
+        type: string
+        required: false
+        default: '["Linux"]'
     secrets:
       CLOUDFLARE_API_TOKEN:
         description: 'When absent, the Deploy step is skipped — workflow still builds artifacts.'
@@ -79,7 +90,7 @@ jobs:
     name: Web (Cloudflare Pages)
     runs-on:
       group: tanvrit
-      labels: [Linux]
+      labels: ${{ fromJSON(inputs.runner_labels) }}
     steps:
       - uses: actions/checkout@v4
 
