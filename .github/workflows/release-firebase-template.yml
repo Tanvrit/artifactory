@@ -78,7 +78,8 @@ jobs:
     name: Web (Firebase Hosting)
     runs-on:
       group: tanvrit
-      labels: [Linux]
+      # Linux self-hosted runner down 2026-07 — macOS fallback; revert to [Linux] when it's back
+      labels: [macos]
     steps:
       - uses: actions/checkout@v4
 

@@ -29,7 +29,8 @@ jobs:
     name: Update ${{ github.event.client_payload.product || github.event.inputs.product }} manifest
     runs-on:
       group: tanvrit
-      labels: [Linux]
+      # Linux self-hosted runner down 2026-07 — macOS fallback; revert to [Linux] when it's back
+      labels: [macos]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
