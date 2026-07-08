@@ -136,6 +136,40 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         if: steps.guard.outputs.supported == 'true'
 
+      # Self-hosted runners don't reliably export ANDROID_HOME, so Gradle fails
+      # with "SDK location not found". Resolve from the runner env, then standard
+      # macOS + Linux install locations, and write local.properties. Covers both
+      # OSes because runner_labels:["self-hosted"] lets this land on either.
+      - name: Resolve Android SDK location
+        if: steps.guard.outputs.supported == 'true'
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "Runner Android env: ANDROID_HOME=${ANDROID_HOME:-<unset>} ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-<unset>}"
+          CANDIDATES=(
+            "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}"
+            "$HOME/Library/Android/sdk"
+            "$HOME/Android/Sdk" "$HOME/android-sdk"
+            "/opt/android-sdk" "/usr/lib/android-sdk" "/usr/local/lib/android/sdk"
+          )
+          SDK_DIR=""
+          for c in "${CANDIDATES[@]}"; do
+            [ -n "$c" ] || continue
+            if [ -d "$c/platform-tools" ] || [ -d "$c/cmdline-tools" ] || [ -d "$c/platforms" ]; then
+              SDK_DIR="$c"; break
+            fi
+          done
+          if [ -z "$SDK_DIR" ]; then
+            echo "::error::Android SDK not found on runner. Checked: ${CANDIDATES[*]}"
+            ls -la "$HOME" 2>/dev/null | head -40 || true
+            exit 1
+          fi
+          echo "Resolved Android SDK: $SDK_DIR"
+          echo "ANDROID_HOME=$SDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_DIR" >> "$GITHUB_ENV"
+          echo "$SDK_DIR/platform-tools" >> "$GITHUB_PATH"
+          echo "sdk.dir=$SDK_DIR" > local.properties
+
       # Decode the keystore into a temp file. Android Gradle plugin reads
       # signing config from env vars our build.gradle.kts blocks reference
       # (RELEASE_STORE_FILE, RELEASE_STORE_PASSWORD, etc.).
