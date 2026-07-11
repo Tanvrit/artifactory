@@ -19,7 +19,11 @@ jobs:
     name: Generate Platform Icons
     runs-on:
       group: tanvrit
-      labels: [mac-a]
+      # Kept on macOS: step below runs `brew install --cask inkscape` (Homebrew-specific, no
+      # apt equivalent wired here) — not an iOS/Xcode build, but moving to Linux would break
+      # this step without a companion apt-get rewrite (out of scope for a runner-label change).
+      # Normalized the stale "mac-a" single-runner label to the group's shared macOS label.
+      labels: [self-hosted, macOS]
 
     steps:
       - name: Checkout

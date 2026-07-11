@@ -29,8 +29,9 @@ jobs:
     name: Update ${{ github.event.client_payload.product || github.event.inputs.product }} manifest
     runs-on:
       group: tanvrit
-      # Linux self-hosted runner down 2026-07 — macOS fallback; revert to [Linux] when it's back
-      labels: [macos]
+      # Linux self-hosted runners back online 2026-07-11 — Node/git/wrangler manifest update has
+      # no macOS/Xcode dependency; reverted from the outage-era macOS fallback.
+      labels: [self-hosted, Linux]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

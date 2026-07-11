@@ -15,8 +15,9 @@ jobs:
     name: Generate Platform Token Outputs
     runs-on:
       group: tanvrit
-      # Linux self-hosted runner down 2026-07 — macOS fallback; revert to [Linux] when it's back
-      labels: [macos]
+      # Linux self-hosted runners back online 2026-07-11 — pure Node token generation has no
+      # macOS/Xcode dependency; reverted from the outage-era macOS fallback.
+      labels: [self-hosted, Linux]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

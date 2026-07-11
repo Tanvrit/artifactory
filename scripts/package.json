@@ -1,6 +1,6 @@
 {
   "name": "@tanvrit/tokens",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Tanvrit Design Tokens — CSS, TypeScript, Kotlin, Swift",
   "main": "index.js",
   "types": "index.d.ts",

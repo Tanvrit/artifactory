@@ -126,7 +126,9 @@ jobs:
     name: iOS (.ipa)
     runs-on:
       group: tanvrit
-      labels: [macos]
+      # Genuine iOS/Xcode build (xcodebuild archive/export, TestFlight upload) — stays on the
+      # self-hosted macOS pool; normalized label to match the "tanvrit" group's macOS runners.
+      labels: [self-hosted, macOS]
     steps:
       - uses: actions/checkout@v4
 

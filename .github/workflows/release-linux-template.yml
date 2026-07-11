@@ -70,8 +70,10 @@ jobs:
     name: Linux x64
     runs-on:
       group: tanvrit
-      # Linux self-hosted runner down 2026-07 — macOS fallback; revert to [Linux] when it's back
-      labels: [macos]
+      # Linux self-hosted runners back online 2026-07-11 — this job builds the linux-x64
+      # .deb/.AppImage target itself (apt-get fakeroot/binutils/libfuse2), so it belongs on
+      # Linux; reverted from the outage-era macOS fallback per the comment left in place.
+      labels: [self-hosted, Linux]
     steps:
       - uses: actions/checkout@v4
 

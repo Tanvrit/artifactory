@@ -15,8 +15,9 @@ jobs:
     name: Build & Deploy to Cloudflare Pages
     runs-on:
       group: tanvrit
-      # Linux self-hosted runner down 2026-07 — macOS fallback; revert to [Linux] when it's back
-      labels: [macos]
+      # Linux self-hosted runners back online 2026-07-11 — Next.js build has no macOS/Xcode
+      # dependency; reverted from the outage-era macOS fallback to free up macOS capacity.
+      labels: [self-hosted, Linux]
     # Self-hosted runner required: local npm + wrangler cache; artifacts.tanvrit.com
     # portal portal build takes ~12min on ubuntu-latest without cache warmth.
     # R24: Deploys artifacts.tanvrit.com portal to Cloudflare Pages production.

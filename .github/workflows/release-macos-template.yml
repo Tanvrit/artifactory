@@ -126,7 +126,9 @@ jobs:
     name: macOS arm64 (Apple Silicon)
     runs-on:
       group: tanvrit
-      labels: [macos]
+      # Genuine macOS build (Xcode signing/notarization, .dmg, App Store Connect upload) — stays
+      # on the self-hosted macOS pool; normalized label to match the "tanvrit" group's runners.
+      labels: [self-hosted, macOS]
     steps:
       - uses: actions/checkout@v4
 
