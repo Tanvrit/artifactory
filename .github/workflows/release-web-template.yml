@@ -161,6 +161,26 @@ jobs:
             cp -r "${{ inputs.wasm_output_dir }}"/. dist/
           fi
 
+          # ── Cache-proof: content-hash an UNHASHED entry bundle ───────────
+          # Some apps' Compose config emits composeApp.js (no hash). Cloudflare's
+          # zone Browser-Cache-TTL caches that fixed name for hours regardless of
+          # _headers, so a code change stays stale until the TTL expires — and
+          # wrangler's OAuth token can't purge. Hash it so every deploy is a NEW
+          # URL the edge has never cached. Skips apps whose Compose ALREADY hashes
+          # (a composeApp.<hash>.js sibling exists) and non-Compose apps (no
+          # composeApp.js). The index.html patch below then repoints the ref.
+          find dist -name composeApp.js | while read -r cj; do
+            d=$(dirname "$cj")
+            ls "$d"/composeApp.*.js 2>/dev/null | grep -vE '\.map$|\.LICENSE' | grep -q . && continue
+            if command -v sha256sum >/dev/null 2>&1; then h=$(sha256sum "$cj" | cut -c1-10); else h=$(shasum -a 256 "$cj" | cut -c1-10); fi
+            mv "$cj" "$d/composeApp.$h.js"
+            [ -f "$d/composeApp.js.map" ] && mv "$d/composeApp.js.map" "$d/composeApp.$h.js.map"
+            # Rewrite the bundle's OWN composeApp.js references (its Compose-threading
+            # web worker + sourceMappingURL) to the hashed name, else the worker 404s.
+            sed -i.bak "s|composeApp\.js|composeApp.$h.js|g" "$d/composeApp.$h.js" && rm -f "$d/composeApp.$h.js.bak"
+            echo "hashed unhashed bundle -> composeApp.$h.js in $d"
+          done
+
           # ── Self-consistent index.html + source-map hygiene ──────────────
           # Compose for Web hashes the production bundle (composeApp.<hash>.js)
           # but the generated index.html still references the unhashed
