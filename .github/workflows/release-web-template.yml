@@ -198,7 +198,13 @@ jobs:
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # The CLOUDFLARE_ACCOUNT_ID secret is unset in most product repos, which
+          # made wrangler POST to /accounts//pages/... (empty id → API error 7003)
+          # and — because this step is continue-on-error — the run went GREEN while
+          # NOTHING deployed. All Tanvrit CF Pages projects live under one account,
+          # so fall back to that shared id (also documented in each app's CLAUDE.md)
+          # when the secret isn't provisioned.
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || 'ce3f0ef57641c98d52af95c069bbb6a2' }}
           command: pages deploy dist --project-name=${{ inputs.cf_project_name }} --branch=${{ inputs.cf_branch }}
 
       - name: Cloudflare deploy skipped notice
