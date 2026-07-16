@@ -63,15 +63,45 @@ gh secret list --org tanvrit
 | Maven | `gpg --verify <artifact>.asc <artifact>` against the published public key |
 | Container | `cosign verify <image>@<digest>`; inspect provenance attestation |
 
+## SECURITY REMEDIATION — committed signing secrets (OWNER ACTION, high priority)
+
+Discovered during the P1 rollout: signing material is **committed to git** (tracked in HEAD) across
+several repos. These are exposed to anyone with repo/history access and must be **rotated**, not just
+untracked (untracking leaves them in history).
+
+| Repo | Tracked secret files |
+|---|---|
+| `platforms/mandee-business` | `creds/AuthKey_96VBAC29H2.p8` (**Apple ASC API key — REVOKE FIRST**), `creds/key_store`, `key_store_bharat`, `key_store_mandee`, `key_store_solute` |
+| `platforms/store` | `creds/key_store`, `key_store_bharat`, `key_store_mandee`, `key_store_solute` |
+| `client/desipops` | `creds/key_store`, `key_store_bharat`, `key_store_solute` |
+| `platforms/friendly` | `creds/key_store_friendly` — **untracked in HEAD** during P1, but still in history |
+
+Remediation sequence (owner-driven — do NOT untrack before rotating, and history rewrite = force-push):
+1. **Revoke** the Apple ASC API key `AuthKey_96VBAC29H2` in App Store Connect → Users & Access → Integrations, and issue a fresh one (store as `ASC_API_KEY_P8` org secret).
+2. **Rotate** each exposed upload keystore. If an app is already live on Play under that upload key, request a Play Console **upload-key reset** (App integrity → Upload key certificate → Request reset). Move the new key to the `ANDROID_SIGNING_KEYSTORE` org secret.
+3. `git rm --cached` the files + confirm `.gitignore` covers `creds/` (`**/creds/` already present in most), commit, push.
+4. **Purge history** (`git filter-repo`/BFG) and force-push — coordinate, as this rewrites shared history.
+
+## Open flags (owner decisions surfaced during P1)
+
+- **`desipops` Android package**: code/`CLAUDE.md` conflict — the release-android.yml `application_id`
+  is `com.tanvrit.desipops` (documented as the "release applicationId"), but the AAB's real
+  `applicationId` is `com.desipops` (even the release flavor). Left unchanged; confirm the intended
+  Play package (a Play upload of a `com.desipops` AAB to a `com.tanvrit.desipops` listing will fail).
+- **`school` Android release skips**: its Gradle module is `:composeApp` but its dir is `app/`
+  (`settings.gradle.kts` alias). The shared `release-android-template.yml` guard maps
+  `gradle_module → <path>/build.gradle.kts`, so it looks for `composeApp/build.gradle.kts` (absent) and
+  **graceful-skips**. Fix later by either renaming the module to `:app` (settings change) or teaching
+  the template guard to resolve module→dir aliases.
+- **`mandee-business` Play task**: `assemble_android.yml` runs `:androidApp:publishBusinessReleaseBundle`
+  but there are no product flavors, so the task is likely `publishReleaseBundle` — verify it resolves.
+
 ## Rollout status
 
 | Phase | State |
 |---|---|
 | P0 secret substrate + keystore helper (`artifactory/scripts/set-org-signing-secrets.sh`) | **code done** — owner runs provisioning |
 | P0 fix `ai` macOS env-var name mismatch | **done** |
-| P1-S1 `ai` Android → `RELEASE_STORE_*` + canonical secret | **code done** — verify after org secret set |
-| P1-S2 `friendly` (rotate git-tracked key + align) | pending |
-| P1-S3 `desipops` (rotate git-tracked key + align) | pending |
-| P1-S4 `mandee-business` + `store` (drop signing.properties; retarget `store` → :androidApp) | pending |
-| P1-S5 `swyft`/`wedding`/`school`/`bharat`/`auditor`/`compute` (add/align; retarget `swyft` → :androidApp) | pending |
+| P1 Android — `ai`, `friendly`, `desipops`, `mandee-business`, `store`, `swyft`, `wedding`, `school`, `auditor`, `compute` all → `RELEASE_STORE_*`; committed+pushed; `store`/`swyft` retargeted `:composeApp`→`:androidApp`; `friendly`/`school` Play packageName fixed | **code done + configs validated** (ai/swyft/wedding green) — end-to-end signed-AAB verify after org secret set |
+| P1 Android — `bharat-online` | **edited** — not a git repo; owner must init/commit |
 | P2 iOS (Match) · P3 desktop · P4 Maven GPG · P5 container cosign · P6 web SLSA | pending |
