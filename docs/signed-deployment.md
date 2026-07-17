@@ -114,6 +114,17 @@ Remediation sequence (owner-driven — do NOT untrack before rotating, and histo
 All P2–P6 changes are **additive** (existing behavior unchanged when new secrets absent) and live on
 `signing/*` branches — **not `main`** — so nothing publishes/deploys until you merge.
 
+### Draft PRs (review-ready)
+
+| PR | Branch | Merge caveat |
+|---|---|---|
+| [artifactory#4](https://github.com/Tanvrit/artifactory/pull/4) | `signing/templates` | needs Apple secrets + Match repo to activate; additive |
+| [sdk#86](https://github.com/Tanvrit/sdk/pull/86) | `signing/gpg` | **republishes signed** — merge as a `pluginVersion` bump |
+| [core#21](https://github.com/Tanvrit/core/pull/21) | `signing/gpg` | **republishes signed** — merge as a `pluginVersion` bump |
+| [compute#4](https://github.com/Tanvrit/compute/pull/4) | `signing/gpg-cosign` | merge with next agent release |
+| [server#84](https://github.com/Tanvrit/server/pull/84) | `signing/cosign` | merging deploys server; keyless, no secret |
+| [host#1](https://github.com/Tanvrit/host/pull/1) | `signing/cosign` | keyless, no secret |
+
 ## Merge & activation order
 
 1. **Provision org secrets first** (`artifactory/scripts/set-org-signing-secrets.sh`): GPG for Maven;
