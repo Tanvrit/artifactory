@@ -104,4 +104,25 @@ Remediation sequence (owner-driven — do NOT untrack before rotating, and histo
 | P0 fix `ai` macOS env-var name mismatch | **done** |
 | P1 Android — `ai`, `friendly`, `desipops`, `mandee-business`, `store`, `swyft`, `wedding`, `school`, `auditor`, `compute` all → `RELEASE_STORE_*`; committed+pushed; `store`/`swyft` retargeted `:composeApp`→`:androidApp`; `friendly`/`school` Play packageName fixed | **code done + configs validated** (ai/swyft/wedding green) — end-to-end signed-AAB verify after org secret set |
 | P1 Android — `bharat-online` | **edited** — not a git repo; owner must init/commit |
-| P2 iOS (Match) · P3 desktop · P4 Maven GPG · P5 container cosign · P6 web SLSA | pending |
+| P2 iOS Match + P3 macOS secrets + P6 web SLSA (`artifactory` templates, additive) | **branch `signing/templates`** (638665b) — yaml-validated |
+| P4 Maven GPG — `sdk` (`signing/gpg` bab56da), `core` (`signing/gpg` db34dad) | **branch ready** — gradle-config validated keyless AND keyed |
+| P4+P5 — `compute` agent JAR GPG + native codesign/notarize/cosign + homebrew sha | **branch `signing/gpg-cosign`** (dd2b542) |
+| P5 container cosign — `server` (`signing/cosign` 96d86aa), `host` (`signing/cosign` 34158e6) | **branch ready** — keyless OIDC, no secret |
+
+All P2–P6 changes are **additive** (existing behavior unchanged when new secrets absent) and live on
+`signing/*` branches — **not `main`** — so nothing publishes/deploys until you merge.
+
+## Merge & activation order
+
+1. **Provision org secrets first** (`artifactory/scripts/set-org-signing-secrets.sh`): GPG for Maven;
+   Match repo + ASC + Developer ID for Apple. Keyless cosign needs nothing.
+2. **`signing/cosign` (server, host)** — safe to merge anytime; keyless, additive. Merging `server`
+   triggers a Cloud Run + Mac-mini deploy (that's the normal deploy path) — do it as a deliberate deploy.
+3. **`signing/templates` (artifactory)** — merge after the Apple secrets + Match repo exist; additive,
+   so the 14 callers keep working meanwhile. **Web provenance also needs each caller's `release-web.yml`
+   `release:` job to add `permissions: { id-token: write, attestations: write }`** — `secrets: inherit`
+   does not pass permissions (a follow-up sweep across the web callers).
+4. **`signing/gpg` (sdk, core)** — merging republishes **signed** artifacts; do it **as a coordinated
+   version bump** (a real release-train), not a casual merge, so you don't overwrite a live version.
+5. **`signing/gpg-cosign` (compute)** — merge with the next agent release.
+6. Verify each per the table above (`gpg --verify`, `cosign verify`, `codesign -dv`, `spctl`).
