@@ -88,6 +88,17 @@ on:
 jobs:
   release-web:
     name: Web (Cloudflare Pages)
+    # id-token + attestations are required by actions/attest-build-provenance to
+    # mint the SLSA provenance attestation via the GitHub Sigstore instance.
+    # contents/packages:read preserve the existing checkout + Gradle package reads.
+    # Callers using `secrets: inherit` must ALSO grant these on their calling job
+    # (permissions: { id-token: write, attestations: write }) for the attestation
+    # to actually be issued; until then the step is best-effort (continue-on-error).
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+      attestations: write
     runs-on:
       group: tanvrit
       labels: ${{ fromJSON(inputs.runner_labels) }}
@@ -206,6 +217,40 @@ jobs:
           find dist -name 'composeApp.*.js' ! -name '*.map' ! -name '*.LICENSE*' | while read -r j; do
             sed -i.bak 's|//#[[:space:]]*sourceMappingURL=.*$||' "$j" && rm -f "$j.bak"
           done
+
+      # Tarball the built bundle so the SLSA provenance attestation has a single,
+      # stable subject (a directory of many hashed files is awkward to attest).
+      # Prefers the assembled dist/; falls back to the raw wasm output dir.
+      - name: Package web bundle for attestation
+        id: provenance_pkg
+        if: steps.guard.outputs.supported == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist-provenance
+          TARBALL="dist-provenance/${{ inputs.product }}-web-bundle.tar.gz"
+          if [ -d dist ]; then
+            tar -czf "$TARBALL" -C dist .
+          elif [ -d "${{ inputs.wasm_output_dir }}" ]; then
+            tar -czf "$TARBALL" -C "${{ inputs.wasm_output_dir }}" .
+          else
+            echo "::warning::No dist/ or ${{ inputs.wasm_output_dir }} found — skipping provenance packaging."
+            echo "packaged=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
+          echo "packaged=true" >> "$GITHUB_OUTPUT"
+          echo "::notice::Packaged web bundle for provenance → $TARBALL"
+
+      # SLSA build-provenance attestation for the web bundle. Best-effort: if the
+      # calling job hasn't granted id-token/attestations write, this fails softly
+      # and the build/deploy still succeed (additive, no new secrets required).
+      - name: Attest build provenance (SLSA)
+        if: steps.guard.outputs.supported == 'true' && steps.provenance_pkg.outputs.packaged == 'true'
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: ${{ steps.provenance_pkg.outputs.tarball }}
 
       - name: Deploy to Cloudflare Pages
         if: steps.guard.outputs.supported == 'true' && github.event_name == 'push' && env.CF_TOKEN_PRESENT == 'true'
