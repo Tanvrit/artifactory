@@ -88,11 +88,10 @@ Remediation sequence (owner-driven — do NOT untrack before rotating, and histo
   is `com.tanvrit.desipops` (documented as the "release applicationId"), but the AAB's real
   `applicationId` is `com.desipops` (even the release flavor). Left unchanged; confirm the intended
   Play package (a Play upload of a `com.desipops` AAB to a `com.tanvrit.desipops` listing will fail).
-- **`school` Android release skips**: its Gradle module is `:composeApp` but its dir is `app/`
-  (`settings.gradle.kts` alias). The shared `release-android-template.yml` guard maps
-  `gradle_module → <path>/build.gradle.kts`, so it looks for `composeApp/build.gradle.kts` (absent) and
-  **graceful-skips**. Fix later by either renaming the module to `:app` (settings change) or teaching
-  the template guard to resolve module→dir aliases.
+- **`school` alias graceful-skip — RESOLVED**: the shared release templates now resolve a
+  `settings.gradle.kts` module→dir alias (`project(":composeApp").projectDir = file("app")`) for both
+  the build-file guard and the artifact-output path. android template fixed on `main`; ios/macos on
+  `signing/templates`.
 - **`mandee-business` Play task**: `assemble_android.yml` runs `:androidApp:publishBusinessReleaseBundle`
   but there are no product flavors, so the task is likely `publishReleaseBundle` — verify it resolves.
 
@@ -103,8 +102,11 @@ Remediation sequence (owner-driven — do NOT untrack before rotating, and histo
 | P0 secret substrate + keystore helper (`artifactory/scripts/set-org-signing-secrets.sh`) | **code done** — owner runs provisioning |
 | P0 fix `ai` macOS env-var name mismatch | **done** |
 | P1 Android — `ai`, `friendly`, `desipops`, `mandee-business`, `store`, `swyft`, `wedding`, `school`, `auditor`, `compute` all → `RELEASE_STORE_*`; committed+pushed; `store`/`swyft` retargeted `:composeApp`→`:androidApp`; `friendly`/`school` Play packageName fixed | **code done + configs validated** (ai/swyft/wedding green) — end-to-end signed-AAB verify after org secret set |
-| P1 Android — `bharat-online` | **edited** — not a git repo; owner must init/commit |
-| P2 iOS Match + P3 macOS secrets + P6 web SLSA (`artifactory` templates, additive) | **branch `signing/templates`** (638665b) — yaml-validated |
+| P3 app-side — macOS `signing{}` block added to 12 desktop apps (`swyft`,`tanvrit`,`friendly`,`wedding`,`admin`,`automator`,`compute`,`market`,`mandee-business`,`auditor`,`school`,`desipops`) reading `SIGNING_IDENTITY` | **done + pushed** — wedding/school configs validated |
+| P6 wiring — web SLSA `permissions:{id-token,attestations}` added to all `release-web.yml` template-callers | **done + pushed** (non-template web callers `tanvrit`/`mandee`/`desipops` skipped correctly) |
+| Template alias-awareness (fix `school`-style module/dir alias) — android on `main` (5032d8d), ios/macos on `signing/templates` (a1ed651) | **done** |
+| Non-git-repo dirs: `bharat-online`, `tackll`, `madison-geeks`, `artistic-salon-spa` | **edited** — not git repos; owner must `git init`/create GitHub repo + commit the working-tree edits |
+| P2 iOS Match + P3 macOS secrets + P6 web SLSA (`artifactory` templates, additive) | **branch `signing/templates`** (a1ed651) — yaml-validated; app-side ready (all apps declare iosArm64 + have xcodeproj) |
 | P4 Maven GPG — `sdk` (`signing/gpg` bab56da), `core` (`signing/gpg` db34dad) | **branch ready** — gradle-config validated keyless AND keyed |
 | P4+P5 — `compute` agent JAR GPG + native codesign/notarize/cosign + homebrew sha | **branch `signing/gpg-cosign`** (dd2b542) |
 | P5 container cosign — `server` (`signing/cosign` 96d86aa), `host` (`signing/cosign` 34158e6) | **branch ready** — keyless OIDC, no secret |
