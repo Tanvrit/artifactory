@@ -17,12 +17,21 @@
 #
 # Produces: <product>-<version>-ios.ipa + .sha256
 #
-# Signing: AUTOMATIC, off the macOS runner's login keychain. The Apple
+# Signing (default): AUTOMATIC, off the macOS runner's login keychain. The Apple
 # Developer account is signed into Xcode on the macOS runner (one-time,
 # interactive), so xcodebuild archive/export use CODE_SIGN_STYLE=Automatic
 # with -allowProvisioningUpdates — Xcode fetches/creates the distribution cert
 # and provisioning profile on demand. No base64 .p12 / .mobileprovision
 # secrets are imported; the only input is APPLE_TEAM_ID (DEVELOPMENT_TEAM).
+#
+# Signing (portable, opt-in): when the MATCH_GIT_URL + MATCH_PASSWORD secrets are
+# BOTH set, the workflow instead uses Fastlane Match. It installs fastlane, runs
+# `fastlane match appstore --readonly` (auth via MATCH_GIT_BASIC_AUTHORIZATION)
+# to pull the Apple Distribution cert + App Store provisioning profile from the
+# encrypted Match repo into a TEMPORARY keychain, optionally decodes ASC_API_KEY_P8
+# → ~/.appstoreconnect/private_keys/AuthKey_<ASC_API_KEY_ID>.p8, and archives/exports
+# with CODE_SIGN_STYLE=Manual. This path is fully additive: with the Match secrets
+# absent, the automatic path above runs unchanged.
 #
 # Scope: sign + export + TestFlight upload. The .ipa ships to:
 #   1. TestFlight (xcrun altool) — when asc_api_key_id input is set and
@@ -120,6 +129,31 @@ on:
         required: false
       R2_SECRET_ACCESS_KEY:
         required: false
+      # ── Portable Fastlane-Match signing (optional) ──────────────────────
+      # When MATCH_GIT_URL + MATCH_PASSWORD are BOTH set, the workflow switches
+      # from automatic login-keychain signing to portable Match signing: it
+      # fetches the Apple Distribution cert + App Store provisioning profile
+      # from the encrypted Match git repo into a temporary keychain and uses
+      # MANUAL code-signing. When either is absent, the automatic path is used
+      # UNCHANGED. All optional so the 14 existing callers keep working.
+      MATCH_GIT_URL:
+        description: 'HTTPS/SSH URL of the encrypted Fastlane Match certificates repo (e.g. https://github.com/tanvrit/ios-certificates). When set with MATCH_PASSWORD, enables portable Match signing.'
+        required: false
+      MATCH_PASSWORD:
+        description: 'Passphrase that decrypts the Match repo contents.'
+        required: false
+      MATCH_GIT_BASIC_AUTHORIZATION:
+        description: 'base64 of "user:token" for HTTPS access to a private Match repo.'
+        required: false
+      ASC_API_KEY_P8:
+        description: 'base64-encoded App Store Connect API key (.p8). When set (with ASC_API_KEY_ID) it is decoded to ~/.appstoreconnect/private_keys/AuthKey_<id>.p8 for use during signing/upload.'
+        required: false
+      ASC_API_KEY_ID:
+        description: 'App Store Connect API Key ID for the ASC_API_KEY_P8 secret. Used to name the decoded .p8 file.'
+        required: false
+      ASC_API_ISSUER_ID:
+        description: 'App Store Connect API Issuer ID paired with ASC_API_KEY_P8/ASC_API_KEY_ID.'
+        required: false
 
 jobs:
   build-ios:
@@ -136,8 +170,19 @@ jobs:
         id: guard
         shell: bash
         run: |
-          # Translate gradle-path (`ui:ui-android`) to filesystem path (`ui/ui-android`)
-          BUILD_FILE="$(echo '${{ inputs.gradle_module }}' | tr ':' '/')/build.gradle.kts"
+          # Resolve the module's filesystem dir, honoring a settings.gradle.kts alias
+          # like project(":composeApp").projectDir = file("app") (school) so an aliased
+          # module doesn't graceful-skip.
+          MODULE_DIR="$(echo '${{ inputs.gradle_module }}' | tr ':' '/')"
+          if [ ! -f "$MODULE_DIR/build.gradle.kts" ] && [ -f settings.gradle.kts ]; then
+            ALIAS_DIR="$(grep -E "project\(\":?${{ inputs.gradle_module }}\"\)\.projectDir" settings.gradle.kts | sed -E 's/.*file\("([^"]+)"\).*/\1/' | head -1)"
+            if [ -n "$ALIAS_DIR" ] && [ -f "$ALIAS_DIR/build.gradle.kts" ]; then
+              MODULE_DIR="$ALIAS_DIR"
+              echo "::notice::resolved aliased module ${{ inputs.gradle_module }} -> $MODULE_DIR"
+            fi
+          fi
+          echo "module_dir=$MODULE_DIR" >> "$GITHUB_OUTPUT"
+          BUILD_FILE="$MODULE_DIR/build.gradle.kts"
           if [ ! -f "$BUILD_FILE" ]; then
             echo "::notice::skipped: $BUILD_FILE not found for ${{ inputs.product }}"
             echo "supported=false" >> "$GITHUB_OUTPUT"
@@ -163,6 +208,23 @@ jobs:
             exit 0
           fi
           echo "supported=true" >> "$GITHUB_OUTPUT"
+
+      # Choose the signing path. Portable Fastlane-Match is used only when BOTH
+      # MATCH_GIT_URL and MATCH_PASSWORD are provisioned; otherwise the historical
+      # automatic login-keychain path runs UNCHANGED.
+      - name: Determine iOS signing mode
+        id: signmode
+        if: steps.guard.outputs.supported == 'true'
+        shell: bash
+        env:
+          MATCH_PRESENT: ${{ secrets.MATCH_GIT_URL != '' && secrets.MATCH_PASSWORD != '' && 'true' || 'false' }}
+        run: |
+          echo "match=$MATCH_PRESENT" >> "$GITHUB_OUTPUT"
+          if [ "$MATCH_PRESENT" = "true" ]; then
+            echo "::notice::iOS signing mode: Fastlane Match (portable certs, manual code-signing)"
+          else
+            echo "::notice::iOS signing mode: automatic login-keychain (MATCH_* secrets not set)"
+          fi
 
       - uses: actions/setup-java@v4
         if: steps.guard.outputs.supported == 'true'
@@ -238,11 +300,77 @@ jobs:
             echo "::notice::No linkPod*/link* iOS framework task found in :${MODULE}; xcodebuild's pbxproj shellScript will invoke embedAndSignAppleFrameworkForXcode directly."
           fi
 
-      # Automatic signing: Xcode resolves the cert + provisioning profile
-      # from the signed-in account on the macOS runner. -allowProvisioningUpdates lets
-      # it create/download a matching profile on demand for the bundle id.
+      # ── Portable Fastlane-Match signing (only when MATCH_* secrets set) ─────
+      # Installs fastlane if absent, creates a temporary keychain, and runs
+      # `fastlane match appstore --readonly` to fetch the Apple Distribution cert
+      # + App Store provisioning profile into that keychain WITHOUT mutating the
+      # Match repo. The temp keychain name/password are exported for the manual
+      # archive/export steps below.
+      - name: Set up Fastlane Match signing
+        if: steps.guard.outputs.supported == 'true' && steps.signmode.outputs.match == 'true'
+        env:
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          BUNDLE_ID: ${{ inputs.bundle_id }}
+          APPLE_TEAM_ID: ${{ inputs.apple_team_id }}
+          MATCH_TYPE: appstore
+        run: |
+          set -euo pipefail
+          if ! command -v fastlane >/dev/null 2>&1; then
+            echo "fastlane not found — installing…"
+            if command -v brew >/dev/null 2>&1; then
+              brew install fastlane || sudo gem install fastlane --no-document || gem install fastlane --no-document --user-install
+            else
+              sudo gem install fastlane --no-document || gem install fastlane --no-document --user-install
+            fi
+            # Ensure a --user-install gem bin dir is on PATH for later steps.
+            if command -v ruby >/dev/null 2>&1; then
+              echo "$(ruby -e 'print Gem.user_dir')/bin" >> "$GITHUB_PATH"
+            fi
+          fi
+          # Temporary keychain that Match imports the cert into.
+          SIGN_KEYCHAIN="$RUNNER_TEMP/match-signing.keychain-db"
+          KEYCHAIN_PW="$(openssl rand -base64 24)"
+          echo "::add-mask::$KEYCHAIN_PW"
+          security create-keychain -p "$KEYCHAIN_PW" "$SIGN_KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$SIGN_KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$SIGN_KEYCHAIN"
+          # Prepend to the user search list, preserving the existing keychains.
+          security list-keychains -d user -s "$SIGN_KEYCHAIN" $(security list-keychains -d user | sed 's/"//g')
+          # --readonly: never generate/revoke — just fetch existing material.
+          fastlane match "$MATCH_TYPE" \
+            --readonly \
+            --git_url "$MATCH_GIT_URL" \
+            --app_identifier "$BUNDLE_ID" \
+            --team_id "$APPLE_TEAM_ID" \
+            --keychain_name "$SIGN_KEYCHAIN" \
+            --keychain_password "$KEYCHAIN_PW"
+          echo "SIGN_KEYCHAIN=$SIGN_KEYCHAIN" >> "$GITHUB_ENV"
+          echo "✓ Match fetched Apple Distribution cert + App Store profile into $SIGN_KEYCHAIN"
+
+      # Decode the ASC API key so signing/upload tooling can authenticate to
+      # App Store Connect. Runs in the Match path when the p8 + id are provided.
+      - name: Decode ASC API key (base64 → .p8)
+        if: steps.guard.outputs.supported == 'true' && steps.signmode.outputs.match == 'true' && env.ASC_P8_PRESENT == 'true'
+        env:
+          ASC_P8_PRESENT: ${{ secrets.ASC_API_KEY_P8 != '' && secrets.ASC_API_KEY_ID != '' && 'true' || 'false' }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          KEY_FILE="$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_API_KEY_ID}.p8"
+          echo "$ASC_API_KEY_P8" | base64 --decode > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          echo "::notice::Decoded ASC API key → $KEY_FILE"
+
+      # Automatic signing (default path): Xcode resolves the cert + provisioning
+      # profile from the signed-in account on the macOS runner.
+      # -allowProvisioningUpdates lets it create/download a matching profile on
+      # demand for the bundle id. Skipped when Match signing is active.
       - name: xcodebuild archive
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && steps.signmode.outputs.match != 'true'
         env:
           DEVELOPMENT_TEAM: ${{ inputs.apple_team_id }}
         run: |
@@ -258,8 +386,32 @@ jobs:
             DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
             archive
 
+      # Manual signing (Match path): use the Apple Distribution cert + the
+      # `match AppStore <bundle_id>` profile that Match installed into the temp
+      # keychain. No -allowProvisioningUpdates (fully manual, offline signing).
+      - name: xcodebuild archive (Match manual signing)
+        if: steps.guard.outputs.supported == 'true' && steps.signmode.outputs.match == 'true'
+        env:
+          DEVELOPMENT_TEAM: ${{ inputs.apple_team_id }}
+          BUNDLE_ID: ${{ inputs.bundle_id }}
+        run: |
+          set -euo pipefail
+          PROFILE="match AppStore ${BUNDLE_ID}"
+          xcodebuild \
+            -project "${{ inputs.xcodeproj_path }}" \
+            -scheme "${{ inputs.scheme }}" \
+            -configuration "${{ inputs.configuration }}" \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/${{ inputs.product }}.xcarchive" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $SIGN_KEYCHAIN" \
+            archive
+
       - name: xcodebuild -exportArchive
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && steps.signmode.outputs.match != 'true'
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/exportOptions.plist" <<EOF
@@ -279,6 +431,37 @@ jobs:
             -exportPath "$RUNNER_TEMP/export" \
             -exportOptionsPlist "$RUNNER_TEMP/exportOptions.plist" \
             -allowProvisioningUpdates
+
+      # Manual export (Match path): pin the signing certificate + the Match
+      # provisioning profile explicitly. No -allowProvisioningUpdates.
+      - name: xcodebuild -exportArchive (Match manual signing)
+        if: steps.guard.outputs.supported == 'true' && steps.signmode.outputs.match == 'true'
+        env:
+          BUNDLE_ID: ${{ inputs.bundle_id }}
+        run: |
+          set -euo pipefail
+          PROFILE="match AppStore ${BUNDLE_ID}"
+          cat > "$RUNNER_TEMP/exportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>${{ inputs.export_method }}</string>
+            <key>teamID</key><string>${{ inputs.apple_team_id }}</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Apple Distribution</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>${BUNDLE_ID}</key><string>${PROFILE}</string>
+            </dict>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$RUNNER_TEMP/${{ inputs.product }}.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/exportOptions.plist"
 
       - name: Rename + checksum artifact
         if: steps.guard.outputs.supported == 'true'
