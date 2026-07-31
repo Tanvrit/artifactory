@@ -4,7 +4,7 @@
 # Caller example:
 #   jobs:
 #     release:
-#       uses: tanvrit/artifactory/.github/workflows/release-ios-template.yml@main
+#       uses: Tanvrit/artifactory/.github/workflows/release-ios-template.yml@main
 #       with:
 #         product: friendly
 #         version: 1.2.0
@@ -502,7 +502,7 @@ jobs:
         continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
-          repository: tanvrit/artifactory
+          repository: Tanvrit/artifactory
           tag_name: ${{ inputs.product }}-v${{ inputs.version }}
           name: "${{ inputs.product }} v${{ inputs.version }}"
           draft: false
@@ -542,7 +542,7 @@ jobs:
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
-          repository: tanvrit/artifactory
+          repository: Tanvrit/artifactory
           event-type: update-manifest
           client-payload: |
             {

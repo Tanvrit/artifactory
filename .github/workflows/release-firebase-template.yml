@@ -7,7 +7,7 @@
 # Caller example:
 #   jobs:
 #     release:
-#       uses: tanvrit/artifactory/.github/workflows/release-firebase-template.yml@main
+#       uses: Tanvrit/artifactory/.github/workflows/release-firebase-template.yml@main
 #       with:
 #         product: desipops
 #         firebase_project_id: desipops-d17ed
@@ -165,7 +165,7 @@ jobs:
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
-          repository: tanvrit/artifactory
+          repository: Tanvrit/artifactory
           event-type: update-manifest
           client-payload: |
             {

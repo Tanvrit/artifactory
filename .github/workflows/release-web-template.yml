@@ -4,7 +4,7 @@
 # Caller example (per-platform release-web.yml):
 #   jobs:
 #     release:
-#       uses: tanvrit/artifactory/.github/workflows/release-web-template.yml@main
+#       uses: Tanvrit/artifactory/.github/workflows/release-web-template.yml@main
 #       with:
 #         product: friendly
 #         gradle_task: ':composeApp:patchWasmIndexHtml'
@@ -289,7 +289,7 @@ jobs:
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
-          repository: tanvrit/artifactory
+          repository: Tanvrit/artifactory
           event-type: update-manifest
           client-payload: |
             {
