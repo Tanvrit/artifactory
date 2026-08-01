@@ -107,6 +107,17 @@ async function routeRequest(path, request, env, ctx) {
     return serveFromR2(env.ARTIFACTS, r2Key, CACHE_BRANDING);
   }
 
+  // --- /dl/{...} — release binaries streamed directly from R2 (Phase 2).
+  // Desktop installers (dmg/msi/deb) are uploaded under the `dl/` prefix and
+  // served here without a manifest round-trip; serveFromR2 streams object.body
+  // and picks the right Content-Type from the extension. This is what the
+  // versioned download links on the landing site point at.
+  if (segments[0] === 'dl') {
+    const key = segments.slice(1).join('/');
+    if (!key) return jsonError(400, 'Missing download path');
+    return serveFromR2(env.ARTIFACTS, `dl/${key}`, CACHE_BINARY);
+  }
+
   // Product routes: segments[0] = product
   const product = segments[0];
   if (!VALID_PRODUCTS.includes(product)) {
