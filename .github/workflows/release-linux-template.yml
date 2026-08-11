@@ -58,7 +58,10 @@ on:
         description: 'When absent, GitHub Release upload + manifest dispatch are skipped.'
         required: false
       CF_ACCOUNT_ID:
-        description: 'When absent, R2 mirror is skipped.'
+        description: 'Cloudflare account id for the R2 S3 endpoint. The R2 mirror step now FAILS LOUDLY when this or the R2 key pair is absent — update-manifest publishes an r2_url for every release regardless, so a skipped mirror ships a manifest whose download link 404s.'
+        required: false
+      CLOUDFLARE_ACCOUNT_ID:
+        description: 'Fallback for CF_ACCOUNT_ID (same value; the name several repos already carry).'
         required: false
       R2_ACCESS_KEY_ID:
         required: false
@@ -218,25 +221,95 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
           ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
 
+      # Mirror the release binaries into the R2 bucket that
+      # artifacts.tanvrit.com serves from.
+      #
+      # Why this step is now allowed to fail the job (2026-08-11): it used to be
+      # `continue-on-error: true` behind an `R2_KEY_PRESENT` guard, so absent
+      # credentials or a failed upload both reported SUCCESS having mirrored
+      # nothing. That is not a harmless degradation:
+      # `scripts/update-manifest.js` writes an `r2_url` into every manifest
+      # UNCONDITIONALLY and `worker/src/index.js` PREFERS `r2_url` over the
+      # GitHub-Releases `direct_url`, so a skipped mirror publishes a release
+      # whose download link points at an object that was never uploaded. This
+      # exact defect bit tanvrit/ai in production — three installers had to be
+      # mirrored by hand after a "successful" release. The binaries are already
+      # attached to the GitHub Release by the step above, so a red mirror step
+      # loses no artifact; it only reports, truthfully, that the CDN download
+      # links for this release will not work.
+      #
+      # Auth is the R2 S3-compatible API via `curl --aws-sigv4`, not the `aws`
+      # CLI: curl is present on every runner in the fleet (including the Windows
+      # runner under `shell: bash`), whereas the AWS CLI is not installed on the
+      # self-hosted nodes — a missing `aws` binary was one more failure the old
+      # continue-on-error swallowed.
       - name: Mirror to Cloudflare R2
-        if: steps.guard.outputs.supported == 'true' && env.R2_KEY_PRESENT == 'true'
-        continue-on-error: true
+        if: steps.guard.outputs.supported == 'true'
+        shell: bash
         env:
-          R2_KEY_PRESENT: ${{ secrets.R2_ACCESS_KEY_ID != '' && 'true' || 'false' }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PRODUCT: ${{ inputs.product }}
           VERSION: ${{ inputs.version }}
         run: |
-          set -euo pipefail
-          ENDPOINT="https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
-          DEST="s3://tanvrit-artifacts/releases/${PRODUCT}/${VERSION}"
+          set -uo pipefail
+          acct="${CF_ACCOUNT_ID:-${CLOUDFLARE_ACCOUNT_ID:-}}"
+          if [ -z "$acct" ] || [ -z "${R2_ACCESS_KEY_ID:-}" ] || [ -z "${R2_SECRET_ACCESS_KEY:-}" ]; then
+            echo "::error::R2 mirror cannot run — set R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and CF_ACCOUNT_ID as REPO-level secrets on this repository (org secrets are not injected into private repos on the free plan, so they arrive empty). The manifest for ${PRODUCT} ${VERSION} advertises an r2_url regardless, so without this mirror every artifacts.tanvrit.com download for it would 404."
+            exit 1
+          fi
+          host="https://${acct}.r2.cloudflarestorage.com"
+          prefix="releases/${PRODUCT}/${VERSION}"
+          mirrored=0
           for f in ${PRODUCT}-${VERSION}-linux-x64.deb ${PRODUCT}-${VERSION}-linux-x64.deb.sha256 \
                    ${PRODUCT}-${VERSION}-linux-x64.AppImage ${PRODUCT}-${VERSION}-linux-x64.AppImage.sha256; do
-            [ -f "$f" ] && aws s3 cp "$f" "${DEST}/$f" --endpoint-url "$ENDPOINT" --no-progress
+            if [ ! -f "$f" ]; then
+              echo "::notice::$f not produced by this build — skipping it."
+              continue
+            fi
+            key="${prefix}/${f}"
+            url="${host}/tanvrit-artifacts/${key}"
+            echo "Mirroring $f -> r2://tanvrit-artifacts/${key}"
+            code=$(curl -sS -o /tmp/r2-put.log -w '%{http_code}' \
+              --aws-sigv4 "aws:amz:auto:s3" \
+              --user "${R2_ACCESS_KEY_ID}:${R2_SECRET_ACCESS_KEY}" \
+              -H "Content-Type: application/octet-stream" \
+              --upload-file "$f" "$url" || true)
+            if [ "$code" != "200" ]; then
+              echo "::error::R2 PUT for $key returned HTTP ${code:-000}"
+              head -c 800 /tmp/r2-put.log 2>/dev/null || true
+              exit 1
+            fi
+            # Read the object back. A 200 on the PUT is not proof the object is
+            # there — only a successful read is, and that is what decides
+            # whether a user can actually download this release.
+            back=$(curl -sS -r 0-0 -D /tmp/r2-get.h -o /dev/null -w '%{http_code}' \
+              --aws-sigv4 "aws:amz:auto:s3" \
+              --user "${R2_ACCESS_KEY_ID}:${R2_SECRET_ACCESS_KEY}" \
+              "$url" || true)
+            if [ "$back" != "206" ] && [ "$back" != "200" ]; then
+              echo "::error::Uploaded $key but it does not read back from R2 (HTTP ${back:-000}) — downloads for this release would 404."
+              exit 1
+            fi
+            local_size=$(wc -c < "$f" | tr -d ' ')
+            remote_size=$(tr -d '\r' < /tmp/r2-get.h | sed -n 's|^[Cc]ontent-[Rr]ange:.*/\([0-9][0-9]*\)$|\1|p' | tail -1)
+            if [ -z "$remote_size" ]; then
+              remote_size=$(tr -d '\r' < /tmp/r2-get.h | sed -n 's|^[Cc]ontent-[Ll]ength: *\([0-9][0-9]*\)$|\1|p' | tail -1)
+            fi
+            if [ -n "$remote_size" ] && [ "$remote_size" != "$local_size" ]; then
+              echo "::error::Size mismatch for $key — local ${local_size} bytes, R2 ${remote_size} bytes. The mirrored object is truncated."
+              exit 1
+            fi
+            echo "Verified r2://tanvrit-artifacts/${key} (${local_size} bytes)"
+            mirrored=$((mirrored + 1))
           done
+          if [ "$mirrored" -eq 0 ]; then
+            echo "::error::R2 mirror uploaded nothing for ${PRODUCT} ${VERSION} — none of the expected artifacts existed on disk."
+            exit 1
+          fi
+          echo "Mirrored and verified ${mirrored} object(s) under r2://tanvrit-artifacts/${prefix}/"
 
       - name: Dispatch manifest update (DEB)
         if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'

@@ -174,15 +174,42 @@ Every artifact lands in two places:
 1. **GitHub Release** — `softprops/action-gh-release@v2` with
    `update-release-if-exists: true`. Six parallel workflows safely append to
    one Release tag.
-2. **Cloudflare R2** — `aws s3 cp` to `s3://tanvrit-artifacts/releases/<product>/<version>/<file>`
-   using R2's S3-compatible endpoint at `https://<account>.r2.cloudflarestorage.com`.
-   Mirror step is gated on `R2_ACCESS_KEY_ID` secret presence — runs skip
-   silently if R2 isn't configured.
+2. **Cloudflare R2** — `curl --aws-sigv4` PUT to
+   `tanvrit-artifacts/releases/<product>/<version>/<file>` via R2's
+   S3-compatible endpoint at `https://<account>.r2.cloudflarestorage.com`.
 
 The Cloudflare Worker at `tanvrit/artifactory/worker/` resolves
 `https://artifacts.tanvrit.com/<product>/<version>/<os>` to either:
 - The R2 URL (302) when `r2_url` is set in `latest.json` — fast, no proxy chain.
 - The GitHub Release `direct_url` otherwise — fallback for pre-R2 manifests.
+
+### The mirror step fails the job (changed 2026-08-11)
+
+It used to be `continue-on-error: true` behind an `R2_KEY_PRESENT` gate, so a
+missing credential **or a failed upload** reported SUCCESS having mirrored
+nothing. That is not a safe degradation, because `scripts/update-manifest.js`
+writes `r2_url` into every manifest *unconditionally* and the worker *prefers*
+`r2_url` over `direct_url` — a skipped mirror therefore publishes a release
+whose download link points at an object that was never uploaded. (This bit
+`tanvrit/ai` in production: three installers had to be mirrored by hand after a
+"successful" release.)
+
+The step now:
+- runs on every supported build, credentials or not;
+- emits `::error::` and exits 1 when `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` /
+  `CF_ACCOUNT_ID` (or `CLOUDFLARE_ACCOUNT_ID`) are absent — a deliberate loud skip;
+- reads every uploaded object back with a signed ranged GET and compares its size
+  to the local file, failing on a missing or truncated object;
+- fails if no expected artifact existed on disk at all.
+
+A red mirror step loses **no** artifact — the binaries are attached to the GitHub
+Release by the preceding step. It only reports, truthfully, that the CDN download
+links for that release will not work.
+
+> **Repo-level secrets required.** The org is on the free plan, so org-level
+> secrets are *not* injected into private repos; they arrive empty. Every caller
+> repo needs `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `CF_ACCOUNT_ID` set at
+> **repo** level (`gh secret list -R tanvrit/<repo>` to check).
 
 ## Secrets reference
 
