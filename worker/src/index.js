@@ -85,6 +85,32 @@ export default {
 };
 
 async function routeRequest(path, request, env, ctx) {
+  // --- dl.tanvrit.com — flat R2 object host.
+  //
+  // This hostname is bound to this Worker as a Production domain. It exists for
+  // one job: serve large binaries out of `tanvrit-artifacts` over the normal
+  // Cloudflare CDN.
+  //
+  // It replaces the public `pub-*.r2.dev` endpoint, which Cloudflare rate-limits
+  // and documents as development-only. Serving 260-280 MB installers through it
+  // degraded badly and erratically under load — measured on one file within a
+  // single minute: 13.9 MB/s, then 1.2 MB/s, then 125 KB/s. At 125 KB/s a
+  // 260 MB download takes ~35 minutes, which reads to a user as "the download
+  // link is broken". Requests here are cached at the edge instead, and the
+  // bucket needs no public dev URL at all.
+  //
+  // The ENTIRE path is the R2 key, so both `ai/manual/...` (the desktop
+  // installers) and `dl/...` resolve without needing a route per prefix.
+  // Scoped by hostname so artifacts.tanvrit.com keeps its existing API surface
+  // exactly as-is.
+  if (new URL(request.url).hostname === 'dl.tanvrit.com') {
+    const key = path.replace(/^\/+/, '');
+    if (!key) return jsonError(400, 'Missing object key');
+    // Reject traversal and absolute-ish keys before they reach the bucket.
+    if (key.includes('..') || key.includes('//')) return jsonError(400, 'Invalid object key');
+    return serveBinaryFromR2(env.ARTIFACTS, key, request);
+  }
+
   // Strip leading slash and split segments
   const segments = path.replace(/^\//, '').split('/');
 
@@ -297,6 +323,70 @@ async function serveFromR2(bucket, key, cacheControl, contentType) {
   }
 
   return new Response(body, { status: 200, headers });
+}
+
+/**
+ * Stream a binary object from R2 with Range support.
+ *
+ * Kept separate from serveFromR2 rather than folded into it: serveFromR2 backs
+ * the manifest/branding routes and has a GitHub-raw fallback, and those paths
+ * should not change behaviour just because installers needed ranges.
+ *
+ * Range matters here specifically. These objects are 260-280 MB, and without
+ * a 206 the browser cannot resume a dropped download — it restarts from zero,
+ * which on a flaky connection means it may never finish at all.
+ */
+async function serveBinaryFromR2(bucket, key, request) {
+  if (!bucket) return jsonError(500, 'R2 binding is not configured on this Worker');
+
+  const rangeHeader = request.headers.get('Range');
+  const object = rangeHeader
+    ? await bucket.get(key, { range: request.headers })
+    : await bucket.get(key);
+
+  if (!object) return jsonError(404, `Not found: ${key}`);
+
+  const headers = new Headers({
+    ...CORS_HEADERS,
+    'Cache-Control': CACHE_BINARY,
+    'Content-Type': mimeForKey(key),
+    // Advertise range support so clients and download managers will resume.
+    'Accept-Ranges': 'bytes',
+  });
+  if (object.httpEtag) headers.set('ETag', object.httpEtag);
+
+  // HEAD must not carry a body, but should carry the same metadata — the
+  // download proxy probes with HEAD before redirecting.
+  if (request.method === 'HEAD') {
+    headers.set('Content-Length', String(object.size));
+    return new Response(null, { status: 200, headers });
+  }
+
+  // A ranged hit comes back with object.range; translate it into the 206 the
+  // client asked for. Without Content-Range a 206 is malformed.
+  if (object.range && rangeHeader) {
+    const offset = object.range.offset ?? 0;
+    const length = object.range.length ?? (object.size - offset);
+    headers.set('Content-Range', `bytes ${offset}-${offset + length - 1}/${object.size}`);
+    headers.set('Content-Length', String(length));
+    return new Response(object.body, { status: 206, headers });
+  }
+
+  headers.set('Content-Length', String(object.size));
+  return new Response(object.body, { status: 200, headers });
+}
+
+/** Content-Type from a key's extension; shared shape with serveFromR2's map. */
+function mimeForKey(key) {
+  const ext = key.split('.').pop()?.toLowerCase();
+  const mimeMap = {
+    svg: 'image/svg+xml', png: 'image/png', ico: 'image/x-icon',
+    webp: 'image/webp', zip: 'application/zip', json: 'application/json',
+    icns: 'image/x-icns', dmg: 'application/x-apple-diskimage',
+    msi: 'application/x-msi', deb: 'application/vnd.debian.binary-package',
+    rpm: 'application/x-rpm', appimage: 'application/x-executable',
+  };
+  return mimeMap[ext] || 'application/octet-stream';
 }
 
 function jsonError(status, message) {

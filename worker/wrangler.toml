@@ -6,6 +6,15 @@ compatibility_date = "2025-01-01"
 pattern = "artifacts.tanvrit.com/*"
 zone_name = "tanvrit.com"
 
+# dl.tanvrit.com — flat object host for large binaries (see serveBinaryFromR2).
+# Declared here so the route survives a redeploy; it was first attached as a
+# Production custom domain in the dashboard. Serving installers through this
+# Worker replaces the public pub-*.r2.dev endpoint, which Cloudflare
+# rate-limits and documents as development-only.
+[[routes]]
+pattern = "dl.tanvrit.com/*"
+zone_name = "tanvrit.com"
+
 [[r2_buckets]]
 binding = "ARTIFACTS"
 bucket_name = "tanvrit-artifacts"
