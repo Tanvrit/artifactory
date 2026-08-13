@@ -146,16 +146,29 @@ const WEB_URLS = {
 };
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
+//
+// Every response below is explicitly drained (`res.resume()`) and every timed-out
+// request explicitly destroyed. Without that, a redirect hop's body and every HEAD
+// response were left unconsumed, so their sockets stayed open and Node's event loop
+// could not drain: the script printed "✓ Done" and then sat there for ~10 minutes
+// before exiting. In CI that turned a 3-second job step into a 10-minute one
+// (observed in run 31727426473: last log line 17:47:10, next step 17:57:09) — long
+// enough to collide with the next release dispatch and to threaten the job timeout.
 function httpGet(url) {
   return new Promise((resolve, reject) => {
-    const follow = (u) => https.get(u, { timeout: 8000 }, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return follow(res.headers.location);
-      }
-      let body = '';
-      res.on('data', (c) => body += c);
-      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
-    }).on('error', reject).on('timeout', () => reject(new Error('timeout')));
+    const follow = (u) => {
+      const req = https.get(u, { timeout: 8000 }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          res.resume();                       // drain the redirect body, free the socket
+          return follow(res.headers.location);
+        }
+        let body = '';
+        res.on('data', (c) => body += c);
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    };
     follow(url);
   });
 }
@@ -164,12 +177,16 @@ function httpHead(url) {
   return new Promise((resolve, reject) => {
     const follow = (u) => {
       const mod = u.startsWith('https') ? https : require('http');
-      mod.request(u, { method: 'HEAD', timeout: 8000 }, (res) => {
+      const req = mod.request(u, { method: 'HEAD', timeout: 8000 }, (res) => {
+        res.resume();                         // HEAD has no body, but the socket still needs releasing
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           return follow(res.headers.location);
         }
         resolve({ status: res.statusCode, headers: res.headers });
-      }).on('error', reject).on('timeout', () => reject(new Error('timeout'))).end();
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+      req.end();
     };
     follow(url);
   });

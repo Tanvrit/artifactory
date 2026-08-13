@@ -88,8 +88,12 @@ jobs:
           echo "release_notes=$RELEASE_NOTES" >> $GITHUB_OUTPUT
           echo "release_notes_hi=$RELEASE_NOTES_HI" >> $GITHUB_OUTPUT
 
-      - name: Generate manifest + update catalog
+      - name: Generate manifest, commit and push
         run: |
+          set -euo pipefail
+          git config user.name "tanvrit-bot"
+          git config user.email "bot@tanvrit.com"
+
           ARGS=(
             --product    "${{ steps.payload.outputs.product }}"
             --version    "${{ steps.payload.outputs.version }}"
@@ -100,36 +104,45 @@ jobs:
           NOTES_HI="${{ steps.payload.outputs.release_notes_hi }}"
           [ -n "$NOTES" ]    && ARGS+=(--release-notes    "$NOTES")
           [ -n "$NOTES_HI" ] && ARGS+=(--release-notes-hi "$NOTES_HI")
-          node scripts/update-manifest.js "${ARGS[@]}"
 
-      - name: Commit manifest updates
-        run: |
-          set -euo pipefail
-          git config user.name "tanvrit-bot"
-          git config user.email "bot@tanvrit.com"
-          git add manifests/
-
-          # A re-dispatch of an already-recorded release produces a byte-identical
-          # manifest. `git commit` exits 1 on an empty index, which used to be
-          # indistinguishable from a real failure. Nothing to commit is a success.
-          if git diff --cached --quiet; then
-            echo "No manifest changes — nothing to commit."
-            exit 0
-          fi
-
-          git commit -m "release: ${{ steps.payload.outputs.product }} v${{ steps.payload.outputs.version }}"
-
-          # Concurrency serialises this workflow per product, but other workflows and
-          # humans also push to main. Rebase-and-retry instead of failing on a race.
+          # Generate → commit → push, retried as a unit. Concurrency serialises this
+          # workflow per product, but other products' dispatches (and humans) push to
+          # main too, and they all touch manifests/catalog.json.
+          #
+          # The retry REGENERATES from the new origin/main rather than rebasing the
+          # local commit onto it. `git pull --rebase` was tried first and is wrong
+          # here: catalog.json and latest.json are machine-generated JSON, so a
+          # concurrent release turns the rebase into a content conflict the runner
+          # cannot resolve — it left a half-finished rebase and failed the job
+          # (observed in run 31728005192). Re-running the generator on top of the
+          # newest main is both conflict-free and more correct: the generator reads
+          # the current catalog and merges this product's entry into it.
           for attempt in 1 2 3; do
+            if [ "$attempt" -gt 1 ]; then
+              echo "Push rejected — resetting to origin/main and regenerating (attempt ${attempt})."
+              git fetch origin main
+              git reset --hard origin/main
+            fi
+
+            node scripts/update-manifest.js "${ARGS[@]}"
+            git add manifests/
+
+            # A re-dispatch of an already-recorded release produces a byte-identical
+            # manifest. `git commit` exits 1 on an empty index, which was
+            # indistinguishable from a real failure. Nothing to commit is a success.
+            if git diff --cached --quiet; then
+              echo "No manifest changes — nothing to commit."
+              exit 0
+            fi
+
+            git commit -m "release: ${{ steps.payload.outputs.product }} v${{ steps.payload.outputs.version }}"
+
             if git push; then
               echo "Pushed on attempt ${attempt}."
               exit 0
             fi
-            echo "Push rejected (attempt ${attempt}) — rebasing onto origin/main and retrying."
-            git pull --rebase --autostash origin main
           done
-          echo "::error::Could not push manifest update after 3 rebase attempts."
+          echo "::error::Could not push manifest update after 3 attempts."
           exit 1
 
       - name: Upload manifests to Cloudflare R2
