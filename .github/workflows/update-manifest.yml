@@ -24,14 +24,42 @@ on:
         description: 'Hindi release notes'
         required: false
 
+# The GITHUB_TOKEN default for this repo is read-only
+# (`actions/permissions/workflow` → default_workflow_permissions: "read"), so the
+# "Commit manifest updates" step below would 403 on `git push` even once a runner
+# picks the job up. Request write explicitly rather than relying on the repo default.
+permissions:
+  contents: write
+
+# Per-OS release templates dispatch `update-manifest` several times within seconds
+# (linux-x64 and linux-x64-app back to back, plus macos/windows/android/ios). Those
+# runs all commit to `manifests/` and push to main, so serialise them per product.
+# cancel-in-progress stays false: every dispatch carries a distinct platform's data
+# and dropping one loses that platform's manifest entry.
+concurrency:
+  group: update-manifest-${{ github.event.client_payload.product || github.event.inputs.product }}
+  cancel-in-progress: false
+
 jobs:
   update:
     name: Update ${{ github.event.client_payload.product || github.event.inputs.product }} manifest
-    runs-on:
-      group: tanvrit
-      # Linux self-hosted runners back online 2026-07-11 — Node/git/wrangler manifest update has
-      # no macOS/Xcode dependency; reverted from the outage-era macOS fallback.
-      labels: [self-hosted, Linux]
+    # GitHub-hosted, deliberately. This job is Node + git + wrangler over the public
+    # internet (github.com, api.cloudflare.com) — it has no macOS/Xcode dependency, no
+    # private-network dependency, and no signing material, so nothing here requires the
+    # self-hosted pool.
+    #
+    # It previously asked for `group: tanvrit` + `[self-hosted, Linux]`. This repository
+    # has ZERO attached self-hosted runners (`GET /repos/Tanvrit/artifactory/actions/runners`
+    # → total_count: 0), so that request could never be satisfied: every run since at
+    # least 2026-06-21 sat queued with runner_name:"" until GitHub's 24h queue expiry
+    # cancelled it. Never once did this workflow execute a single step, which is why the
+    # R2 catalog.json was still the 2026-04-12 copy. That made the whole artifacts CDN
+    # catalogue unrefreshable. Do not move this back to the self-hosted pool without
+    # first confirming a runner is actually attached AND in the `tanvrit` group.
+    runs-on: ubuntu-latest
+    # A job that cannot be scheduled must fail fast and loud, not masquerade as
+    # "in progress" for a day. The real work is well under two minutes.
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,29 +104,101 @@ jobs:
 
       - name: Commit manifest updates
         run: |
+          set -euo pipefail
           git config user.name "tanvrit-bot"
           git config user.email "bot@tanvrit.com"
           git add manifests/
+
+          # A re-dispatch of an already-recorded release produces a byte-identical
+          # manifest. `git commit` exits 1 on an empty index, which used to be
+          # indistinguishable from a real failure. Nothing to commit is a success.
+          if git diff --cached --quiet; then
+            echo "No manifest changes — nothing to commit."
+            exit 0
+          fi
+
           git commit -m "release: ${{ steps.payload.outputs.product }} v${{ steps.payload.outputs.version }}"
-          git push
+
+          # Concurrency serialises this workflow per product, but other workflows and
+          # humans also push to main. Rebase-and-retry instead of failing on a race.
+          for attempt in 1 2 3; do
+            if git push; then
+              echo "Pushed on attempt ${attempt}."
+              exit 0
+            fi
+            echo "Push rejected (attempt ${attempt}) — rebasing onto origin/main and retrying."
+            git pull --rebase --autostash origin main
+          done
+          echo "::error::Could not push manifest update after 3 rebase attempts."
+          exit 1
 
       - name: Upload manifests to Cloudflare R2
+        env:
+          # This repository has no `CF_R2_TOKEN` / `CF_ACCOUNT_ID` secret — the only
+          # Cloudflare credentials attached are CLOUDFLARE_API_TOKEN and
+          # CLOUDFLARE_ACCOUNT_ID (verified with `gh secret list`). Referencing the
+          # non-existent pair meant wrangler ran unauthenticated. Prefer the R2-specific
+          # names if they are ever added, fall back to the ones that actually exist.
+          CF_R2_TOKEN: ${{ secrets.CF_R2_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN_FALLBACK: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID_FALLBACK: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
+          set -euo pipefail
           PRODUCT="${{ steps.payload.outputs.product }}"
           VERSION="${{ steps.payload.outputs.version }}"
 
-          npx wrangler r2 object put "tanvrit-artifacts/manifests/${PRODUCT}/latest.json" \
-            --file "manifests/${PRODUCT}/latest.json" \
-            --content-type "application/json"
+          export CLOUDFLARE_API_TOKEN="${CF_R2_TOKEN:-${CLOUDFLARE_API_TOKEN_FALLBACK:-}}"
+          export CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT_ID:-${CLOUDFLARE_ACCOUNT_ID_FALLBACK:-}}"
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::R2 mirror cannot run — set CF_R2_TOKEN + CF_ACCOUNT_ID (or CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID) as REPO-level secrets. The committed manifest is correct but artifacts.tanvrit.com reads from R2, so the CDN would keep serving the previous copy."
+            exit 1
+          fi
 
-          npx wrangler r2 object put "tanvrit-artifacts/manifests/${PRODUCT}/${VERSION}.json" \
-            --file "manifests/${PRODUCT}/${VERSION}.json" \
-            --content-type "application/json"
+          # Two fixes over the previous version of this step:
+          #  1. `--remote`. Wrangler v4 defaults `r2 object put` to LOCAL storage — it
+          #     writes into ./.wrangler and exits 0. The upload would have "succeeded"
+          #     without a byte reaching the bucket. Verified against wrangler 4.80.0:
+          #     `r2 object get tanvrit-artifacts/catalog.json` says "key does not exist",
+          #     the same command with --remote returns the real object.
+          #  2. Paths. This step used to run with `working-directory: worker`, where
+          #     `manifests/` does not exist (there is no worker/manifests). Run from the
+          #     repo root instead; `npx wrangler@4` needs no local node_modules, and the
+          #     `r2 object` subcommand needs no wrangler config.
+          put() {
+            npx --yes wrangler@4 r2 object put "$1" \
+              --file "$2" \
+              --content-type "application/json" \
+              --remote
+          }
 
-          npx wrangler r2 object put "tanvrit-artifacts/catalog.json" \
-            --file "manifests/catalog.json" \
-            --content-type "application/json"
+          put "tanvrit-artifacts/manifests/${PRODUCT}/latest.json"        "manifests/${PRODUCT}/latest.json"
+          put "tanvrit-artifacts/manifests/${PRODUCT}/${VERSION}.json"    "manifests/${PRODUCT}/${VERSION}.json"
+          put "tanvrit-artifacts/catalog.json"                            "manifests/catalog.json"
+
+      - name: Verify R2 objects are actually readable
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_R2_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-        working-directory: worker
+          CF_R2_TOKEN: ${{ secrets.CF_R2_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN_FALLBACK: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID_FALLBACK: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          PRODUCT="${{ steps.payload.outputs.product }}"
+          export CLOUDFLARE_API_TOKEN="${CF_R2_TOKEN:-${CLOUDFLARE_API_TOKEN_FALLBACK:-}}"
+          export CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT_ID:-${CLOUDFLARE_ACCOUNT_ID_FALLBACK:-}}"
+
+          # Read back what we just wrote and assert the version matches. A silent
+          # local-storage write (the bug fixed above) cannot pass this.
+          npx --yes wrangler@4 r2 object get \
+            "tanvrit-artifacts/manifests/${PRODUCT}/latest.json" --remote --pipe > /tmp/r2-latest.json
+          node -e '
+            const fs = require("fs");
+            const want = process.argv[1];
+            const got  = JSON.parse(fs.readFileSync("/tmp/r2-latest.json", "utf8"));
+            if (got.version !== want) {
+              console.error(`::error::R2 latest.json says version ${got.version}, expected ${want}`);
+              process.exit(1);
+            }
+            console.log(`R2 latest.json verified at version ${got.version}`);
+          ' "${{ steps.payload.outputs.version }}"
