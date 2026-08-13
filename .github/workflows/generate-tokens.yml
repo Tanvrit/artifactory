@@ -13,11 +13,19 @@ on:
 jobs:
   tokens:
     name: Generate Platform Token Outputs
-    runs-on:
-      group: tanvrit
-      # Linux self-hosted runners back online 2026-07-11 — pure Node token generation has no
-      # macOS/Xcode dependency; reverted from the outage-era macOS fallback.
-      labels: [self-hosted, Linux]
+    # GitHub-hosted, deliberately. style-dictionary token generation is pure Node with
+    # no native, macOS or private-network dependency.
+    #
+    # This asked for `group: tanvrit` + `[self-hosted, Linux]`, which this repository
+    # cannot satisfy — it has ZERO attached self-hosted runners
+    # (`GET /repos/Tanvrit/artifactory/actions/runners` → total_count: 0). Unlike
+    # Deploy Portal and Export Icons there is no cancelled-at-24h run to point at,
+    # only because `branding/tokens/**` has not been touched since the labels were
+    # set; the next push to a token source would have queued for 24h and died the
+    # same way. Fixed pre-emptively.
+    runs-on: ubuntu-latest
+    # Token generation is seconds of work. 15 bounds a hang without ever biting.
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,7 +35,10 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: scripts/package.json
+          # Key the cache on the lockfile, not package.json — `npm ci` below refuses to
+          # run without scripts/package-lock.json anyway, and hashing package.json
+          # misses lock-only dependency changes.
+          cache-dependency-path: scripts/package-lock.json
 
       - name: Install dependencies
         run: npm ci

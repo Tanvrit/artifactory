@@ -167,6 +167,13 @@ jobs:
       # Genuine iOS/Xcode build (xcodebuild archive/export, TestFlight upload) — stays on the
       # self-hosted macOS pool; normalized label to match the "tanvrit" group's macOS runners.
       labels: [self-hosted, macOS]
+    # Reusable template: `runs-on` resolves against the CALLING repository's runners,
+    # not artifactory's, so the self-hosted macOS request here is satisfiable and is
+    # left alone. What was missing is a ceiling — without `timeout-minutes` a wedged
+    # job inherits GitHub's 6h default and holds one of the scarcest runners in the
+    # fleet for that whole time. Set high on purpose: this job archives, signs and can
+    # block on a TestFlight upload, so 120 leaves room for a slow Apple round-trip.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 

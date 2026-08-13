@@ -13,13 +13,31 @@ on:
 jobs:
   deploy:
     name: Build & Deploy to Cloudflare Pages
-    runs-on:
-      group: tanvrit
-      # Linux self-hosted runners back online 2026-07-11 — Next.js build has no macOS/Xcode
-      # dependency; reverted from the outage-era macOS fallback to free up macOS capacity.
-      labels: [self-hosted, Linux]
-    # Self-hosted runner required: local npm + wrangler cache; artifacts.tanvrit.com
-    # portal portal build takes ~12min on ubuntu-latest without cache warmth.
+    # GitHub-hosted, deliberately. `npm ci` + `next build` + `wrangler pages deploy`
+    # is Node and public-internet work: no macOS/Xcode dependency, no private-network
+    # dependency, no signing material. Nothing here requires the self-hosted pool.
+    #
+    # This asked for `group: tanvrit` + `[self-hosted, Linux]` until now. This
+    # repository has ZERO attached self-hosted runners
+    # (`GET /repos/Tanvrit/artifactory/actions/runners` → total_count: 0), so the
+    # request could never be satisfied. Every Deploy Portal run since 2026-06-03 sat
+    # queued until GitHub's 24h queue expiry cancelled it — 29148550555 (2026-07-11),
+    # 27182708985 (2026-06-09) and 26908046698 (2026-06-03) all read
+    # "cancelled, 24h0m1s" without executing a single step. That is why the portal has
+    # not deployed since July: not a build failure, a scheduling impossibility.
+    #
+    # The old comment justified self-hosted with "local npm + wrangler cache; build
+    # takes ~12min on ubuntu-latest without cache warmth". Cache warmth is a
+    # preference, not a requirement — and actions/setup-node's npm cache below covers
+    # most of it. A 12-minute deploy that happens beats a 0-minute deploy that never
+    # does. Do not move this back without first confirming a runner is actually
+    # attached to this repo AND in the `tanvrit` group.
+    runs-on: ubuntu-latest
+    # A job that cannot be scheduled, or that wedges mid-build, must fail fast and
+    # loud rather than masquerade as "in progress" for a day. Observed comparable
+    # Next.js release builds in the fleet run 2-17 min (52 min worst case); 30 leaves
+    # generous headroom while still bounding a hang.
+    timeout-minutes: 30
     # R24: Deploys artifacts.tanvrit.com portal to Cloudflare Pages production.
     environment: production
 

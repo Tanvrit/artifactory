@@ -102,6 +102,14 @@ jobs:
     runs-on:
       group: tanvrit
       labels: ${{ fromJSON(inputs.runner_labels) }}
+    # Reusable template: `runs-on` resolves against the CALLING repository's runners,
+    # not artifactory's, so the self-hosted request here is satisfiable and is left
+    # alone — proven by tanvrit/swyft run 31726541046 ("Release Web", success, 17m32s).
+    # What was missing is a ceiling: without `timeout-minutes` a wedged job inherits
+    # GitHub's 6h default and holds a scarce shared runner for that whole time.
+    # Observed Release Web durations across swyft/friendly: 2-52 min. 90 clears the
+    # worst real run by ~40 min.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 

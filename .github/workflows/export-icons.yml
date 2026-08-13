@@ -17,13 +17,32 @@ on:
 jobs:
   generate:
     name: Generate Platform Icons
-    runs-on:
-      group: tanvrit
-      # Kept on macOS: step below runs `brew install --cask inkscape` (Homebrew-specific, no
-      # apt equivalent wired here) — not an iOS/Xcode build, but moving to Linux would break
-      # this step without a companion apt-get rewrite (out of scope for a runner-label change).
-      # Normalized the stale "mac-a" single-runner label to the group's shared macOS label.
-      labels: [self-hosted, macOS]
+    # GitHub-HOSTED macOS. This job does genuinely need macOS, but it does not need
+    # the self-hosted pool — and asking for the pool is what killed it.
+    #
+    # Why it cannot move to Linux (checked against the generator, not assumed):
+    # `scripts/generate-icons.js:311` shells out to `iconutil -c icns`, which exists
+    # only on macOS. Its non-darwin branch (:319) falls back to `require('makeicns')`,
+    # and `makeicns` is NOT in scripts/package.json — so on Linux that require throws,
+    # the catch only logs, and the job would finish GREEN having produced iconsets but
+    # no .icns at all. `scripts/verify-assets.js:67-68` would not catch it either: it
+    # downgrades every missing .icns to a warning when `process.platform !== 'darwin'`,
+    # while 8 products (tanvrit, friendly, desipops, mandee, swyft, school, control,
+    # bharat-bandhu) list a .icns as a required asset. A Linux move here is precisely
+    # the "green run that did nothing" failure mode, so: macOS.
+    #
+    # Why NOT `group: tanvrit` + `[self-hosted, macOS]`, which is what this asked for:
+    # this repository has ZERO attached self-hosted runners
+    # (`GET /repos/Tanvrit/artifactory/actions/runners` → total_count: 0), so that
+    # request could never be scheduled. Run 29148550557 (2026-07-11) sat queued and was
+    # cancelled at 24h0m1s without executing a step. `macos-latest` supplies both
+    # `iconutil` and Homebrew (for the Inkscape step below), so nothing is lost.
+    # Do not move this back without first confirming a macOS runner is actually
+    # attached to this repo AND in the `tanvrit` group.
+    runs-on: macos-latest
+    # Ten products x every platform size, with Inkscape rasterisation, plus a cask
+    # install. Generous, but it must bound a hang: this used to burn 24h per run.
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -36,7 +55,10 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: scripts/package.json
+          # Key the cache on the lockfile, not package.json — `npm ci` below refuses to
+          # run without scripts/package-lock.json anyway, and hashing package.json
+          # misses lock-only dependency changes.
+          cache-dependency-path: scripts/package-lock.json
 
       - name: Install Inkscape (for Wedding icon SVG filters)
         run: brew install --cask inkscape
@@ -58,6 +80,7 @@ jobs:
         run: node scripts/verify-assets.js
 
       - name: Commit generated icons
+        id: commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore(icons): regenerate dist assets [skip ci]"
@@ -67,21 +90,62 @@ jobs:
 
       - name: Upload to Cloudflare R2
         if: github.ref == 'refs/heads/main'
-        run: |
-          # Sync all branding dist to R2 under /brand/ prefix
-          find branding/icons/dist -type f | while read file; do
-            key="brand/${file#branding/icons/dist/}"
-            npx wrangler r2 object put "tanvrit-artifacts/$key" \
-              --file "$file" \
-              --content-type "$(file --mime-type -b $file)"
-          done
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_R2_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-        working-directory: worker
+          # This repository has no `CF_R2_TOKEN` / `CF_ACCOUNT_ID` secret — the only
+          # Cloudflare credentials attached are CLOUDFLARE_API_TOKEN and
+          # CLOUDFLARE_ACCOUNT_ID (verified with `gh secret list`). Referencing the
+          # non-existent pair meant wrangler ran completely unauthenticated. Prefer the
+          # R2-specific names if they are ever added, fall back to what actually exists.
+          # Same fix as update-manifest.yml.
+          CF_R2_TOKEN: ${{ secrets.CF_R2_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN_FALLBACK: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID_FALLBACK: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+
+          export CLOUDFLARE_API_TOKEN="${CF_R2_TOKEN:-${CLOUDFLARE_API_TOKEN_FALLBACK:-}}"
+          export CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT_ID:-${CLOUDFLARE_ACCOUNT_ID_FALLBACK:-}}"
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Branding R2 sync cannot run — set CF_R2_TOKEN + CF_ACCOUNT_ID (or CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID) as REPO-level secrets. The committed icons are correct but artifacts.tanvrit.com serves /brand/* from R2, so the CDN would keep serving the previous assets."
+            exit 1
+          fi
+
+          # Three bugs fixed here, all of which made this step pass while uploading
+          # nothing:
+          #  1. `working-directory: worker`. There is no worker/branding — `find` ran
+          #     against a path that does not exist. `find` failing inside a pipeline
+          #     leaves the `while` loop's exit status at 0, so the step went GREEN
+          #     having transferred zero bytes. Run from the repo root instead.
+          #  2. `--remote`. Wrangler v4 defaults `r2 object put` to LOCAL storage: it
+          #     writes into ./.wrangler and exits 0, again without a byte reaching the
+          #     bucket.
+          #  3. Unpinned `npx wrangler` resolved whatever major was current. Pin to v4.
+          #
+          # Sync branding dist to R2 under the /brand/ prefix the worker serves.
+          COUNT=0
+          while IFS= read -r file; do
+            key="brand/${file#branding/icons/dist/}"
+            npx --yes wrangler@4 r2 object put "tanvrit-artifacts/$key" \
+              --file "$file" \
+              --content-type "$(file --mime-type -b "$file")" \
+              --remote
+            COUNT=$((COUNT + 1))
+          done < <(find branding/icons/dist -type f)
+
+          # An empty dist tree means the generator produced nothing. That is a failure,
+          # not a no-op — it is exactly what the old step reported as success.
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::error::Uploaded 0 objects — branding/icons/dist is empty, so icon generation produced nothing."
+            exit 1
+          fi
+          echo "Uploaded $COUNT branding objects to R2."
 
       - name: Notify product repos
-        if: github.ref == 'refs/heads/main'
+        # Only when the icons actually changed. This fans a repository_dispatch out to
+        # eight product repos and wakes their CI; firing it on every no-op regeneration
+        # (icon output is deterministic, so most runs commit nothing) is pure noise.
+        if: github.ref == 'refs/heads/main' && steps.commit.outputs.changes_detected == 'true'
         run: |
           # Dispatch to each product repo to pick up new icons
           for repo in "tanvrit/friendly" "tanvrit/mandee" "tanvrit/school" "tanvrit/swyft" "tanvrit/desipops" "tanvrit/bharat-bandhu" "tanvrit/wedding" "tanvrit/control"; do

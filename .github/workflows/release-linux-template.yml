@@ -77,6 +77,11 @@ jobs:
       # .deb/.AppImage target itself (apt-get fakeroot/binutils/libfuse2), so it belongs on
       # Linux; reverted from the outage-era macOS fallback per the comment left in place.
       labels: [self-hosted, Linux]
+    # Reusable template: `runs-on` resolves against the CALLING repository's runners,
+    # not artifactory's, so the self-hosted request here is satisfiable and is left
+    # alone. What was missing is a ceiling — without `timeout-minutes` a wedged job
+    # inherits GitHub's 6h default and holds a scarce shared runner for that whole time.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 

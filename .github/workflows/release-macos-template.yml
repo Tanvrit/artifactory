@@ -162,6 +162,14 @@ jobs:
       # Genuine macOS build (Xcode signing/notarization, .dmg, App Store Connect upload) — stays
       # on the self-hosted macOS pool; normalized label to match the "tanvrit" group's runners.
       labels: [self-hosted, macOS]
+    # Reusable template: `runs-on` resolves against the CALLING repository's runners,
+    # not artifactory's, so the self-hosted macOS request here is satisfiable and is
+    # left alone. What was missing is a ceiling — without `timeout-minutes` a wedged
+    # job inherits GitHub's 6h default and holds one of the scarcest runners in the
+    # fleet for that whole time. Set high on purpose: this job blocks on
+    # `notarytool ... --wait`, an Apple-side queue that can legitimately run long, so
+    # 120 leaves room for a slow notarization without licensing a 6h hang.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 

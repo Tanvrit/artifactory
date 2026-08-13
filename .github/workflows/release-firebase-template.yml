@@ -82,6 +82,12 @@ jobs:
       # used by release-web-template.yml (OS-agnostic, no macOS/Xcode dependency); reverted from
       # the outage-era macOS fallback to free up scarce macOS capacity for iOS/macOS builds.
       labels: [self-hosted, Linux]
+    # Reusable template: `runs-on` resolves against the CALLING repository's runners,
+    # not artifactory's, so the self-hosted request here is satisfiable and is left
+    # alone. What was missing is a ceiling — without `timeout-minutes` a wedged job
+    # inherits GitHub's 6h default and holds a scarce shared runner for that whole
+    # time. Kotlin/Wasm + npm builds of this shape run 2-52 min in the fleet.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 

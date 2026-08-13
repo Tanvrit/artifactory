@@ -112,6 +112,13 @@ jobs:
     runs-on:
       group: tanvrit
       labels: ${{ fromJSON(inputs.runner_labels) }}
+    # Reusable template: `runs-on` resolves against the CALLING repository's runners,
+    # not artifactory's, so the self-hosted request here is satisfiable and is left
+    # alone. What was missing is a ceiling. Without `timeout-minutes` a wedged job
+    # inherits GitHub's 6h default and holds a scarce shared self-hosted runner for
+    # that whole time. Observed Android release builds in the fleet run 3-22 min; 90
+    # is generous headroom that still bounds a hang.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
