@@ -66,7 +66,14 @@ runs:
         # the guard + artifact-output paths don't silently skip an aliased module.
         MODULE_DIR="$(echo "$GRADLE_MODULE" | tr ':' '/')"
         if [ ! -f "$MODULE_DIR/build.gradle.kts" ] && [ -f settings.gradle.kts ]; then
-          ALIAS_DIR="$(grep -E "project\(\":?${GRADLE_MODULE}\"\)\.projectDir" settings.gradle.kts | sed -E 's/.*file\("([^"]+)"\).*/\1/' | head -1)"
+          # `|| true` is load-bearing. Actions runs `shell: bash` as
+          # `bash -e -o pipefail`, so when the module is NOT aliased this grep
+          # matches nothing, pipefail promotes its exit 1 to the pipeline, and
+          # `set -e` kills the step. The five inline copies all had this bug: a
+          # caller whose module dir is missing while settings.gradle.kts exists
+          # got a RED job instead of the intended graceful skip. Finding "no
+          # alias" is a normal outcome, not an error.
+          ALIAS_DIR="$(grep -E "project\(\":?${GRADLE_MODULE}\"\)\.projectDir" settings.gradle.kts | sed -E 's/.*file\("([^"]+)"\).*/\1/' | head -1 || true)"
           if [ -n "$ALIAS_DIR" ] && [ -f "$ALIAS_DIR/build.gradle.kts" ]; then
             MODULE_DIR="$ALIAS_DIR"
             echo "::notice::resolved aliased module $GRADLE_MODULE -> $MODULE_DIR"
