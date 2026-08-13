@@ -292,11 +292,33 @@ fallback.
 `Tanvrit/ai` has the R2 pair but is **not** a caller — its `release-*.yml` are
 standalone workflows that mirror on their own; the templates do not apply to it.
 
-Regenerate this table with:
+This table is no longer hand-maintained. Regenerate it — and get paste-ready
+`gh secret set` commands for every gap — with:
 
 ```bash
-for r in $(…caller list…); do echo "$r :: $(gh secret list -R "$r" | awk '{print $1}' | tr '\n' ',')"; done
+GH_TOKEN=$(gh auth token) node scripts/audit-caller-secrets.mjs
 ```
+
+The caller list is **derived**, not hardcoded: the script crawls `.github/workflows`
+of every `Tanvrit` repo the token can see and looks for a `uses:` pointing at these
+templates, so a new platform repo shows up on its own. The required-secret set per
+template is grepped out of the template sources, and `CLOUDFLARE_ACCOUNT_ID` is
+accepted wherever the mirror step accepts it as a fallback for `CF_ACCOUNT_ID`.
+
+`.github/workflows/audit-caller-secrets.yml` runs the same script every Monday
+07:15 UTC (and on `workflow_dispatch`), writes the matrix to the job summary, and
+**fails** while any caller is unprovisioned. That is deliberate: a scheduled job
+that only warns produces no signal at all, which is the same silence as discovering
+the gap at release time.
+
+Two token facts it encodes, so nobody rediscovers them:
+
+- `gh api /orgs/…` returns **403** without `admin:org`, which neither the standard
+  PAT nor `GITHUB_TOKEN` carries. The audit uses per-repo endpoints only.
+- `GET /repos/{o}/{r}/actions/secrets` needs **admin on that repo**, so the built-in
+  `GITHUB_TOKEN` can never audit the fleet. The workflow wants a user PAT with `repo`
+  scope in the repo secret **`AUDIT_FLEET_TOKEN`**; without one it exits 3
+  ("audit did not run") rather than reporting a false clean.
 
 ## Secrets reference
 

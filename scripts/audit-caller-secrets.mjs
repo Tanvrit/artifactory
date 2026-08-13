@@ -61,12 +61,22 @@ const API = 'https://api.github.com';
  * R2 mirror); per-app signing material is deliberately NOT audited here because it is
  * legitimately absent on repos that do not ship that OS.
  */
-const CORE_SECRETS = [
-  'ARTIFACTS_REPO_TOKEN',
-  'R2_ACCESS_KEY_ID',
-  'R2_SECRET_ACCESS_KEY',
-  'CF_ACCOUNT_ID',
+const CORE_REQUIREMENTS = [
+  { name: 'ARTIFACTS_REPO_TOKEN', alternatives: [] },
+  { name: 'R2_ACCESS_KEY_ID', alternatives: [] },
+  { name: 'R2_SECRET_ACCESS_KEY', alternatives: [] },
+  // The R2 mirror step resolves `acct="${CF_ACCOUNT_ID:-${CLOUDFLARE_ACCOUNT_ID:-}}"`, so
+  // either name satisfies it. Auditing CF_ACCOUNT_ID alone would report a false gap on
+  // every repo that already carries CLOUDFLARE_ACCOUNT_ID — and a checker that cries wolf
+  // gets ignored, which is the failure mode this whole workflow exists to prevent.
+  { name: 'CF_ACCOUNT_ID', alternatives: ['CLOUDFLARE_ACCOUNT_ID'] },
 ];
+const CORE_SECRETS = CORE_REQUIREMENTS.map((r) => r.name);
+
+/** Every name that can satisfy a requirement. */
+function acceptedNames(req) {
+  return [req.name, ...req.alternatives];
+}
 
 if (!TOKEN && !process.argv.includes('--self-test')) {
   console.error('FATAL: GH_TOKEN (or GITHUB_TOKEN) is not set.');
@@ -140,7 +150,12 @@ async function readTemplateRequirements() {
       [...src.matchAll(/secrets\.([A-Z0-9_]+)/g)].map((m) => m[1]),
     );
     for (const s of referenced) allReferenced.add(s);
-    perTemplate[f] = CORE_SECRETS.filter((s) => referenced.has(s));
+    // A requirement applies to a template if the template consumes ANY name that can
+    // satisfy it — so renaming CF_ACCOUNT_ID -> CLOUDFLARE_ACCOUNT_ID upstream does not
+    // silently drop the requirement from the audit.
+    perTemplate[f] = CORE_REQUIREMENTS.filter((r) =>
+      acceptedNames(r).some((n) => referenced.has(n)),
+    ).map((r) => r.name);
   }
   return { perTemplate, allReferenced: [...allReferenced].sort() };
 }
@@ -262,10 +277,12 @@ function buildReport(results, meta) {
   L.push(`| Repo | ${CORE_SECRETS.join(' | ')} | Status |`);
   L.push(`|---|${CORE_SECRETS.map(() => ':-:').join('|')}|---|`);
   for (const r of results) {
-    const cells = CORE_SECRETS.map((s) => {
-      if (!r.required.includes(s)) return '–';
+    const cells = CORE_REQUIREMENTS.map((req) => {
+      if (!r.required.includes(req.name)) return '–';
       if (!r.readable) return '?';
-      return r.names.includes(s) ? '✅' : '❌';
+      if (r.names.includes(req.name)) return '✅';
+      const alt = req.alternatives.find((a) => r.names.includes(a));
+      return alt ? `✅<sub>${alt}</sub>` : '❌';
     });
     const status = !r.readable
       ? `⚠️ unreadable (${r.reason})`
@@ -275,7 +292,10 @@ function buildReport(results, meta) {
     L.push(`| \`${esc(r.repo)}\` | ${cells.join(' | ')} | ${status} |`);
   }
   L.push('');
-  L.push('Legend: ✅ present · ❌ **missing** · – not required by the templates this repo calls · ? not readable.');
+  L.push(
+    'Legend: ✅ present · ✅<sub>NAME</sub> satisfied by an accepted alternative name · ' +
+      '❌ **missing** · – not required by the templates this repo calls · ? not readable.',
+  );
   L.push('');
 
   // --- fix commands
@@ -319,8 +339,9 @@ function buildReport(results, meta) {
   if (strays.length) {
     L.push(`- ⚠️ **Callers reference templates that do not exist in this repo** (renamed or deleted): ${strays.map((s) => `\`${s}\``).join(', ')}`);
   }
+  const known = new Set(CORE_REQUIREMENTS.flatMap(acceptedNames));
   const uncovered = meta.allReferenced.filter(
-    (s) => !CORE_SECRETS.includes(s) && /^(R2_|CF_|CLOUDFLARE_|ARTIFACTS_)/.test(s),
+    (s) => !known.has(s) && /^(R2_|CF_|CLOUDFLARE_|ARTIFACTS_)/.test(s),
   );
   if (uncovered.length) {
     L.push(`- ℹ️ Infra-shaped secrets referenced by templates but **not audited** (add to \`CORE_SECRETS\` if they become required): ${uncovered.map((s) => `\`${s}\``).join(', ')}`);
@@ -358,9 +379,20 @@ async function selfTest() {
   const negHits = [...stripComments(negative).matchAll(USES_RE)];
   if (negHits.length !== 0) fails.push(`negative control: commented uses: matched ${negHits.length} time(s)`);
 
-  const { perTemplate } = await readTemplateRequirements();
+  const { perTemplate, allReferenced } = await readTemplateRequirements();
   const n = Object.keys(perTemplate).length;
   if (n === 0) fails.push('template scan: found 0 release templates');
+  // A declared alternative that no template consumes any more is stale: it would make the
+  // audit accept a secret the release actually ignores — a false green.
+  for (const req of CORE_REQUIREMENTS) {
+    for (const alt of req.alternatives) {
+      if (!allReferenced.includes(alt)) {
+        fails.push(
+          `stale alternative: ${alt} is accepted for ${req.name} but no template references it any more`,
+        );
+      }
+    }
+  }
   if (!Object.values(perTemplate).some((v) => v.includes('ARTIFACTS_REPO_TOKEN'))) {
     fails.push('template scan: no template requires ARTIFACTS_REPO_TOKEN — requirement derivation is broken');
   }
@@ -433,7 +465,13 @@ async function main() {
   const results = [];
   for (const c of callers) {
     const s = await readSecrets(c);
-    const missing = s.readable ? c.required.filter((n) => !s.names.includes(n)) : [];
+    const missing = s.readable
+      ? CORE_REQUIREMENTS.filter(
+          (req) =>
+            c.required.includes(req.name) &&
+            !acceptedNames(req).some((n) => s.names.includes(n)),
+        ).map((req) => req.name)
+      : [];
     results.push({ ...c, ...s, missing });
   }
 
