@@ -82,33 +82,13 @@ jobs:
 
       - name: Verify target supported
         id: guard
-        shell: bash
-        run: |
-          # Translate gradle-path (`ui:ui-android`) to filesystem path (`ui/ui-android`),
-          # then honor a settings.gradle.kts alias like
-          # project(":composeApp").projectDir = file("app") (school) so an aliased
-          # module doesn't graceful-skip the whole build + upload.
-          MODULE_DIR="$(echo '${{ inputs.gradle_module }}' | tr ':' '/')"
-          if [ ! -f "$MODULE_DIR/build.gradle.kts" ] && [ -f settings.gradle.kts ]; then
-            ALIAS_DIR="$(grep -E "project\(\":?${{ inputs.gradle_module }}\"\)\.projectDir" settings.gradle.kts | sed -E 's/.*file\("([^"]+)"\).*/\1/' | head -1)"
-            if [ -n "$ALIAS_DIR" ] && [ -f "$ALIAS_DIR/build.gradle.kts" ]; then
-              MODULE_DIR="$ALIAS_DIR"
-              echo "::notice::resolved aliased module ${{ inputs.gradle_module }} -> $MODULE_DIR"
-            fi
-          fi
-          echo "module_dir=$MODULE_DIR" >> "$GITHUB_OUTPUT"
-          BUILD_FILE="$MODULE_DIR/build.gradle.kts"
-          if [ ! -f "$BUILD_FILE" ]; then
-            echo "::notice::skipped: $BUILD_FILE not found for ${{ inputs.product }}"
-            echo "supported=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if ! grep -qE '^\s*(jvm\(|jvm \{|jvm\("desktop")' "$BUILD_FILE"; then
-            echo "::notice::skipped: jvm() target not declared in $BUILD_FILE — Linux DEB/AppImage build cannot run for ${{ inputs.product }}"
-            echo "supported=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "supported=true" >> "$GITHUB_OUTPUT"
+        uses: tanvrit/artifactory/.github/actions/resolve-module-dir@main
+        with:
+          gradle_module: ${{ inputs.gradle_module }}
+          product: ${{ inputs.product }}
+          target_pattern: '^\s*(jvm\(|jvm \{|jvm\("desktop")'
+          target_description: 'jvm() target not declared'
+          build_description: 'Linux DEB/AppImage build'
 
       - uses: actions/checkout@v4
         if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'

@@ -91,7 +91,10 @@ Remediation sequence (owner-driven — do NOT untrack before rotating, and histo
 - **`school` alias graceful-skip — RESOLVED**: the shared release templates now resolve a
   `settings.gradle.kts` module→dir alias (`project(":composeApp").projectDir = file("app")`) for both
   the build-file guard and the artifact-output path. android template fixed on `main`; ios/macos on
-  `signing/templates`.
+  `signing/templates`. That resolution now lives in exactly one place — the composite action
+  `.github/actions/resolve-module-dir` (referenced as
+  `tanvrit/artifactory/.github/actions/resolve-module-dir@main`) — which all five native release
+  templates call. It returns `module_dir` + `supported`; edit it, not the templates.
 - **`mandee-business` Play task**: `assemble_android.yml` runs `:androidApp:publishBusinessReleaseBundle`
   but there are no product flavors, so the task is likely `publishReleaseBundle` — verify it resolves.
 

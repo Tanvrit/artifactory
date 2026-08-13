@@ -67,6 +67,34 @@ caller platform's source even targets that OS:
 If the guard fails, the workflow exits 0 with a `::notice::skipped: …` GitHub
 annotation. No spurious failure email.
 
+### The guard lives in one place
+
+The module→directory resolution behind that guard used to be ~14 lines
+copy-pasted into each of the five native templates, and two copies had already
+drifted before the `school` alias fix landed. It is now the composite action
+`.github/actions/resolve-module-dir`, referenced as
+`tanvrit/artifactory/.github/actions/resolve-module-dir@main`:
+
+| Input | Meaning |
+|---|---|
+| `gradle_module` | Gradle module path (`composeApp`, `ui:ui-android`) |
+| `product` | Only used in the skip message |
+| `target_pattern` | `grep -E` pattern the build file must match; empty = existence check only |
+| `target_description` / `build_description` | Wording of the `::notice::skipped:` message |
+
+| Output | Meaning |
+|---|---|
+| `module_dir` | Resolved directory — always set, honors a `settings.gradle.kts` `projectDir` alias (`platforms/school` maps `:composeApp` to `app/`) |
+| `supported` | `true` only when the build file exists *and* matches `target_pattern` |
+| `build_file` | The build file that was inspected |
+
+Web/Firebase deliberately still inline their own guard: they never consumed
+`module_dir`, and no aliased caller builds web. Change the target rules in the
+action, not in the templates. iOS wraps the action in a small `guard` step
+because it has one extra condition (an `.xcodeproj` or XcodeGen `project.yml`
+must exist) that the shared resolver cannot make; the rest of that workflow
+still reads `steps.guard.outputs.*`.
+
 ## Triggers
 
 - `release-{android,ios,macos,windows,linux}.yml`: trigger on git tag

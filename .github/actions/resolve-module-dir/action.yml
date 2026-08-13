@@ -1,0 +1,88 @@
+name: Resolve Gradle module directory
+description: >-
+  Resolve a Gradle module path to its filesystem directory, honoring a
+  settings.gradle.kts projectDir alias, and optionally verify that the module's
+  build.gradle.kts declares the Kotlin target this release needs. Extracted from
+  the five native release templates, which each carried a copy of this logic and
+  had already drifted apart.
+
+inputs:
+  gradle_module:
+    description: 'Gradle module path, e.g. `composeApp` or `ui:ui-android`.'
+    required: true
+  product:
+    description: 'Product name, used only in the ::notice:: skip messages.'
+    required: false
+    default: ''
+  target_pattern:
+    description: >-
+      Optional `grep -E` pattern the module build file must match for this
+      release target to be buildable. Empty means "do not check the target"
+      (the build file must still exist).
+    required: false
+    default: ''
+  target_description:
+    description: >-
+      What is missing when `target_pattern` does not match, e.g.
+      `no androidTarget() / android block`. Used in the skip message.
+    required: false
+    default: 'required target not declared'
+  build_description:
+    description: >-
+      Name of the build that cannot run, e.g. `Android build` or
+      `Windows MSI build`. Used in the skip message.
+    required: false
+    default: 'build'
+
+outputs:
+  module_dir:
+    description: >-
+      Resolved filesystem directory of the module, relative to the workspace
+      root. Always set, even when `supported` is false.
+    value: ${{ steps.resolve.outputs.module_dir }}
+  supported:
+    description: '`true` when the module exists and declares the wanted target.'
+    value: ${{ steps.resolve.outputs.supported }}
+  build_file:
+    description: 'Path of the module build file that was inspected.'
+    value: ${{ steps.resolve.outputs.build_file }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      shell: bash
+      env:
+        GRADLE_MODULE: ${{ inputs.gradle_module }}
+        PRODUCT: ${{ inputs.product }}
+        TARGET_PATTERN: ${{ inputs.target_pattern }}
+        TARGET_DESCRIPTION: ${{ inputs.target_description }}
+        BUILD_DESCRIPTION: ${{ inputs.build_description }}
+      run: |
+        # Resolve the module's filesystem dir. Normally the gradle module path maps
+        # 1:1 to a directory (`ui:ui-android` -> `ui/ui-android`), but a module can be
+        # aliased to a different dir in settings.gradle.kts, e.g.
+        # `project(":composeApp").projectDir = file("app")` (school). Honor the alias so
+        # the guard + artifact-output paths don't silently skip an aliased module.
+        MODULE_DIR="$(echo "$GRADLE_MODULE" | tr ':' '/')"
+        if [ ! -f "$MODULE_DIR/build.gradle.kts" ] && [ -f settings.gradle.kts ]; then
+          ALIAS_DIR="$(grep -E "project\(\":?${GRADLE_MODULE}\"\)\.projectDir" settings.gradle.kts | sed -E 's/.*file\("([^"]+)"\).*/\1/' | head -1)"
+          if [ -n "$ALIAS_DIR" ] && [ -f "$ALIAS_DIR/build.gradle.kts" ]; then
+            MODULE_DIR="$ALIAS_DIR"
+            echo "::notice::resolved aliased module $GRADLE_MODULE -> $MODULE_DIR"
+          fi
+        fi
+        BUILD_FILE="$MODULE_DIR/build.gradle.kts"
+        echo "module_dir=$MODULE_DIR" >> "$GITHUB_OUTPUT"
+        echo "build_file=$BUILD_FILE" >> "$GITHUB_OUTPUT"
+        if [ ! -f "$BUILD_FILE" ]; then
+          echo "::notice::skipped: $BUILD_FILE not found for $PRODUCT"
+          echo "supported=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [ -n "$TARGET_PATTERN" ] && ! grep -qE "$TARGET_PATTERN" "$BUILD_FILE"; then
+          echo "::notice::skipped: $TARGET_DESCRIPTION in $BUILD_FILE — $BUILD_DESCRIPTION cannot run for $PRODUCT"
+          echo "supported=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        echo "supported=true" >> "$GITHUB_OUTPUT"
