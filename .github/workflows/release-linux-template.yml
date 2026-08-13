@@ -84,8 +84,20 @@ jobs:
         id: guard
         shell: bash
         run: |
-          # Translate gradle-path (`ui:ui-android`) to filesystem path (`ui/ui-android`)
-          BUILD_FILE="$(echo '${{ inputs.gradle_module }}' | tr ':' '/')/build.gradle.kts"
+          # Translate gradle-path (`ui:ui-android`) to filesystem path (`ui/ui-android`),
+          # then honor a settings.gradle.kts alias like
+          # project(":composeApp").projectDir = file("app") (school) so an aliased
+          # module doesn't graceful-skip the whole build + upload.
+          MODULE_DIR="$(echo '${{ inputs.gradle_module }}' | tr ':' '/')"
+          if [ ! -f "$MODULE_DIR/build.gradle.kts" ] && [ -f settings.gradle.kts ]; then
+            ALIAS_DIR="$(grep -E "project\(\":?${{ inputs.gradle_module }}\"\)\.projectDir" settings.gradle.kts | sed -E 's/.*file\("([^"]+)"\).*/\1/' | head -1)"
+            if [ -n "$ALIAS_DIR" ] && [ -f "$ALIAS_DIR/build.gradle.kts" ]; then
+              MODULE_DIR="$ALIAS_DIR"
+              echo "::notice::resolved aliased module ${{ inputs.gradle_module }} -> $MODULE_DIR"
+            fi
+          fi
+          echo "module_dir=$MODULE_DIR" >> "$GITHUB_OUTPUT"
+          BUILD_FILE="$MODULE_DIR/build.gradle.kts"
           if [ ! -f "$BUILD_FILE" ]; then
             echo "::notice::skipped: $BUILD_FILE not found for ${{ inputs.product }}"
             echo "supported=false" >> "$GITHUB_OUTPUT"
@@ -111,9 +123,9 @@ jobs:
       - name: Copy icons
         if: steps.guard.outputs.supported == 'true'
         run: |
-          mkdir -p ${{ inputs.gradle_module }}/icons
+          mkdir -p ${{ steps.guard.outputs.module_dir }}/icons
           ICON="_branding/branding/icons/dist/${{ inputs.product }}/linux/${{ inputs.product }}-256.png"
-          [ -f "$ICON" ] && cp "$ICON" "${{ inputs.gradle_module }}/icons/" || true
+          [ -f "$ICON" ] && cp "$ICON" "${{ steps.guard.outputs.module_dir }}/icons/" || true
 
       - uses: actions/setup-java@v4
         if: steps.guard.outputs.supported == 'true'
@@ -137,7 +149,7 @@ jobs:
       - name: Rename + checksum DEB
         if: steps.guard.outputs.supported == 'true'
         run: |
-          DEB=$(find ${{ inputs.gradle_module }}/build/compose/binaries -name "*.deb" | head -1)
+          DEB=$(find ${{ steps.guard.outputs.module_dir }}/build/compose/binaries -name "*.deb" | head -1)
           ARTIFACT="${{ inputs.product }}-${{ inputs.version }}-linux-x64.deb"
           mv "$DEB" "$ARTIFACT"
           sha256sum "$ARTIFACT" > "${ARTIFACT}.sha256"
@@ -153,9 +165,9 @@ jobs:
         run: |
           ./gradlew :${{ inputs.gradle_module }}:createDistributable -PappVersion=${{ inputs.version }} --no-daemon --no-configuration-cache
 
-          APP_DIR=$(find ${{ inputs.gradle_module }}/build/compose/binaries -type d -name "app" | head -1)
+          APP_DIR=$(find ${{ steps.guard.outputs.module_dir }}/build/compose/binaries -type d -name "app" | head -1)
           if [ -z "$APP_DIR" ]; then
-            APP_DIR=$(find ${{ inputs.gradle_module }}/build/compose/binaries -type d -name "main" | head -1)
+            APP_DIR=$(find ${{ steps.guard.outputs.module_dir }}/build/compose/binaries -type d -name "main" | head -1)
           fi
           if [ -z "$APP_DIR" ] || [ ! -d "$APP_DIR" ]; then
             echo "::warning::createDistributable output not found — AppImage step skipped, DEB still ships."
@@ -167,7 +179,7 @@ jobs:
           rm -rf "$APPDIR" && mkdir -p "$APPDIR/usr"
           cp -r "$APP_DIR"/. "$APPDIR/usr/"
 
-          PRODUCT_ICON=$(find ${{ inputs.gradle_module }}/icons -name "${{ inputs.product }}-256.png" | head -1)
+          PRODUCT_ICON=$(find ${{ steps.guard.outputs.module_dir }}/icons -name "${{ inputs.product }}-256.png" | head -1)
           [ -n "$PRODUCT_ICON" ] && cp "$PRODUCT_ICON" "$APPDIR/${{ inputs.product }}.png"
 
           cat > "$APPDIR/${{ inputs.product }}.desktop" <<EOF
