@@ -154,7 +154,7 @@ so the six dispatches queue rather than race. Six small commits land on
       "sha256": "…",
       "size": 89012345,
       "direct_url": "https://github.com/Tanvrit/artifactory/releases/download/friendly-v1.2.0/friendly-1.2.0-macos-arm64.dmg",
-      "r2_url": "https://artifacts.tanvrit.com/releases/friendly/1.2.0/friendly-1.2.0-macos-arm64.dmg"
+      "r2_url": "https://dl.tanvrit.com/releases/friendly/1.2.0/friendly-1.2.0-macos-arm64.dmg"
     },
     "ios": { "available": false },
     "android": { "available": false },
@@ -182,6 +182,20 @@ The Cloudflare Worker at `tanvrit/artifactory/worker/` resolves
 `https://artifacts.tanvrit.com/<product>/<version>/<os>` to either:
 - The R2 URL (302) when `r2_url` is set in `latest.json` — fast, no proxy chain.
 - The GitHub Release `direct_url` otherwise — fallback for pre-R2 manifests.
+
+`r2_url` is a **`dl.tanvrit.com`** URL. That hostname is bound to the same
+Worker and treats the entire request path as the R2 object key, so
+`https://dl.tanvrit.com/releases/<product>/<version>/<file>` maps 1:1 onto the
+key the mirror step above uploads, and it is the only download path that
+supports HTTP Range (a dropped 260 MB download resumes instead of restarting).
+
+> **Do not point `r2_url` at `https://artifacts.tanvrit.com/releases/…`.** That
+> host has no `/releases/` route — `releases` is not in the Worker's
+> `VALID_PRODUCTS`, so the request falls through to the portal proxy and the
+> user gets the portal's Next.js 404 page (HTML, ~9 KB) instead of the
+> installer. This was live until 2026-08-13; every manifest the generator wrote
+> advertised that dead link. The fix was to emit the `dl.tanvrit.com` URL, not
+> to add a route, so that there is exactly one canonical download host.
 
 ### The mirror step fails the job (changed 2026-08-11)
 
@@ -328,7 +342,12 @@ After landing a new template or modifying an existing one, verify on
    `available: true`.
 7. Verify the worker URL
    `https://artifacts.tanvrit.com/friendly/1.99.0-test/macos-arm64`
-   resolves (302) to either R2 or the GitHub Release download.
+   resolves (302) to either R2 or the GitHub Release download — and then
+   **follow the redirect** (`curl -IL`) and confirm the final response is the
+   binary (`content-type: application/x-apple-diskimage`, `accept-ranges:
+   bytes`), not `text/html`. A 302 alone proves nothing: the dead
+   `artifacts.tanvrit.com/releases/…` link 302'd correctly and then served the
+   portal's 404 page.
 8. Clean up the test tag + Release + manifest commits.
 
 ## Further reading

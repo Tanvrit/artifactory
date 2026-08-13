@@ -5,6 +5,21 @@ Follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Release manifests advertised a download link that did not resolve.
+  `scripts/update-manifest.js` wrote `r2_url` as
+  `https://artifacts.tanvrit.com/releases/…`, a path the Worker has no route for
+  (`releases` is not a `VALID_PRODUCT`), so it fell through to the portal proxy
+  and returned the portal's Next.js 404 page instead of the installer. `r2_url`
+  now points at `https://dl.tanvrit.com/releases/…` — the same Worker, on the
+  hostname that maps the whole path to the R2 key the release templates already
+  upload, with Range support. No Worker or workflow change, so no deploy is
+  needed to activate it.
+- AppImage entries pointed at a filename that is never built. The manifest key
+  is `linux-x64-app` but the artifact is `<product>-<version>-linux-x64.AppImage`,
+  and the filename was derived from the key — breaking both `direct_url` and
+  `r2_url` for every AppImage. Added an explicit filename-stem override.
+
 ### Added
 - Initial branding system setup
 - Design token system (base, semantic, product tokens)

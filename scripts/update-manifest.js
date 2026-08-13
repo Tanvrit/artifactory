@@ -22,10 +22,32 @@ const MANIFESTS    = path.join(ROOT, 'manifests');
 const BASE_URL     = 'https://artifacts.tanvrit.com';
 const GH_RELEASES  = 'https://github.com/tanvrit/artifactory/releases';
 const GH_DOWNLOAD  = `${GH_RELEASES}/download`;
-// R2 base — binaries are mirrored to this prefix by the per-OS release templates
-// (release-{macos,windows,linux,android,ios}-template.yml). The worker
-// (`worker/src/index.js`) prefers `r2_url` over `direct_url` when both are present.
-const R2_RELEASES  = `${BASE_URL}/releases`;
+// R2 base — binaries are mirrored to `tanvrit-artifacts/releases/<product>/<version>/`
+// by the per-OS release templates (release-{macos,windows,linux,android,ios}-template.yml),
+// and `worker/src/index.js` prefers `r2_url` over `direct_url` when both are present.
+//
+// This MUST be `dl.tanvrit.com`, not `artifacts.tanvrit.com/releases` (fixed
+// 2026-08-13). artifacts.tanvrit.com has no `/releases/` route: `releases` is
+// not in the Worker's VALID_PRODUCTS, so such a request falls through
+// `routeRequest`'s catch-all to `proxyToPortal` and the user is handed the
+// portal's Next.js 404 *page* — HTML, status 404, ~9 KB — in place of the
+// installer. Verified live: that URL returned `content-type: text/html`, while
+// a route that does exist (`/dl/...`) returns the Worker's own JSON 404. Every
+// manifest written by this script advertised that dead link.
+//
+// dl.tanvrit.com is bound to the same Worker and treats the ENTIRE path as the
+// R2 key (see serveBinaryFromR2), so `/releases/<product>/<version>/<file>`
+// resolves to exactly the key the mirror step uploads — no new route, no change
+// to the release templates, and no second copy of the object. It is also the
+// only download path with Range support, which is what lets a dropped 260 MB
+// download resume instead of restarting.
+//
+// Deliberately NOT fixed by adding a `/releases/` route to the Worker: that
+// would create a second binary-serving path (a third, counting `/dl/`) for
+// bytes that dl.tanvrit.com already serves better, and it would not take effect
+// until someone ran a production `wrangler deploy`. This way there is one
+// canonical download host and the fix needs no deploy at all.
+const R2_RELEASES  = 'https://dl.tanvrit.com/releases';
 
 // ── Product metadata ──────────────────────────────────────────────────────────
 const PRODUCT_META = {
@@ -96,6 +118,28 @@ const PLATFORM_EXT = {
   'ios':            'ipa',
   'web':            null,
 };
+
+// Filename stem overrides, where the manifest's platform KEY is not the string
+// that appears in the artifact's FILENAME.
+//
+// Only `linux-x64-app` differs today. The Linux template builds the AppImage as
+// `<product>-<version>-linux-x64.AppImage` (release-linux-template.yml: the
+// GitHub upload at ~line 218 and the R2 mirror at ~line 267 both use that name),
+// but the manifest key for it is `linux-x64-app` so that DEB and AppImage can be
+// independently `available`. Deriving the filename from the key produced
+// `<product>-<version>-linux-x64-app.AppImage` — a file that is never built,
+// never uploaded and never mirrored, so BOTH `direct_url` and `r2_url` for every
+// AppImage entry pointed at nothing. Same defect class as the r2_url host bug
+// above; found while verifying that fix (2026-08-13).
+const PLATFORM_FILE_STEM = {
+  'linux-x64-app': 'linux-x64',
+};
+
+/** Artifact filename for a manifest platform key — the name CI actually produces. */
+function artifactFilename(product, version, platform, ext) {
+  const stem = PLATFORM_FILE_STEM[platform] || platform;
+  return `${product}-${version}-${stem}.${ext}`;
+}
 
 const WEB_URLS = {
   wedding: 'https://friendly.wedding',
@@ -170,7 +214,7 @@ async function buildManifest(product, version, build, releasedAt, releaseNotes, 
       continue;
     }
 
-    const filename = `${product}-${version}-${platform}.${ext}`;
+    const filename = artifactFilename(product, version, platform, ext);
     let sha256 = '', size_bytes = 0;
 
     if (!skipFetch) {
@@ -247,7 +291,7 @@ async function patchPlatform(product, version, build, releasedAt, releaseNotes, 
   const ext = PLATFORM_EXT[platform];
   if (ext) {
     const tagName  = `${product}-v${version}`;
-    const filename = `${product}-${version}-${platform}.${ext}`;
+    const filename = artifactFilename(product, version, platform, ext);
     let sha256 = '', size_bytes = 0;
     if (!skipFetch) {
       process.stdout.write(`  fetching ${platform} metadata…`);

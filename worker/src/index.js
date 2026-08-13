@@ -225,10 +225,17 @@ async function resolveAndRedirect(bucket, product, versionOrLatest, platform, ct
   // started running). Falls back to the GitHub Releases CDN otherwise.
   const r2Url     = platformData.r2_url;
   const directUrl = r2Url || platformData.direct_url || platformData.url;
-  // R2 URLs (artifacts.tanvrit.com/releases/...) are served directly by this
-  // same worker through the public R2 bucket — no CDN redirect chain to
-  // resolve, so we can return a plain 302 instead of proxyBinary's GitHub
-  // resolve dance.
+  // `r2_url` points at dl.tanvrit.com/releases/... — this same Worker, on the
+  // hostname that treats the whole path as an R2 key (serveBinaryFromR2), with
+  // Range support. There is no CDN redirect chain to resolve, so a plain 302
+  // is enough and proxyBinary's GitHub resolve dance is skipped.
+  //
+  // This comment previously claimed the URL was `artifacts.tanvrit.com/releases/...`
+  // and that this Worker served it. It did not: there is no `/releases/` route
+  // below — `releases` is not a VALID_PRODUCT, so such a path falls through to
+  // proxyToPortal and returns the portal's 404 HTML instead of the installer.
+  // Fixed 2026-08-13 in scripts/update-manifest.js by emitting the
+  // dl.tanvrit.com URL, rather than by adding a second binary route here.
   if (r2Url) {
     return Response.redirect(r2Url, 302);
   }
