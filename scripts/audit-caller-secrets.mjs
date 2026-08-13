@@ -34,7 +34,13 @@
  * Env:
  *   GH_TOKEN / GITHUB_TOKEN   required
  *   AUDIT_ORG                 default "Tanvrit"
- *   AUDIT_TEMPLATE_REF        default "main" (informational only)
+ *
+ * Exit codes — kept distinct so a red run is never ambiguous:
+ *   0  every caller is fully provisioned
+ *   1  at least one caller is missing a required secret (the finding this exists for)
+ *   2  unexpected error (bug / GitHub outage)
+ *   3  the token cannot do the job (expired, wrong type, or missing scope) — the audit
+ *      did NOT run. Distinct from 1 so a dead token never masquerades as a fleet gap.
  */
 
 import { readdir, readFile, writeFile } from 'node:fs/promises';
@@ -369,8 +375,39 @@ async function selfTest() {
 
 // ------------------------------------------------------------------------ main
 
+class CredentialError extends Error {}
+
+/**
+ * Preflight the token before crawling. Two failure modes are common and produce very
+ * different fixes, so they must not both surface as a generic stack trace:
+ *   * 401 — the PAT is expired or revoked.
+ *   * 403 "Resource not accessible by integration" — GITHUB_TOKEN was supplied. The
+ *     Actions token is an installation token: it cannot call /user/repos at all, and it
+ *     is scoped to a single repo, so it can never audit the fleet.
+ */
+async function preflight() {
+  const r = await gh('/user', { allowForbidden: true, allow404: true });
+  if (r.status === 401) {
+    throw new CredentialError(
+      'GH_TOKEN was rejected (401 Bad credentials) — the token is expired or revoked. ' +
+        'In CI this usually means the secret it came from needs rotating.',
+    );
+  }
+  if (r.status === 403 || !r.body || !r.body.login) {
+    throw new CredentialError(
+      'GH_TOKEN cannot call GET /user (403). This is what the built-in GITHUB_TOKEN does: ' +
+        'it is an installation token scoped to one repo and cannot enumerate the fleet. ' +
+        'Provide a user PAT with `repo` scope as the AUDIT_FLEET_TOKEN secret.',
+    );
+  }
+  return r.body.login;
+}
+
 async function main() {
   if (process.argv.includes('--self-test')) return selfTest();
+
+  const login = await preflight();
+  process.stderr.write(`authenticated as ${login}\n`);
 
   const jsonOutIdx = process.argv.indexOf('--json');
   const jsonOut = jsonOutIdx > -1 ? process.argv[jsonOutIdx + 1] : null;
@@ -434,6 +471,11 @@ async function main() {
 main().then(
   (code) => process.exit(code),
   (err) => {
+    if (err instanceof CredentialError) {
+      console.error(`CREDENTIAL PROBLEM — the audit did not run:\n  ${err.message}`);
+      console.log(`::error title=Secret audit could not run::${err.message}`);
+      process.exit(3);
+    }
     console.error(err);
     process.exit(2);
   },
