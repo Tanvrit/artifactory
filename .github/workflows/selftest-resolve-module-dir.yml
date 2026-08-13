@@ -1,0 +1,153 @@
+# ─────────────────────────────────────────────────────────────
+# Self-test for .github/actions/resolve-module-dir.
+#
+# That composite action is the single copy of the module→directory resolution
+# the five native release templates depend on, and those templates are
+# workflow_call'd by ~21 repos. A regression here silently turns real release
+# builds into no-ops — which is exactly what the platforms/school alias bug did
+# before the guard learned about settings.gradle.kts projectDir aliases.
+#
+# So this exercises the action in the real Actions runtime against fixtures that
+# mirror the two shapes in the fleet:
+#   aliased      — platforms/school: `project(":composeApp").projectDir = file("app")`
+#   not aliased  — platforms/ai:     composeApp/ is a real directory
+# plus the two negative paths (missing module, target not declared). The negative
+# cases matter: without them a resolver that answered "true" unconditionally
+# would still pass.
+#
+# The action resolves paths relative to the workspace root (composite `run` steps
+# run in $GITHUB_WORKSPACE), so each fixture is staged AT the workspace root and
+# torn down again rather than living in a subdirectory. artifactory has no
+# settings.gradle.kts or composeApp/ of its own, so nothing real is shadowed, and
+# the workspace is ephemeral regardless.
+#
+# Costs only ubuntu-latest minutes (free on this public repo); needs no secrets.
+# ─────────────────────────────────────────────────────────────
+
+name: Self-test resolve-module-dir
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/actions/resolve-module-dir/**'
+      - '.github/workflows/selftest-resolve-module-dir.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    name: resolve-module-dir fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard — the fixtures must not shadow anything real
+        run: |
+          set -euo pipefail
+          for p in settings.gradle.kts composeApp app; do
+            if [ -e "$p" ]; then
+              echo "::error::$p already exists in artifactory; this self-test would shadow it"
+              exit 1
+            fi
+          done
+          echo "workspace root is clear"
+
+      # ── A: aliased, mirrors platforms/school ──────────────────────────
+      - name: Arrange A (aliased :composeApp -> app/)
+        run: |
+          mkdir -p app
+          printf 'include(":composeApp")\nproject(":composeApp").projectDir = file("app")\n' > settings.gradle.kts
+          printf 'kotlin {\n    jvm("desktop")\n}\n' > app/build.gradle.kts
+
+      - name: Act A
+        id: a
+        uses: ./.github/actions/resolve-module-dir
+        with:
+          gradle_module: composeApp
+          product: fixture-school
+          target_pattern: '^\s*(jvm\(|jvm \{|jvm\("desktop")'
+          target_description: 'jvm() target not declared'
+          build_description: 'Linux DEB/AppImage build'
+
+      - name: Teardown A
+        run: rm -rf app settings.gradle.kts
+
+      # ── B: not aliased, mirrors platforms/ai ──────────────────────────
+      - name: Arrange B (plain composeApp/)
+        run: |
+          mkdir -p composeApp
+          printf 'include(":composeApp")\n' > settings.gradle.kts
+          printf 'kotlin {\n    jvm("desktop")\n}\n' > composeApp/build.gradle.kts
+
+      - name: Act B
+        id: b
+        uses: ./.github/actions/resolve-module-dir
+        with:
+          gradle_module: composeApp
+          product: fixture-ai
+          target_pattern: '^\s*(jvm\(|jvm \{|jvm\("desktop")'
+          target_description: 'jvm() target not declared'
+          build_description: 'Linux DEB/AppImage build'
+
+      # ── C: module does not exist at all (fixture B still staged) ──────
+      - name: Act C (missing module)
+        id: c
+        uses: ./.github/actions/resolve-module-dir
+        with:
+          gradle_module: noSuchModule
+          product: fixture-missing
+          target_pattern: '^\s*(jvm\(|jvm \{|jvm\("desktop")'
+          target_description: 'jvm() target not declared'
+          build_description: 'Linux DEB/AppImage build'
+
+      - name: Teardown B/C
+        run: rm -rf composeApp settings.gradle.kts
+
+      # ── D: module exists but declares no jvm() target ─────────────────
+      - name: Arrange D (no jvm target)
+        run: |
+          mkdir -p composeApp
+          printf 'include(":composeApp")\n' > settings.gradle.kts
+          printf 'kotlin {\n    androidTarget()\n}\n' > composeApp/build.gradle.kts
+
+      - name: Act D
+        id: d
+        uses: ./.github/actions/resolve-module-dir
+        with:
+          gradle_module: composeApp
+          product: fixture-notarget
+          target_pattern: '^\s*(jvm\(|jvm \{|jvm\("desktop")'
+          target_description: 'jvm() target not declared'
+          build_description: 'Linux DEB/AppImage build'
+
+      - name: Teardown D
+        run: rm -rf composeApp settings.gradle.kts
+
+      - name: Assert outcomes
+        env:
+          A_DIR: ${{ steps.a.outputs.module_dir }}
+          A_SUP: ${{ steps.a.outputs.supported }}
+          B_DIR: ${{ steps.b.outputs.module_dir }}
+          B_SUP: ${{ steps.b.outputs.supported }}
+          C_SUP: ${{ steps.c.outputs.supported }}
+          D_SUP: ${{ steps.d.outputs.supported }}
+        run: |
+          set -uo pipefail
+          fail=0
+          check() { # label actual expected
+            if [ "$2" = "$3" ]; then
+              echo "PASS $1: $2"
+            else
+              echo "FAIL $1: got '$2', want '$3'"; fail=1
+            fi
+          }
+          check "A module_dir (aliased)"   "$A_DIR" "app"
+          check "A supported"              "$A_SUP" "true"
+          check "B module_dir (unaliased)" "$B_DIR" "composeApp"
+          check "B supported"              "$B_SUP" "true"
+          check "C supported (missing)"    "$C_SUP" "false"
+          check "D supported (no target)"  "$D_SUP" "false"
+          exit $fail
