@@ -308,6 +308,13 @@ jobs:
             key="${prefix}/${f}"
             url="${host}/tanvrit-artifacts/${key}"
             echo "Mirroring $f -> r2://tanvrit-artifacts/${key}"
+            # Truncate the response-body sink first. `curl -o` only creates the
+            # file once a body actually arrives, so a transport-level failure
+            # (HTTP 000) leaves the PREVIOUS file's error body in place and the
+            # handler below prints it — reporting the wrong reason for the
+            # failure. Verified: an R2 401 body from an earlier object was
+            # printed under a later "HTTP 000".
+            : > /tmp/r2-put.log
             code=$(curl -sS -o /tmp/r2-put.log -w '%{http_code}' \
               --connect-timeout 30 --speed-limit 1024 --speed-time 300 \
               --retry 3 --retry-delay 5 \

@@ -220,10 +220,55 @@ A red mirror step loses **no** artifact — the binaries are attached to the Git
 Release by the preceding step. It only reports, truthfully, that the CDN download
 links for that release will not work.
 
+It does, however, stop the release from being **published to the CDN at all**:
+"Dispatch manifest update" runs *after* the mirror, so a red mirror means no
+`repository_dispatch`, no regenerated `manifests/<product>/latest.json`, and no
+catalog entry for that version. That is the intended ordering — a manifest whose
+`r2_url` points at an object that was never uploaded is worse than no manifest —
+but it means a mirror failure is a *release-visible* failure, not a cosmetic one.
+Fix the credentials and re-run the workflow; the mirror is idempotent (a re-PUT
+overwrites the same key).
+
 > **Repo-level secrets required.** The org is on the free plan, so org-level
 > secrets are *not* injected into private repos; they arrive empty. Every caller
 > repo needs `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `CF_ACCOUNT_ID` set at
 > **repo** level (`gh secret list -R tanvrit/<repo>` to check).
+
+### Caller-repo secret inventory (audited 2026-08-13)
+
+Sixteen repos call these templates, all via `secrets: inherit`. Exactly **one**
+carries the R2 key pair; the other fifteen go red at their next release until the
+pair is provisioned. `CF_ACCOUNT_ID`/`CLOUDFLARE_ACCOUNT_ID` is *not* the gap —
+every repo has at least `CLOUDFLARE_ACCOUNT_ID`, which the step accepts as a
+fallback.
+
+| Caller repo | `R2_ACCESS_KEY_ID` + `R2_SECRET_ACCESS_KEY` | Account id present |
+|---|---|---|
+| `Tanvrit/admin-portal` | **yes** | `CLOUDFLARE_ACCOUNT_ID` |
+| `Tanvrit/app-main` (friendly, friendly-jobs, friendly-te) | no | `CF_ACCOUNT_ID` |
+| `Tanvrit/app-desipops` | no | `CF_ACCOUNT_ID` |
+| `Tanvrit/app-school` | no | `CF_ACCOUNT_ID` |
+| `Tanvrit/app-swyft` | no | `CF_ACCOUNT_ID` |
+| `Tanvrit/app-wedding` | no | `CF_ACCOUNT_ID` |
+| `tanvrit/control` | no | `CF_ACCOUNT_ID` |
+| `Tanvrit/app-bharat-online` | no | `CLOUDFLARE_ACCOUNT_ID` |
+| `Tanvrit/app-auditor` | no | `CLOUDFLARE_ACCOUNT_ID` |
+| `Tanvrit/automator` | no | `CLOUDFLARE_ACCOUNT_ID` |
+| `tanvrit/compute` | no | `CLOUDFLARE_ACCOUNT_ID` |
+| `Tanvrit/app-lekhita` | no | `CLOUDFLARE_ACCOUNT_ID` |
+| `Tanvrit/app-mandee-biz` | no | `CLOUDFLARE_ACCOUNT_ID` |
+| `Tanvrit/app-market` | no | `CLOUDFLARE_ACCOUNT_ID` |
+| `Tanvrit/app-store` | no | `CLOUDFLARE_ACCOUNT_ID` |
+| `Tanvrit/website` | no | `CLOUDFLARE_ACCOUNT_ID` |
+
+`Tanvrit/ai` has the R2 pair but is **not** a caller — its `release-*.yml` are
+standalone workflows that mirror on their own; the templates do not apply to it.
+
+Regenerate this table with:
+
+```bash
+for r in $(…caller list…); do echo "$r :: $(gh secret list -R "$r" | awk '{print $1}' | tr '\n' ',')"; done
+```
 
 ## Secrets reference
 
