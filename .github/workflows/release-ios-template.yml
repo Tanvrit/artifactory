@@ -554,9 +554,20 @@ jobs:
           set -uo pipefail
           acct="${CF_ACCOUNT_ID:-${CLOUDFLARE_ACCOUNT_ID:-}}"
           if [ -z "$acct" ] || [ -z "${R2_ACCESS_KEY_ID:-}" ] || [ -z "${R2_SECRET_ACCESS_KEY:-}" ]; then
-            echo "::error::R2 mirror cannot run — set R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and CF_ACCOUNT_ID as REPO-level secrets on this repository (org secrets are not injected into private repos on the free plan, so they arrive empty). The manifest for ${PRODUCT} ${VERSION} advertises an r2_url regardless, so without this mirror every artifacts.tanvrit.com download for it would 404."
+            echo "::error::R2 mirror cannot run — set R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and CF_ACCOUNT_ID as REPO-level secrets on this repository (org secrets are not injected into private repos on the free plan, so they arrive empty). The manifest for ${PRODUCT} ${VERSION} advertises an r2_url regardless, so without this mirror every dl.tanvrit.com download for it would 404."
             exit 1
           fi
+          # curl must be able to sign S3 requests. Without --aws-sigv4 (curl
+          # >= 7.75.0) every PUT below dies in the transport layer and reports
+          # "HTTP 000" — which reads like a network blip rather than a runner
+          # missing a curl feature. Checked via a captured string, NOT a pipe
+          # into grep: `set -o pipefail` + `grep -q` closing the pipe early
+          # makes curl exit 141 and would fail this check spuriously.
+          curl_help="$(curl --help all 2>/dev/null || true)"
+          case "$curl_help" in
+            *--aws-sigv4*) ;;
+            *) echo "::error::curl on this runner cannot sign S3 requests — no --aws-sigv4 support (needs curl >= 7.75.0). Found: $(curl --version 2>/dev/null | head -1). Upgrade curl on this runner; the R2 mirror cannot run without it."; exit 1 ;;
+          esac
           host="https://${acct}.r2.cloudflarestorage.com"
           prefix="releases/${PRODUCT}/${VERSION}"
           mirrored=0
@@ -569,6 +580,8 @@ jobs:
             url="${host}/tanvrit-artifacts/${key}"
             echo "Mirroring $f -> r2://tanvrit-artifacts/${key}"
             code=$(curl -sS -o /tmp/r2-put.log -w '%{http_code}' \
+              --connect-timeout 30 --speed-limit 1024 --speed-time 300 \
+              --retry 3 --retry-delay 5 \
               --aws-sigv4 "aws:amz:auto:s3" \
               --user "${R2_ACCESS_KEY_ID}:${R2_SECRET_ACCESS_KEY}" \
               -H "Content-Type: application/octet-stream" \
@@ -582,6 +595,8 @@ jobs:
             # there — only a successful read is, and that is what decides
             # whether a user can actually download this release.
             back=$(curl -sS -r 0-0 -D /tmp/r2-get.h -o /dev/null -w '%{http_code}' \
+              --connect-timeout 30 --speed-limit 1024 --speed-time 120 \
+              --retry 3 --retry-delay 5 \
               --aws-sigv4 "aws:amz:auto:s3" \
               --user "${R2_ACCESS_KEY_ID}:${R2_SECRET_ACCESS_KEY}" \
               "$url" || true)
