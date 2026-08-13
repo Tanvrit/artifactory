@@ -38,7 +38,8 @@
 # Distribution:
 #   1. App Store Connect (xcrun altool) — when asc_api_key_id input is set and
 #      AuthKey_<id>.p8 exists at ~/.appstoreconnect/private_keys/ on the runner
-#   2. GitHub Releases (tanvrit/artifactory) — when ARTIFACTS_REPO_TOKEN is set
+#   2. GitHub Releases (tanvrit/artifactory) — MANDATORY. ARTIFACTS_REPO_TOKEN
+#      absent = job fails loudly (the installer is a deliverable, not a report)
 #   3. Cloudflare R2 mirror — when R2 credentials are set
 # Dispatches update-manifest (platform="macos-arm64") after upload.
 #
@@ -113,7 +114,7 @@ on:
         default: ''
     secrets:
       ARTIFACTS_REPO_TOKEN:
-        description: 'PAT with write access to tanvrit/artifactory. When absent, GitHub Release upload + manifest dispatch are skipped.'
+        description: 'PAT with contents:write on Tanvrit/artifactory. REQUIRED in practice — when absent the installer cannot be attached to the release, so the job now FAILS LOUDLY instead of skipping the upload. Declared optional only so callers that pass secrets explicitly still parse.'
         required: false
       CF_R2_TOKEN:
         required: false
@@ -381,9 +382,42 @@ jobs:
             --verbose
           echo "✓ Uploaded to App Store Connect"
 
+      # ── Deliverable honesty gate (2026-08-13) ─────────────────────────────
+      # The upload below used to stack three swallows: an
+      # `env.ARTIFACTS_TOKEN_PRESENT == 'true'` guard (silent skip when the
+      # secret is absent), `continue-on-error: true` (ignore any failure) and
+      # `fail_on_unmatched_files: false` (ignore a missing binary). Between
+      # them the native release fleet reported GREEN while attaching nothing —
+      # ARTIFACTS_REPO_TOKEN exists only in Tanvrit/artifactory, and the 21
+      # consuming repos had produced 2 GitHub Releases in total.
+      # A report may be best-effort. A DELIVERABLE may not: a release with no
+      # installer attached is a failed release and must say so.
+      - name: Verify release upload preconditions
+        if: steps.guard.outputs.supported == 'true'
+        shell: bash
+        env:
+          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
+          CALLER_REPO: ${{ github.repository }}
+          PRODUCT: ${{ inputs.product }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -uo pipefail
+          fail=0
+          if [ "${ARTIFACTS_TOKEN_PRESENT}" != "true" ]; then
+            echo "::error::ARTIFACTS_REPO_TOKEN is empty in ${CALLER_REPO} — the ${PRODUCT} ${VERSION} macOS installer cannot be attached to the Tanvrit/artifactory GitHub Release. Add a REPO-level secret named ARTIFACTS_REPO_TOKEN (a PAT with contents:write on Tanvrit/artifactory) under Settings -> Secrets and variables -> Actions in ${CALLER_REPO}. Org secrets are not injected into private repos on the free plan, so they arrive empty. This step used to skip silently — that is how the fleet reported green while shipping nothing."
+            fail=1
+          fi
+          for f in "${PRODUCT}-${VERSION}-macos-arm64.dmg" "${PRODUCT}-${VERSION}-macos-arm64.dmg.sha256"; do
+            if [ ! -s "$f" ]; then
+              echo "::error::Deliverable missing or empty: ${f} — a release with no installer attached is a failed release."
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then exit 1; fi
+          echo "Release upload preconditions OK for ${PRODUCT} ${VERSION} (macos-arm64)."
+
       - name: Upload to GitHub Release
-        if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
-        continue-on-error: true
+        if: steps.guard.outputs.supported == 'true'
         uses: softprops/action-gh-release@v2
         with:
           repository: Tanvrit/artifactory
@@ -391,13 +425,12 @@ jobs:
           name: "${{ inputs.product }} v${{ inputs.version }}"
           draft: false
           prerelease: false
-          fail_on_unmatched_files: false
+          fail_on_unmatched_files: true
           files: |
             ${{ inputs.product }}-${{ inputs.version }}-macos-arm64.dmg
             ${{ inputs.product }}-${{ inputs.version }}-macos-arm64.dmg.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
-          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
 
       # Mirror the release binaries into the R2 bucket that
       # artifacts.tanvrit.com serves from.

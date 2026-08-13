@@ -291,7 +291,7 @@ The new value takes effect on next workflow run.
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `CF_ACCOUNT_ID` | R2 mirror | Cloudflare R2 dashboard → S3 token |
 | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Pages deploy | Cloudflare dashboard |
 | `GH_PACKAGES_TOKEN` | Gradle SDK + core pulls from GitHub Packages | GitHub PAT with `read:packages` |
-| `ARTIFACTS_REPO_TOKEN` | Manifest dispatch + GitHub Release uploads | GitHub PAT with `repo` scope on tanvrit/artifactory |
+| `ARTIFACTS_REPO_TOKEN` | Manifest dispatch + GitHub Release uploads. **Mandatory for any native release** (android/ios/macos/windows/linux): since 2026-08-13 the installer upload no longer skips when it is absent — the job fails with an `::error::` naming the secret and the repo. It must be a **repo-level** secret on the calling repo; org secrets are not injected into private repos on the free plan and arrive empty. | GitHub PAT with `repo` scope on tanvrit/artifactory |
 
 ### Per-product (live in the platform's own repo settings)
 
