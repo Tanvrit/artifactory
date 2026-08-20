@@ -485,9 +485,19 @@ jobs:
       # Authentication: API Key stored at ~/.appstoreconnect/private_keys/AuthKey_<id>.p8
       # on the macOS runner — no secret import needed. Step is skipped gracefully
       # if asc_api_key_id is empty or the .p8 file is missing.
+      # NOT continue-on-error. This ships a DELIVERABLE to Apple, and it carried
+      # the same third swallow that was removed from the GitHub Release upload
+      # below: an altool rejection (bad entitlements, duplicate build number,
+      # expired certificate) reported GREEN, so a release looked complete while
+      # nothing reached TestFlight.
+      #
+      # The two SKIPS above and below are legitimate and kept: a product that
+      # does not ship to Apple leaves asc_api_key_id empty, and a runner without
+      # the AuthKey .p8 genuinely cannot upload (that path exits 0 with a
+      # ::warning::). What is gone is failure-swallowing once an upload is
+      # actually attempted — from there, its failure is the job's failure.
       - name: Upload to TestFlight (xcrun altool)
         if: steps.guard.outputs.supported == 'true' && inputs.asc_api_key_id != ''
-        continue-on-error: true
         env:
           ASC_API_KEY_ID: ${{ inputs.asc_api_key_id }}
           ASC_API_ISSUER_ID: ${{ inputs.asc_api_issuer_id }}
