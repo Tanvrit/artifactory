@@ -174,7 +174,29 @@ jobs:
             mkdir -p dist/app
             cp -r "${{ inputs.landing_build_dir }}"/out/. dist/
             cp -r "${{ inputs.wasm_output_dir }}"/. dist/app/
-            printf '/app/* /app/index.html 200\n' > dist/_redirects
+
+            # ── SPA fallback for deep /app/<route> URLs ──────────────────────
+            # `wrangler pages deploy DIR` reads Functions from DIR/functions/, so
+            # a product that ships one must have it COPIED IN — neither the
+            # landing `out/` copy above nor the wasm copy carries it.
+            #
+            # The `_redirects` rule below stays as the fallback for products with
+            # NO Function, and is deliberately NOT written when one exists: it
+            # would shadow the Function, and platforms/admin's CLAUDE.md records
+            # that an `/app/*` rule pointing at index.html 308-canonicalises and
+            # then 404s. Which of the two mechanisms is actually load-bearing on
+            # Cloudflare today is UNRESOLVED — deep routes on admin.tanvrit.com
+            # answered 200 with the app shell on 2026-08-20 while this template
+            # was shipping the redirect and no Function at all. Preferring the
+            # committed Function is the conservative reading; a product with no
+            # Function keeps exactly its current behaviour.
+            if [ -d functions ]; then
+              cp -r functions dist/functions
+              echo "copied Pages Function -> dist/functions (SPA fallback)"
+            else
+              printf '/app/* /app/index.html 200\n' > dist/_redirects
+              echo "no functions/ dir - wrote _redirects SPA rule"
+            fi
           else
             mkdir -p dist
             cp -r "${{ inputs.wasm_output_dir }}"/. dist/
