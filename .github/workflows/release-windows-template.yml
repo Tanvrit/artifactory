@@ -124,11 +124,17 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         if: steps.guard.outputs.supported == 'true'
 
+      # `shell: cmd` on purpose: this was the template's only step on the
+      # runner's default PowerShell shell, and a locked-down ExecutionPolicy
+      # (PSSecurityException on the step's own .ps1 wrapper — first observed on
+      # app-lekhita's inaugural run, 2026-08-22) kills any pwsh step before it
+      # starts. cmd + gradlew.bat needs no script policy at all, on any runner.
       - name: Build Windows MSI
         if: steps.guard.outputs.supported == 'true'
+        shell: cmd
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./gradlew :${{ inputs.gradle_module }}:packageMsi -PappVersion=${{ inputs.version }} --no-daemon --no-configuration-cache
+        run: .\gradlew.bat :${{ inputs.gradle_module }}:packageMsi -PappVersion=${{ inputs.version }} --no-daemon --no-configuration-cache
 
       - name: Rename + checksum artifact
         if: steps.guard.outputs.supported == 'true'
@@ -145,7 +151,9 @@ jobs:
       # MSI ships unsigned and SmartScreen warns the first few installs.
       - name: Sign Windows MSI
         if: steps.guard.outputs.supported == 'true' && env.CERT_PRESENT == 'true'
-        shell: pwsh
+        # Custom pwsh invocation with -ExecutionPolicy Bypass: same runner-policy
+        # trap as the build step, but this one genuinely needs PowerShell.
+        shell: pwsh -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
         env:
           CERT_PRESENT: ${{ secrets.WINDOWS_SIGNING_CERT != '' && 'true' || 'false' }}
           WINDOWS_SIGNING_CERT: ${{ secrets.WINDOWS_SIGNING_CERT }}
