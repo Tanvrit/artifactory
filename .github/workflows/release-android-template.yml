@@ -19,9 +19,13 @@
 #   <product>-<version>-android.aab + .sha256
 #
 # Signing: activates when ANDROID_SIGNING_KEYSTORE secret is present.
-# Without it, the build still runs (debug-signed) — the artifact ships
-# but cannot be installed on devices that require release signing or
-# uploaded to the Play Store.
+# Without it Gradle does NOT fail — `assembleRelease` emits
+# `<module>-release-unsigned.apk` carrying no signature of any kind. It is
+# not debug-signed (that is what `assembleDebug` produces); it cannot be
+# installed by any Android device, and the Play Store will not take it.
+# Because that APK is a permanent public deliverable the moment it is
+# attached to a release tag, the "Verify APK is release-signed" step below
+# refuses to let the job reach the upload steps when it is unsigned.
 #
 # Play Store upload: gated on PLAY_STORE_SERVICE_ACCOUNT_JSON. Without
 # it, the APK + AAB land in GitHub Releases + R2 and an engineer
@@ -201,6 +205,102 @@ jobs:
                     :${{ inputs.gradle_module }}:bundleRelease \
                     -PappVersion=${{ inputs.version }} \
                     --no-daemon --no-configuration-cache
+
+      # ── Signature gate (2026-08-22) ───────────────────────────────────────
+      # Runs BEFORE the rename, deliberately: `mv` gives every APK the same
+      # `<product>-<version>-android.apk` name, which erases the "-unsigned"
+      # suffix AGP puts on an unsigned build. After the rename the cheap signal
+      # is gone; before it, it is still there.
+      #
+      # Why not just trust that filename: it is a convention, not a contract,
+      # and a caller with a partial signing config can produce a
+      # normally-named APK that still is not signed. Why not scan the archive
+      # for META-INF/*.RSA|SF|DSA either: that is the v1 (JAR) signature block,
+      # and an APK signed only with v2/v3 — the correct, modern configuration
+      # for minSdk 24+ — has no such entry. Rejecting it would break every
+      # consuming repo's release for being correct.
+      #
+      # So the authority here is `apksigner verify`, which understands v1, v2,
+      # v3 and v4 and is the same tool the Play Store and `adb install`
+      # effectively agree with. It ships in the Android SDK build-tools, which
+      # must be present since the APK we are inspecting was just built. When it
+      # genuinely cannot be located we fall back to looking for the APK Signing
+      # Block magic ("APK Sig Block 42", present for v2/v3) OR a v1 block, so
+      # the fallback still accepts a modern signed APK instead of failing it.
+      - name: Verify APK is release-signed
+        if: steps.guard.outputs.supported == 'true'
+        shell: bash
+        env:
+          MODULE_DIR: ${{ steps.guard.outputs.module_dir }}
+          PRODUCT: ${{ inputs.product }}
+          VERSION: ${{ inputs.version }}
+          CALLER_REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          APK_DIR="${MODULE_DIR}/build/outputs/apk/release"
+          APKS="$(find "$APK_DIR" -name '*.apk' 2>/dev/null | sort)"
+          if [ -z "$APKS" ]; then
+            echo "::error::assembleRelease produced no APK under ${APK_DIR} — nothing to publish for ${PRODUCT} ${VERSION}."
+            exit 1
+          fi
+
+          # Locate apksigner once. `sort -V` picks the newest build-tools; if the
+          # glob or sort finds nothing the variable is empty and each APK falls
+          # through to the scan, which degrades but never fails spuriously.
+          APKSIGNER="$(ls -d "${ANDROID_HOME:-/nonexistent}"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$APKSIGNER" ] && [ -x "$APKSIGNER" ]; then
+            echo "Using $APKSIGNER"
+          else
+            APKSIGNER=""
+            echo "::warning::apksigner not found under ${ANDROID_HOME:-<unset>}/build-tools — falling back to a signature-block scan."
+          fi
+
+          # Every APK in the release dir is checked, not just the first. The
+          # rename step below selects with `head -1`, so verifying a single file
+          # could in principle verify one APK and ship a different one.
+          fail=0
+          while IFS= read -r APK; do
+            [ -n "$APK" ] || continue
+            BASE="$(basename "$APK")"
+            echo "── Verifying ${BASE}"
+            reason=""
+
+            # Cheap, definitive signal for the observed failure: AGP appends
+            # "-unsigned" only when no signing config applied to the build.
+            case "$BASE" in
+              *-unsigned.apk)
+                reason="Gradle emitted it as '${BASE}', which AGP does only when no signing config was applied."
+                ;;
+            esac
+
+            if [ -z "$reason" ] && [ -n "$APKSIGNER" ]; then
+              if ! "$APKSIGNER" verify --verbose --print-certs "$APK"; then
+                reason="apksigner could not verify any v1/v2/v3/v4 signature on it."
+              fi
+            elif [ -z "$reason" ]; then
+              has_sig=0
+              # v2/v3 APK Signing Block magic, stored just before the central
+              # directory. Present for a modern APK that has no META-INF block.
+              if LC_ALL=C grep -a -q 'APK Sig Block 42' "$APK"; then has_sig=1; fi
+              # v1 (JAR) signature — still valid on its own for older minSdk.
+              if [ "$has_sig" -eq 0 ] && command -v unzip >/dev/null 2>&1; then
+                if unzip -Z1 "$APK" 2>/dev/null | LC_ALL=C grep -q -E '^META-INF/.*\.(RSA|DSA|EC|SF)$'; then has_sig=1; fi
+              fi
+              if [ "$has_sig" -eq 0 ]; then
+                reason="No APK Signing Block (v2/v3) and no META-INF v1 signature entry were found in the archive."
+              fi
+            fi
+
+            if [ -n "$reason" ]; then
+              echo "::error::${BASE} is NOT release-signed — refusing to publish ${PRODUCT} ${VERSION}. ${reason} An unsigned APK cannot be installed on any Android device, and release tags, release URLs and the download manifest are permanent, so this must fail here rather than ship. Add REPO-level secrets ANDROID_SIGNING_KEYSTORE, ANDROID_SIGNING_KEYSTORE_PASSWORD, ANDROID_SIGNING_KEY_ALIAS and ANDROID_SIGNING_KEY_PASSWORD to ${CALLER_REPO} (org secrets are not injected into private repos on the free plan, so they arrive empty)."
+              fail=1
+            else
+              echo "${BASE}: signature verified."
+            fi
+          done <<< "$APKS"
+
+          if [ "$fail" -ne 0 ]; then exit 1; fi
+          echo "All release APKs for ${PRODUCT} ${VERSION} carry a valid signature."
 
       - name: Rename + checksum artifacts
         if: steps.guard.outputs.supported == 'true'
