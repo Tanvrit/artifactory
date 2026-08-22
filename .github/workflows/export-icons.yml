@@ -39,7 +39,12 @@ jobs:
     # `iconutil` and Homebrew (for the Inkscape step below), so nothing is lost.
     # Do not move this back without first confirming a macOS runner is actually
     # attached to this repo AND in the `tanvrit` group.
-    runs-on: macos-latest
+    runs-on:
+      # Self-hosted macOS. Retargeted 2026-08-22 from macos-latest — hosted
+      # runners are not used anywhere in this org. This job needs macOS tooling,
+      # so it takes one of the four macOS runners rather than the Linux fleet.
+      group: tanvrit
+      labels: [self-hosted, macOS]
     # Ten products x every platform size, with Inkscape rasterisation, plus a cask
     # install. Generous, but it must bound a hang: this used to burn 24h per run.
     timeout-minutes: 45

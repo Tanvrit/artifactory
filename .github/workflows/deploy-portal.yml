@@ -32,7 +32,12 @@ jobs:
     # most of it. A 12-minute deploy that happens beats a 0-minute deploy that never
     # does. Do not move this back without first confirming a runner is actually
     # attached to this repo AND in the `tanvrit` group.
-    runs-on: ubuntu-latest
+    runs-on:
+      # Self-hosted: the tanvrit fleet is ten Linux runners, four macOS and one
+      # Windows. Retargeted 2026-08-22 from ubuntu-latest — hosted runners are
+      # not used anywhere in this org.
+      group: tanvrit
+      labels: [self-hosted, Linux]
     # A job that cannot be scheduled, or that wedges mid-build, must fail fast and
     # loud rather than masquerade as "in progress" for a day. Observed comparable
     # Next.js release builds in the fleet run 2-17 min (52 min worst case); 30 leaves

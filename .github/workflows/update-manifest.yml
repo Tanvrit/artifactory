@@ -56,7 +56,12 @@ jobs:
     # R2 catalog.json was still the 2026-04-12 copy. That made the whole artifacts CDN
     # catalogue unrefreshable. Do not move this back to the self-hosted pool without
     # first confirming a runner is actually attached AND in the `tanvrit` group.
-    runs-on: ubuntu-latest
+    runs-on:
+      # Self-hosted: the tanvrit fleet is ten Linux runners, four macOS and one
+      # Windows. Retargeted 2026-08-22 from ubuntu-latest — hosted runners are
+      # not used anywhere in this org.
+      group: tanvrit
+      labels: [self-hosted, Linux]
     # A job that cannot be scheduled must fail fast and loud, not masquerade as
     # "in progress" for a day. The real work is well under two minutes.
     timeout-minutes: 15
