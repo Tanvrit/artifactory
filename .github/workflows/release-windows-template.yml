@@ -162,6 +162,18 @@ jobs:
           if exist build\wix311 (rmdir /s /q build\wix311 && echo wiped extraction) else (echo extraction not present)
           set "WIX_PATH="
           .\gradlew.bat :downloadWix :unzipWix --no-daemon --no-configuration-cache
+          rem A fresh zip STILL produced light.exe exit 216 (run 33001227046)
+          rem while candle succeeded — so test whether the machine resolves a
+          rem DIFFERENT light.exe (stale shim on PATH) than the extracted one,
+          rem and whether the extracted binaries execute at all on this box.
+          where light.exe 2>nul
+          where candle.exe 2>nul
+          dir build\wix311\light.exe build\wix311\candle.exe 2>nul
+          build\wix311\light.exe -nologo -? >nul 2>&1
+          echo extracted light.exe exit: %errorlevel%
+          build\wix311\candle.exe -nologo -? >nul 2>&1
+          echo extracted candle.exe exit: %errorlevel%
+          exit /b 0
 
       # `shell: cmd` on purpose: this was the template's only step on the
       # runner's default PowerShell shell, and a locked-down ExecutionPolicy
