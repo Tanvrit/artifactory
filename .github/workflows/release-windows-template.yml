@@ -151,8 +151,15 @@ jobs:
           if defined WIX_PATH dir "%WIX_PATH%" 2>nul
           set "GUH=%GRADLE_USER_HOME%"
           if "%GUH%"=="" set "GUH=%USERPROFILE%\.gradle"
-          echo WiX cache: "%GUH%\wix311"
-          if exist "%GUH%\wix311" (rmdir /s /q "%GUH%\wix311" && echo wiped) else (echo not present)
+          rem Bytecode-confirmed paths (WixToolsetKt, plugin 1.11.1):
+          rem   zip   = <gradleUserHome>\compose-jb\wix311.zip   (downloadWix onlyIf = !zip.isFile())
+          rem   unzip = <workspace>\build\wix311
+          rem A TRUNCATED zip here extracts candle.exe fine but a corrupt
+          rem light.exe (later archive entry) that exits 216 — poisoning every
+          rem run until the zip is deleted, since onlyIf never re-downloads.
+          echo WiX zip cache: "%GUH%\compose-jb"
+          if exist "%GUH%\compose-jb" (dir "%GUH%\compose-jb" & rmdir /s /q "%GUH%\compose-jb" && echo wiped zip cache) else (echo zip cache not present)
+          if exist build\wix311 (rmdir /s /q build\wix311 && echo wiped extraction) else (echo extraction not present)
           set "WIX_PATH="
           .\gradlew.bat :downloadWix :unzipWix --no-daemon --no-configuration-cache
 
