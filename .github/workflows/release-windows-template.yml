@@ -134,9 +134,19 @@ jobs:
       - name: Refresh WiX toolset cache
         if: steps.guard.outputs.supported == 'true'
         shell: cmd
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if exist build\wixToolset rmdir /s /q build\wixToolset
           if exist ${{ steps.guard.outputs.module_dir }}\build\wixToolset rmdir /s /q ${{ steps.guard.outputs.module_dir }}\build\wixToolset
+          rem The rmdir alone missed the plugin's real cache location once
+          rem (`:downloadWix SKIPPED` survived it, run 32998733710) — so force
+          rem gradle to re-execute the download+extract wherever it caches,
+          rem and print the paths (-i) so the location is on record.
+          .\gradlew.bat :downloadWix :unzipWix --rerun-tasks -i --no-daemon --no-configuration-cache | findstr /i "wix Download unzip"
+          rem findstr exits 1 on no match and would fail the step; the MSI
+          rem build right after is the real gate for a failed download.
+          exit /b 0
 
       # `shell: cmd` on purpose: this was the template's only step on the
       # runner's default PowerShell shell, and a locked-down ExecutionPolicy
