@@ -124,6 +124,20 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         if: steps.guard.outputs.supported == 'true'
 
+      # The Compose plugin caches its WiX download in the workspace and skips
+      # re-downloading when the zip exists (`:downloadWix SKIPPED`). A partial
+      # download from an earlier failed run survives between runs and extracts
+      # a garbage light.exe that dies instantly with exit 216 (invalid image,
+      # empty stdout) — observed on run 32997239967. Wiping the cache forces a
+      # fresh, complete download every release; the toolset is ~35MB, the cost
+      # is seconds, and it makes the step self-healing.
+      - name: Refresh WiX toolset cache
+        if: steps.guard.outputs.supported == 'true'
+        shell: cmd
+        run: |
+          if exist build\wixToolset rmdir /s /q build\wixToolset
+          if exist ${{ steps.guard.outputs.module_dir }}\build\wixToolset rmdir /s /q ${{ steps.guard.outputs.module_dir }}\build\wixToolset
+
       # `shell: cmd` on purpose: this was the template's only step on the
       # runner's default PowerShell shell, and a locked-down ExecutionPolicy
       # (PSSecurityException on the step's own .ps1 wrapper — first observed on
