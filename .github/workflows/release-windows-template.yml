@@ -161,7 +161,10 @@ jobs:
           if exist "%GUH%\compose-jb" (dir "%GUH%\compose-jb" & rmdir /s /q "%GUH%\compose-jb" && echo wiped zip cache) else (echo zip cache not present)
           if exist build\wix311 (rmdir /s /q build\wix311 && echo wiped extraction) else (echo extraction not present)
           set "WIX_PATH="
-          .\gradlew.bat :downloadWix :unzipWix --no-daemon --no-configuration-cache
+          rem `call` is load-bearing: without it cmd TRANSFERS to gradlew.bat
+          rem and never returns — every line below was dead code in run
+          rem 33002039156.
+          call .\gradlew.bat :downloadWix :unzipWix --no-daemon --no-configuration-cache
           rem A fresh zip STILL produced light.exe exit 216 (run 33001227046)
           rem while candle succeeded — so test whether the machine resolves a
           rem DIFFERENT light.exe (stale shim on PATH) than the extracted one,
