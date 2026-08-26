@@ -137,16 +137,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if exist build\wixToolset rmdir /s /q build\wixToolset
-          if exist ${{ steps.guard.outputs.module_dir }}\build\wixToolset rmdir /s /q ${{ steps.guard.outputs.module_dir }}\build\wixToolset
-          rem The rmdir alone missed the plugin's real cache location once
-          rem (`:downloadWix SKIPPED` survived it, run 32998733710) — so force
-          rem gradle to re-execute the download+extract wherever it caches,
-          rem and print the paths (-i) so the location is on record.
-          .\gradlew.bat :downloadWix :unzipWix --rerun-tasks -i --no-daemon --no-configuration-cache | findstr /i "wix Download unzip"
-          rem findstr exits 1 on no match and would fail the step; the MSI
-          rem build right after is the real gate for a failed download.
-          exit /b 0
+          rem The Compose plugin caches WiX in the GRADLE USER HOME, not the
+          rem workspace (decompiled WixToolsetKt: getGradleUserHomeDir()+wix311,
+          rem and downloadWix's onlyIf skips while that zip exists — even under
+          rem --rerun-tasks). Wipe the real location so a partial download from
+          rem a dead run can never poison later releases (light.exe extracted
+          rem from the stale zip exits 216 before printing a byte).
+          set "GUH=%GRADLE_USER_HOME%"
+          if "%GUH%"=="" set "GUH=%USERPROFILE%\.gradle"
+          echo WiX cache: "%GUH%\wix311"
+          if exist "%GUH%\wix311" (rmdir /s /q "%GUH%\wix311" && echo wiped) else (echo not present)
+          .\gradlew.bat :downloadWix :unzipWix --no-daemon --no-configuration-cache
 
       # `shell: cmd` on purpose: this was the template's only step on the
       # runner's default PowerShell shell, and a locked-down ExecutionPolicy
