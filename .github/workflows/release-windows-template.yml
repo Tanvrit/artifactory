@@ -137,16 +137,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          rem The Compose plugin caches WiX in the GRADLE USER HOME, not the
-          rem workspace (decompiled WixToolsetKt: getGradleUserHomeDir()+wix311,
-          rem and downloadWix's onlyIf skips while that zip exists — even under
-          rem --rerun-tasks). Wipe the real location so a partial download from
-          rem a dead run can never poison later releases (light.exe extracted
-          rem from the stale zip exits 216 before printing a byte).
+          rem Two ways a machine-level WiX poisons the build (both observed on
+          rem the fleet runner, runs 32997239967..33000296620):
+          rem  1. WIX_PATH env set → the Compose plugin NEVER downloads its own
+          rem     WiX (downloadWix onlyIf) and jpackage uses whatever broken
+          rem     install the variable points at — light.exe exited 216 (wrong
+          rem     machine type) before printing a byte.
+          rem  2. A stale zip in the gradle-user-home cache (wix311) re-extracts
+          rem     forever.
+          rem Print the machine state for the record, wipe the cache, and let
+          rem the build step (which clears WIX_PATH) download a fresh WiX 3.11.
+          echo WIX_PATH is: "%WIX_PATH%"
+          if defined WIX_PATH dir "%WIX_PATH%" 2>nul
           set "GUH=%GRADLE_USER_HOME%"
           if "%GUH%"=="" set "GUH=%USERPROFILE%\.gradle"
           echo WiX cache: "%GUH%\wix311"
           if exist "%GUH%\wix311" (rmdir /s /q "%GUH%\wix311" && echo wiped) else (echo not present)
+          set "WIX_PATH="
           .\gradlew.bat :downloadWix :unzipWix --no-daemon --no-configuration-cache
 
       # `shell: cmd` on purpose: this was the template's only step on the
@@ -159,7 +166,12 @@ jobs:
         shell: cmd
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: .\gradlew.bat :${{ inputs.gradle_module }}:packageMsi -PappVersion=${{ inputs.version }} --no-daemon --no-configuration-cache
+        run: |
+          rem Clear WIX_PATH so the plugin's own downloaded WiX 3.11 is used —
+          rem the machine-level install this variable points at ships a
+          rem light.exe that cannot execute (exit 216). See the refresh step.
+          set "WIX_PATH="
+          .\gradlew.bat :${{ inputs.gradle_module }}:packageMsi -PappVersion=${{ inputs.version }} --no-daemon --no-configuration-cache
 
       # jpackage writes its real error to a log file that gradle's output only
       # references by path — without this, an MSI failure on a self-hosted
