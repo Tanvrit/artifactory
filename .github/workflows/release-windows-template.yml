@@ -78,14 +78,18 @@ on:
 jobs:
   build-windows:
     name: Windows x64
-    runs-on:
-      group: tanvrit
-      labels: [windows]
-    # Reusable template: `runs-on` resolves against the CALLING repository's runners,
-    # not artifactory's, so the self-hosted request here is satisfiable and is left
-    # alone. What was missing is a ceiling — without `timeout-minutes` a wedged job
-    # inherits GitHub's 6h default and holds the fleet's single Windows runner for that
-    # whole time, which blocks every other repo's Windows release behind it.
+    # Hosted windows-latest, NOT the fleet's self-hosted box, until the box's
+    # runner service is reconfigured: it logs on as NetworkService, a
+    # non-interactive session where WiX light's ICE validation cannot run —
+    # every fleet MSI build ever died there with light exit 216 while the
+    # same light.exe runs fine interactively (probe evidence in run
+    # 33002809360). To return to self-hosted: change the service to log on
+    # as a real user, prove one green MSI, then restore
+    # `runs-on: {group: tanvrit, labels: [windows]}`.
+    runs-on: windows-latest
+    # Ceiling: without `timeout-minutes` a wedged job inherits GitHub's 6h
+    # default (and, if ever back on self-hosted, holds the fleet's single
+    # Windows runner that whole time, blocking every other repo behind it).
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
