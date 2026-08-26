@@ -136,6 +136,20 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: .\gradlew.bat :${{ inputs.gradle_module }}:packageMsi -PappVersion=${{ inputs.version }} --no-daemon --no-configuration-cache
 
+      # jpackage writes its real error to a log file that gradle's output only
+      # references by path — without this, an MSI failure on a self-hosted
+      # runner is undiagnosable from CI (run 32591414063 burned a blind
+      # 17-minute build to learn nothing). Surfaces every jpackage -out/-err
+      # log. cmd, not pwsh: same runner-policy hazard as the build step above.
+      - name: Print jpackage logs on failure
+        if: failure() && steps.guard.outputs.supported == 'true'
+        shell: cmd
+        run: |
+          for /r "${{ steps.guard.outputs.module_dir }}\build\compose\logs" %%f in (*.txt) do (
+            echo ===== %%f =====
+            type "%%f"
+          )
+
       - name: Rename + checksum artifact
         if: steps.guard.outputs.supported == 'true'
         shell: bash
