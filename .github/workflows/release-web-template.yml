@@ -14,7 +14,10 @@
 #         assemble_script: 'scripts/assemble-dist.sh'  # optional — overrides default merge logic
 #       secrets: inherit
 #
-# Triggers on push to main (NOT version tags) since web is always-live.
+# Deploys on push to main (NOT version tags) since web is always-live, and on a
+# caller's workflow_dispatch — dispatching a workflow named "Release Web" is a
+# deliberate request for a release, and for four days in Aug 2026 it silently
+# was not one. Any other event builds without shipping.
 # Version passed to update-manifest is git rev-parse --short HEAD.
 #
 # Graceful-skip guard: bails out cleanly if composeApp's build.gradle.kts
@@ -84,10 +87,28 @@ on:
       GH_PACKAGES_TOKEN:
         description: 'Token for Gradle to pull SDK + core artifacts from GitHub Packages'
         required: false
+    outputs:
+      deployed:
+        description: >-
+          'true' only when the Cloudflare Pages upload actually ran AND succeeded.
+          A caller must never read a green job as a shipped release: the deploy
+          step is gated and continue-on-error, so "built fine, shipped nothing" is
+          a perfectly normal green outcome. Gate post-deploy verification on this.
+        value: ${{ jobs.release-web.outputs.deployed }}
+      bundle:
+        description: >-
+          Filename of the hashed entry bundle in the assembled dist (e.g.
+          composeApp.82be35a232.js), or '' for apps that ship no such bundle.
+          A caller can fetch the live site and compare: that is the only check
+          which tells "the new build is live" apart from "the old one still is".
+        value: ${{ jobs.release-web.outputs.bundle }}
 
 jobs:
   release-web:
     name: Web (Cloudflare Pages)
+    outputs:
+      deployed: ${{ steps.cf_result.outputs.deployed }}
+      bundle: ${{ steps.bundle_id.outputs.bundle }}
     # id-token + attestations are required by actions/attest-build-provenance to
     # mint the SLSA provenance attestation via the GitHub Sigstore instance.
     # contents/packages:read preserve the existing checkout + Gradle package reads.
@@ -248,6 +269,21 @@ jobs:
             sed -i.bak 's|//#[[:space:]]*sourceMappingURL=.*$||' "$j" && rm -f "$j.bak"
           done
 
+      # Name the artifact this run actually produced, so the caller can verify
+      # that THAT is what the live site serves. Without it a release can only
+      # check that the domain boots — which the PREVIOUS deploy already
+      # guarantees, and which is exactly how a no-op release reads as green.
+      - name: Identify assembled bundle
+        id: bundle_id
+        if: steps.guard.outputs.supported == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle=$(find dist -name 'composeApp.*.js' ! -name '*.map' ! -name '*.LICENSE*' \
+                     -exec basename {} \; 2>/dev/null | sort -u | head -1 || true)
+          echo "bundle=${bundle:-}" >> "$GITHUB_OUTPUT"
+          echo "::notice::assembled bundle: ${bundle:-<none>}"
+
       # Tarball the built bundle so the SLSA provenance attestation has a single,
       # stable subject (a directory of many hashed files is awkward to attest).
       # Prefers the assembled dist/; falls back to the raw wasm output dir.
@@ -282,14 +318,44 @@ jobs:
         with:
           subject-path: ${{ steps.provenance_pkg.outputs.tarball }}
 
+      # Which events may ship. `push` alone was the rule, which quietly made
+      # `workflow_dispatch` a build-only no-op: it assembled, attested, reported
+      # green and deployed NOTHING, while the caller's boot check booted the
+      # PREVIOUS release and passed. On 2026-08-30 that stranded a fix on main
+      # for four days behind three green runs. Dispatching a workflow named
+      # "Release Web" is a deliberate act by a human who wants a release, so it
+      # ships. Every other event still only builds.
+      - name: Decide whether to deploy
+        id: gate
+        if: steps.guard.outputs.supported == 'true'
+        shell: bash
+        env:
+          CF_TOKEN_PRESENT: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          event='${{ github.event_name }}'
+          case "$event" in
+            push|workflow_dispatch) ;;
+            *)
+              echo "deploy=false" >> "$GITHUB_OUTPUT"
+              echo "reason=event '$event' does not release (only push and workflow_dispatch do)" >> "$GITHUB_OUTPUT"
+              exit 0 ;;
+          esac
+          if [ "$CF_TOKEN_PRESENT" != "true" ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "reason=CLOUDFLARE_API_TOKEN is not present in this repository" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "deploy=true" >> "$GITHUB_OUTPUT"
+          echo "reason=" >> "$GITHUB_OUTPUT"
+
       - name: Deploy to Cloudflare Pages
-        if: steps.guard.outputs.supported == 'true' && github.event_name == 'push' && env.CF_TOKEN_PRESENT == 'true'
+        id: cf_deploy
+        if: steps.gate.outputs.deploy == 'true'
         # Continue on error so missing Cloudflare project (e.g. tanvrit-shell-app
         # not yet created at the user level) doesn't red the whole pipeline.
         # The Wasm artifact still built successfully; deploy just didn't ship.
         continue-on-error: true
-        env:
-          CF_TOKEN_PRESENT: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && 'true' || 'false' }}
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -302,15 +368,34 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || 'ce3f0ef57641c98d52af95c069bbb6a2' }}
           command: pages deploy dist --project-name=${{ inputs.cf_project_name }} --branch=${{ inputs.cf_branch }}
 
-      - name: Cloudflare deploy skipped notice
-        if: steps.guard.outputs.supported == 'true' && github.event_name == 'push' && env.CF_TOKEN_PRESENT == 'false'
-        env:
-          CF_TOKEN_PRESENT: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && 'true' || 'false' }}
+      # The deploy is continue-on-error, and it is gated, so BOTH "never ran" and
+      # "ran and failed" leave the job green. The old notice covered exactly one
+      # of those (missing token, on a push) and was itself skipped in every other
+      # case — so the most common way to ship nothing announced nothing. Say
+      # which of the three happened, every time, and publish it as an output so
+      # the caller can act on it instead of inferring from the job's colour.
+      - name: Report deploy result
+        id: cf_result
+        if: steps.guard.outputs.supported == 'true'
+        shell: bash
         run: |
-          echo "::notice::skipped: CLOUDFLARE_API_TOKEN not present - built dist/ but did not deploy. Provision org secret to enable."
+          set -euo pipefail
+          if [ '${{ steps.cf_deploy.outcome }}' = 'success' ]; then
+            echo "deployed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::deployed ${{ inputs.product }} to Cloudflare Pages project '${{ inputs.cf_project_name }}'"
+          elif [ '${{ steps.gate.outputs.deploy }}' = 'true' ]; then
+            echo "deployed=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Cloudflare Pages deploy FAILED for '${{ inputs.cf_project_name }}' — the build is green but NOTHING shipped."
+          else
+            echo "deployed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::did not deploy: ${{ steps.gate.outputs.reason }} — built dist/ but NOTHING shipped."
+          fi
 
+      # Gated on an ACTUAL deploy, not on the event: the manifest advertises what
+      # is live, and publishing it for a run that shipped nothing would describe
+      # a release that does not exist.
       - name: Dispatch manifest update
-        if: steps.guard.outputs.supported == 'true' && github.event_name == 'push' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
+        if: steps.cf_result.outputs.deployed == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
         # Continue on error — the manifest update is a nice-to-have; token may
         # lack cross-repo dispatch permission. Main artifact already built.
         continue-on-error: true
