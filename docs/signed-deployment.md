@@ -12,7 +12,23 @@ runbook + status board.
   `ANDROID_SIGNING_KEYSTORE` org secret into those env vars.
 - **iOS / macOS:** **portable Fastlane Match + GitHub-secret certs** (not runner login-keychain).
 - **Supply chain:** Maven artifacts GPG-signed (sdk/core/agent), server/host containers cosign-signed
-  (keyless OIDC) + SLSA provenance, web bundles SLSA-attested.
+  (keyless OIDC) + SLSA provenance, web bundles SLSA-attested — **but see the warning below: no web
+  attestation has ever actually been minted.**
+
+> **SLSA attestation is wired everywhere and produces nothing today.** `gh api orgs/Tanvrit` reports
+> `plan.name = "free"`, and GitHub artifact attestations require a paid plan for private repos. Every
+> `actions/attest-build-provenance` step in the fleet therefore fails with
+> `Failed to persist attestation: Feature not available for the Tanvrit organization`, and every one
+> is `continue-on-error`, so the runs stay green and the failure is invisible unless you open the log.
+> It has failed on **every run since the step was introduced** — the earliest wedding release-web runs
+> carrying it (2026-07-18, 2026-07-19) show the byte-identical error, and so does the 2026-08-22 run
+> that a later note wrongly recorded as the last success. Zero attestations exist. Same billing
+> condition as the GHP publish 402s and the Actions artifact-storage quota.
+>
+> Nothing consumes an attestation — no deploy, verification or release gate reads one — so nothing is
+> operationally broken. What is missing is the control itself. The steps are deliberately left in
+> place rather than disabled, so the moment the org moves off the free plan they begin minting with
+> no code change. Until then this document must not be read as saying web bundles are attested.
 
 ## Canonical org secret set
 
@@ -106,7 +122,7 @@ Remediation sequence (owner-driven — do NOT untrack before rotating, and histo
 | P0 fix `ai` macOS env-var name mismatch | **done** |
 | P1 Android — `ai`, `friendly`, `desipops`, `mandee-business`, `store`, `swyft`, `wedding`, `school`, `auditor`, `compute` all → `RELEASE_STORE_*`; committed+pushed; `store`/`swyft` retargeted `:composeApp`→`:androidApp`; `friendly`/`school` Play packageName fixed | **code done + configs validated** (ai/swyft/wedding green) — end-to-end signed-AAB verify after org secret set |
 | P3 app-side — macOS `signing{}` block added to 12 desktop apps (`swyft`,`tanvrit`,`friendly`,`wedding`,`admin`,`automator`,`compute`,`market`,`mandee-business`,`auditor`,`school`,`desipops`) reading `SIGNING_IDENTITY` | **done + pushed** — wedding/school configs validated |
-| P6 wiring — web SLSA on ALL web callers: template callers got `permissions:{id-token,attestations}`; standalone callers `tanvrit`/`ai`/`mandee-business` got an `attest-build-provenance` step on their built dir | **done + pushed** (only Firebase-hosted `desipops` left — optional) |
+| P6 wiring — web SLSA on ALL web callers: template callers got `permissions:{id-token,attestations}`; standalone callers `tanvrit`/`ai`/`mandee-business` got an `attest-build-provenance` step on their built dir | **wiring done + pushed**, but **minting blocked on the org plan** — the step errors on every run and is `continue-on-error`, so no attestation has ever been produced. Eight live copies of the step: `artifactory/release-web-template.yml`, `tanvrit/deploy.yml`, `host/deploy-origin.yml`, `ai`/`mandee-business`/`lekhita` `release-web.yml`, `server/server-deploy.yml`, `server/deploy-cloudrun.yml`. Self-heals on plan upgrade. (Firebase-hosted `desipops` still unwired — optional.) |
 | Template alias-awareness (fix `school`-style module/dir alias) — android on `main` (5032d8d), ios/macos on `signing/templates` (a1ed651) | **done** |
 | Non-git-repo dirs: `bharat-online`, `tackll`, `madison-geeks`, `artistic-salon-spa` | **edited** — not git repos; owner must `git init`/create GitHub repo + commit the working-tree edits |
 | P2 iOS Match + P3 macOS secrets + P6 web SLSA (`artifactory` templates, additive) | **branch `signing/templates`** (a1ed651) — yaml-validated; app-side ready (all apps declare iosArm64 + have xcodeproj) |
