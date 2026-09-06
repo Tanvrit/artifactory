@@ -77,14 +77,20 @@ on:
 jobs:
   release-web:
     name: Web (Cloudflare Pages)
-    # Linux self-hosted runner down 2026-07 — macOS fallback; revert to [Linux]
-    # when it's back (mirrors the per-repo switch in app-main cc08cd5). The macOS
-    # runner CAN build the web target (Gradle Wasm + Node + wrangler are all
-    # cross-platform); the assembly steps below were made OS-portable (no GNU-only
-    # `sed -i` / `xargs -r`) so a macOS run produces a byte-identical dist.
+    # `xbuild` is a capability label carried by BOTH the Linux self-hosted runners
+    # and the macOS self-hosted runner (but NOT the Windows node, which stays
+    # reserved for release-windows MSI packaging — see e9bf855). Targeting it lets
+    # the web deploy run on whichever of Linux/macOS is idle, so a busy or offline
+    # Linux runner no longer stalls the deploy, while still keeping Windows out.
+    # GitHub label-matching is AND-only, so a single shared label is the only way
+    # to express "Linux OR macOS, never Windows". The build (Gradle Wasm + Node +
+    # wrangler) and the assembly steps below are OS-portable (no GNU-only
+    # sed/xargs) so a macOS run produces a byte-identical dist.
+    # NOTE: each Linux + the macOS runner must carry the `xbuild` label
+    # (Settings → Actions → Runners → runner → Labels → add `xbuild`).
     runs-on:
       group: tanvrit
-      labels: [macos]
+      labels: [xbuild]
     steps:
       - uses: actions/checkout@v4
 
