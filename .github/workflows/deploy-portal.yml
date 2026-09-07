@@ -37,7 +37,10 @@ jobs:
       # Windows. Retargeted 2026-08-22 from ubuntu-latest — hosted runners are
       # not used anywhere in this org.
       group: tanvrit
-      labels: [self-hosted, Linux]
+      # 2026-09-07: temporarily routed to macOS. Every self-hosted Linux runner in
+      # the `tanvrit` group is out of disk - jobs die in "Set up JDK 21" with ENOSPC
+      # ("Free space left: 0 MB"). Revert to the Linux label once the pool is healthy.
+      labels: [self-hosted, macOS]
     # A job that cannot be scheduled, or that wedges mid-build, must fail fast and
     # loud rather than masquerade as "in progress" for a day. Observed comparable
     # Next.js release builds in the fleet run 2-17 min (52 min worst case); 30 leaves
