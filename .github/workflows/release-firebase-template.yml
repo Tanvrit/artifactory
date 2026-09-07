@@ -81,7 +81,7 @@ jobs:
       # Linux self-hosted runners back online 2026-07-11 — this is the Kotlin/Wasm + npm build
       # used by release-web-template.yml (OS-agnostic, no macOS/Xcode dependency); reverted from
       # the outage-era macOS fallback to free up scarce macOS capacity for iOS/macOS builds.
-      labels: [self-hosted, Linux]
+      labels: [self-hosted, macOS]
     # Reusable template: `runs-on` resolves against the CALLING repository's runners,
     # not artifactory's, so the self-hosted request here is satisfiable and is left
     # alone. What was missing is a ceiling — without `timeout-minutes` a wedged job
