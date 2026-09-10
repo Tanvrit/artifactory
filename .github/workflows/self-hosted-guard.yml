@@ -1,0 +1,42 @@
+# Self-hosted-runner guard.
+#
+# Org policy, 2026-09-11: no workflow in any Tanvrit repo may name a
+# GitHub-hosted image. The trigger for the policy was two Standard
+# GitHub-hosted runners found billing against the org while every workflow
+# header involved described itself as self-hosted — each had a real, local,
+# well-documented reason (a missing toolchain, an offline box), which is
+# exactly why prose could not hold the line and a gate can.
+#
+# Path-filtered on purpose: it only runs when a workflow or the script itself
+# changes, so it adds no noise to ordinary pushes and triggers nothing else.
+name: Self-hosted runner guard
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/check-self-hosted-runners.sh'
+  push:
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/check-self-hosted-runners.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: No GitHub-hosted runners
+    runs-on:
+      group: tanvrit
+      labels: [self-hosted, Linux, X64]
+    timeout-minutes: 5
+    defaults:
+      run:
+        # Declared, never inherited: the `tanvrit` group is heterogeneous.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check every job runs on a self-hosted runner
+        run: bash scripts/check-self-hosted-runners.sh

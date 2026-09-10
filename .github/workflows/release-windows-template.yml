@@ -78,21 +78,54 @@ on:
 jobs:
   build-windows:
     name: Windows x64
-    # Hosted windows-latest, NOT the fleet's self-hosted box, until the box's
-    # runner service is reconfigured: it logs on as NetworkService, a
-    # non-interactive session where WiX light's ICE validation cannot run —
-    # every fleet MSI build ever died there with light exit 216 while the
-    # same light.exe runs fine interactively (probe evidence in run
-    # 33002809360). To return to self-hosted: change the service to log on
-    # as a real user, prove one green MSI, then restore
-    # `runs-on: {group: tanvrit, labels: [windows]}`.
-    runs-on: windows-latest
+    # Self-hosted only — org policy 2026-09-11: no workflow in any Tanvrit
+    # repo may name a GitHub-hosted image. This job was the exception with the
+    # best reason in the whole workspace, and moving it has a KNOWN COST that
+    # is recorded here rather than discovered by whoever cuts the next release.
+    #
+    # It ran on hosted `windows-latest` because the fleet's Windows box runs
+    # its runner service as NetworkService — a non-interactive session where
+    # WiX light's ICE validation cannot run. Every fleet MSI build ever
+    # attempted died there with `light` exit 216, while the same light.exe
+    # succeeds interactively on that machine (probe evidence: run
+    # 33002809360). Nothing about that has changed, so THIS JOB IS EXPECTED TO
+    # FAIL with exit 216 until the underlying fix lands.
+    #
+    # The fix is one operator action on the box, not a code change:
+    #   1. services.msc -> the GitHub Actions runner service -> Log On tab
+    #   2. switch from NetworkService to a real user account with a desktop
+    #      session, restart the service
+    #   3. dispatch this workflow once and confirm a green MSI
+    #
+    # Until then the "Diagnose WiX ICE preflight" step below turns the exit
+    # 216 into a legible message instead of a raw linker error, because a
+    # release engineer hitting this deserves to be told the cause in the log
+    # rather than have to find this comment.
+    runs-on:
+      group: tanvrit
+      labels: [self-hosted, windows]
     # Ceiling: without `timeout-minutes` a wedged job inherits GitHub's 6h
     # default (and, if ever back on self-hosted, holds the fleet's single
     # Windows runner that whole time, blocking every other repo behind it).
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+
+      # WiX light's ICE validation instantiates the Windows Installer COM
+      # server, which needs an interactive desktop. Under a NetworkService
+      # logon there is none, and light dies with exit 216 — an error that
+      # reads like a corrupt object file and is not one. Say so up front.
+      - name: Diagnose WiX ICE preflight
+        shell: bash
+        run: |
+          echo "runner:  $RUNNER_NAME"
+          echo "user:    ${USERNAME:-${USER:-unknown}}"
+          echo "session: ${SESSIONNAME:-<none>}"
+          if [ -z "${SESSIONNAME:-}" ] || [ "${USERNAME:-}" = "$(hostname)\$" ]; then
+            echo "::warning title=WiX ICE validation will likely fail::This runner has no interactive session (SESSIONNAME empty / machine-account logon). WiX light exits 216 here — see the runs-on comment in this file for the one-time service reconfiguration that fixes it. The MSI step below is expected to fail until then."
+          else
+            echo "Interactive session present — ICE validation should run."
+          fi
 
       - name: Verify target supported
         id: guard
