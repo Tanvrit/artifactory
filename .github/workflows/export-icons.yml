@@ -56,9 +56,9 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           # Key the cache on the lockfile, not package.json — `npm ci` below refuses to
           # run without scripts/package-lock.json anyway, and hashing package.json
