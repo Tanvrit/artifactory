@@ -164,7 +164,17 @@ jobs:
         if: steps.guard.outputs.supported == 'true'
         with:
           node-version: '24'
-          cache: 'npm'
+          # Every caller of this template keeps its landing site in a SUBDIRECTORY
+          # (`web/`, `marketplace-web/`) and none has a lock file at the repo root, so
+          # a bare `cache: 'npm'` aborts the job before anything builds:
+          # "Dependencies lock file is not found in <workspace>. Supported file
+          # patterns: package-lock.json,npm-shrinkwrap.json,yarn.lock"
+          # (tanvrit/app-main run 35520648038, "Release Web", 2026-09-20).
+          # Point the cache at the lock file next to the `npm ci` further down, and
+          # switch caching off for the callers that build no landing site at all
+          # (mandee-business, lekhita, control pass landing_build_dir: '').
+          cache: ${{ inputs.landing_build_dir != '' && 'npm' || '' }}
+          cache-dependency-path: ${{ inputs.landing_build_dir }}/package-lock.json
       - uses: gradle/actions/setup-gradle@v4
         if: steps.guard.outputs.supported == 'true'
 
