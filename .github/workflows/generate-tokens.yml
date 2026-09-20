@@ -28,10 +28,25 @@ jobs:
       # Windows. Retargeted 2026-08-22 from ubuntu-latest — hosted runners are
       # not used anywhere in this org.
       group: tanvrit
-      # 2026-09-07: temporarily routed to macOS. Every self-hosted Linux runner in
-      # the `tanvrit` group is out of disk - jobs die in "Set up JDK 21" with ENOSPC
-      # ("Free space left: 0 MB"). Revert to the Linux label once the pool is healthy.
-      labels: [self-hosted, macOS]
+      # 2026-09-07 routed this to macOS because every self-hosted Linux runner in
+      # the `tanvrit` group was out of disk - jobs died in "Set up JDK 21" with
+      # ENOSPC ("Free space left: 0 MB") - and said to revert "once the pool is
+      # healthy". It is, so this is that revert, measured rather than assumed:
+      #   * tanvrit/sdk "Runner - Health Check" run 35509727991 (2026-09-20 12:07Z,
+      #     runner9 / host "Parmar") reports `Disk: /dev/md3 98G 58G 36G 62% /`,
+      #     `Free: 35 GB` - well over that workflow's own 15 GB assertion.
+      #   * This repo's guard job ran green on [self-hosted, Linux, X64] the same
+      #     day in 6 seconds (run 35520640209).
+      # The macOS pool, meanwhile, is saturated by the fleet's KMP/iOS release
+      # builds, so every macOS-labelled job in this repo has sat QUEUED instead of
+      # running - 35520640248 (Deploy Portal) and 35520640265 (Audit) were both
+      # still queued an hour after dispatch on 2026-09-20. This job is Node + git
+      # over the public internet: no Xcode, no JDK, no signing material, nothing
+      # that wants a mac.
+      #
+      # X64 is pinned, not just `Linux`: the group holds one aarch64 Linux node and
+      # an unpinned job has landed on the wrong host before (41da95c).
+      labels: [self-hosted, Linux, X64]
     # Token generation is seconds of work. 15 bounds a hang without ever biting.
     timeout-minutes: 15
     steps:
