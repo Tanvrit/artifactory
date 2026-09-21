@@ -196,16 +196,26 @@ jobs:
             exit 1
           fi
 
-          # Two fixes over the previous version of this step:
+          # Three fixes over earlier versions of this step:
           #  1. `--remote`. Wrangler v4 defaults `r2 object put` to LOCAL storage — it
           #     writes into ./.wrangler and exits 0. The upload would have "succeeded"
           #     without a byte reaching the bucket. Verified against wrangler 4.80.0:
-          #     `r2 object get tanvrit-artifacts/catalog.json` says "key does not exist",
-          #     the same command with --remote returns the real object.
+          #     `r2 object get tanvrit-artifacts/catalog.json` (the key this step used
+          #     at the time — see 3 below) says "key does not exist", the same command
+          #     with --remote returns the real object.
           #  2. Paths. This step used to run with `working-directory: worker`, where
           #     `manifests/` does not exist (there is no worker/manifests). Run from the
           #     repo root instead; `npx wrangler@4` needs no local node_modules, and the
           #     `r2 object` subcommand needs no wrangler config.
+          #  3. The catalog's R2 KEY. This wrote the catalog to bucket root
+          #     (`tanvrit-artifacts/catalog.json`), but every reader in this repo asks
+          #     R2 for `manifests/catalog.json`: worker/src/index.js:124, the Pages
+          #     function functions/catalog.json.js:24, portal/src/lib/manifests.ts:30,
+          #     and CLAUDE.md's own key list. So a fully successful mirror still left
+          #     `GET https://artifacts.tanvrit.com/catalog.json` answering
+          #     `{"error":"Not found: manifests/catalog.json"}` — measured 2026-09-21.
+          #     The per-product keys two lines below were already correct; only the
+          #     catalog was writing to a key nothing reads.
           put() {
             npx --yes wrangler@4 r2 object put "$1" \
               --file "$2" \
@@ -215,7 +225,7 @@ jobs:
 
           put "tanvrit-artifacts/manifests/${PRODUCT}/latest.json"        "manifests/${PRODUCT}/latest.json"
           put "tanvrit-artifacts/manifests/${PRODUCT}/${VERSION}.json"    "manifests/${PRODUCT}/${VERSION}.json"
-          put "tanvrit-artifacts/catalog.json"                            "manifests/catalog.json"
+          put "tanvrit-artifacts/manifests/catalog.json"                  "manifests/catalog.json"
 
       - name: Verify R2 objects are actually readable
         env:
