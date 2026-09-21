@@ -45,14 +45,25 @@ jobs:
       # so it takes one of the four macOS runners rather than the Linux fleet.
       group: tanvrit
       # X64 pinned 2026-09-21. Unpinned `[self-hosted, macOS]` is the pattern
-      # 41da95c already burned us on once, and the mac pool is not homogeneous:
-      # of the four macs only `macmini` (Amiteshs-Mac-mini) is online, and its
-      # runner agent is the x86_64 build — run 35558851083 resolved the Node
-      # toolchain to `_work/_tool/node/24.21.0/x64`. So X64 is the label it
-      # actually advertises. (The silicon underneath IS arm64 — Homebrew poured
-      # portable-ruby-4.0.7.arm64_big_sur on that same run. That mismatch is the
-      # Rosetta problem the Inkscape step below now handles, and it is why
-      # pinning ARM64 here would match nothing today.)
+      # 41da95c already burned us on once, and the mac pool is not homogeneous.
+      # Measured, not assumed: `macmini` (Amiteshs-Mac-mini) advertises exactly
+      # `self-hosted,macOS,X64` — it served tanvrit/ai run 35519736471's
+      # "Build and publish macOS .dmg (x64)" leg under that label set on
+      # 2026-09-20, and run 35558445109 here landed on it under this pin.
+      #
+      # ARM64 is NOT an empty set — that would be the easy wrong reason to pick
+      # X64. Two Apple Silicon runners are live and taking work: `macbook second`
+      # (tanvrit/ai 35519736471, arm64 .dmg leg, success, 2026-09-20) and
+      # `Viveks-MacBook-Pro` (tanvrit/sdk 35570123137, publish-ios, 2026-09-21).
+      # X64 is chosen because those two are the fleet's release-critical macs,
+      # saturated by the KMP/iOS builds, and a 45-minute icon regeneration has no
+      # business competing with a release for them. macmini is the spare.
+      #
+      # The cost of that choice is real and is paid in the Inkscape step below:
+      # macmini's silicon is arm64 (Homebrew poured
+      # portable-ruby-4.0.7.arm64_big_sur) while its runner agent is the x86_64
+      # build (run 35558851083 resolved Node to _work/_tool/node/24.21.0/x64), so
+      # every step here runs translated under Rosetta 2. That step handles it.
       labels: [self-hosted, macOS, X64]
     # Ten products x every platform size, with Inkscape rasterisation, plus a cask
     # install. Generous, but it must bound a hang: this used to burn 24h per run.
