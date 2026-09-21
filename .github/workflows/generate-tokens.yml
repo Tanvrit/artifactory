@@ -25,6 +25,19 @@ on:
 permissions:
   contents: write
 
+# The commit step pushes to main, and the generator stamps a fresh
+# "last regenerated <ISO timestamp>" into all four outputs, so EVERY run produces a
+# commit. Two overlapping runs therefore race: the second one's checkout is already
+# behind by the time it pushes and git-auto-commit-action dies with
+#   ! [rejected] main -> main (non-fast-forward)
+#   Error: Invalid status code: 1
+# (run 35558493593, 2026-09-21, losing to 35558458999). Serialise instead.
+# cancel-in-progress stays false: a cancelled run leaves the outputs unregenerated,
+# and the queued one regenerates from the newer main anyway.
+concurrency:
+  group: generate-tokens
+  cancel-in-progress: false
+
 jobs:
   tokens:
     name: Generate Platform Token Outputs
