@@ -14,6 +14,26 @@ on:
         required: false
         default: ''
 
+# The "Commit generated icons" step pushes regenerated assets back to main.
+# This repo's default workflow permission is READ
+# (`actions/permissions/workflow` -> default_workflow_permissions: "read"), so
+# git-auto-commit-action's push 403s:
+#   remote: Permission to Tanvrit/artifactory.git denied to github-actions[bot].
+#   fatal: unable to access 'https://github.com/Tanvrit/artifactory/':
+#   The requested URL returned error: 403
+#   Error: Invalid status code: 128
+# — run 35578445109 (2026-09-21), which generated and verified every icon
+# correctly and then could not commit a byte of it. update-manifest.yml and
+# generate-tokens.yml both already carry this identical declaration for the
+# identical reason; this is the third and last workflow in the repo that
+# commits without having asked for the grant.
+#
+# Scoped to contents only: nothing here needs packages, issues or pull-requests
+# write. The "Notify product repos" step reaches OTHER repos and cannot be
+# served by this token at all — it uses ARTIFACTS_REPO_TOKEN.
+permissions:
+  contents: write
+
 jobs:
   generate:
     name: Generate Platform Icons
