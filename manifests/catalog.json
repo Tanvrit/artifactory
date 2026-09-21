@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-09-20T16:30:32.355Z",
+  "updated_at": "2026-09-21T03:33:58.552Z",
   "products": {
     "friendly": {
       "version": "1.0.0",
@@ -22,7 +22,7 @@
     "swyft": {
       "version": "c57a95fdd22dc38303194ae8246d7c23cc376e77",
       "build": 77,
-      "released_at": "2026-09-20T21:55:42+05:30",
+      "released_at": "2026-09-21T03:33:56Z",
       "manifest_url": "https://artifacts.tanvrit.com/swyft/latest.json"
     },
     "bharat-bandhu": {
