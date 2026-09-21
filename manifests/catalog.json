@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-09-21T04:01:26.624Z",
+  "updated_at": "2026-09-21T04:28:06.101Z",
   "products": {
     "friendly": {
       "version": "1.0.0",
@@ -20,9 +20,9 @@
       "manifest_url": "https://artifacts.tanvrit.com/mandee/latest.json"
     },
     "swyft": {
-      "version": "75df94dcdeb91043fd5a6eba5e6020eddc614b08",
-      "build": 78,
-      "released_at": "2026-09-21T09:28:54+05:30",
+      "version": "34ff1bb9f86223709d2cd58cc4f04df89bc2fff0",
+      "build": 79,
+      "released_at": "2026-09-21T09:53:17+05:30",
       "manifest_url": "https://artifacts.tanvrit.com/swyft/latest.json"
     },
     "bharat-bandhu": {
