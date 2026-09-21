@@ -216,11 +216,54 @@ jobs:
           #     `{"error":"Not found: manifests/catalog.json"}` — measured 2026-09-21.
           #     The per-product keys two lines below were already correct; only the
           #     catalog was writing to a key nothing reads.
+          # DIAGNOSTIC PREFLIGHT — warning only, never fails the step.
+          #
+          # `npx wrangler@4 r2 object put` dies on this runner INSIDE ITS OWN ERROR
+          # FORMATTER: whatever the R2 API answers, the log shows only
+          #   Error: The service was stopped: write EPIPE
+          #       at .../node_modules/esbuild/lib/main.js:1078:34
+          #   (error handler also failed: Error: The service is no longer running ...)
+          # and exit 1 — observed identically in runs 35522928789 (2026-09-20,
+          # wrangler 4.135.0) and 35557935305 (2026-09-21, same). The same wrangler
+          # version formats the same class of error correctly off-runner, so the crash
+          # is the runner's esbuild child, not the API. Net effect: the real cause is
+          # unreadable, and someone has to guess. The last time it WAS readable was
+          # export-icons run 31731753529 (wrangler 4.86.0), which said:
+          #   403 Forbidden; {"code":10000,"message":"Authentication error"}
+          # i.e. a credential problem, not an R2 outage.
+          #
+          # So ask the R2 API directly first and print ITS message. This is additive:
+          # it never fails the step (a token could in principle carry object-write
+          # without account-level bucket read), it only replaces a blank with a cause.
+          # Secrets are masked by Actions; only the response body is echoed.
+          probe_code=$(curl -sS -o /tmp/cf-r2-probe.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/r2/buckets/tanvrit-artifacts" \
+            || echo "000")
+          if [ "$probe_code" = "200" ]; then
+            echo "R2 preflight: credential can read bucket tanvrit-artifacts (HTTP 200)."
+          else
+            echo "::warning title=R2 credential preflight failed::HTTP ${probe_code} from the R2 API. Body: $(tr -d '\n' < /tmp/cf-r2-probe.json)"
+          fi
+
           put() {
             npx --yes wrangler@4 r2 object put "$1" \
               --file "$2" \
               --content-type "application/json" \
-              --remote
+              --remote && return 0
+
+            # wrangler's stderr is unusable here (see the preflight note). Its debug
+            # log file is written before the crash, so it still holds the real
+            # response. Scrub anything header-shaped on the way out.
+            echo "::error::wrangler could not PUT $1 — see the preflight warning above and the wrangler debug log that follows."
+            local log
+            log=$(ls -t "$HOME"/.config/.wrangler/logs/*.log "$HOME"/.wrangler/logs/*.log 2>/dev/null | head -1 || true)
+            if [ -n "$log" ]; then
+              grep -vi -e 'authorization' -e 'bearer' -e 'api[_-]token' "$log" | tail -60
+            else
+              echo "(no wrangler debug log found)"
+            fi
+            return 1
           }
 
           put "tanvrit-artifacts/manifests/${PRODUCT}/latest.json"        "manifests/${PRODUCT}/latest.json"

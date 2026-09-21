@@ -10,6 +10,21 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# The "Commit generated outputs" step below pushes the regenerated token files back
+# to main. This repo's default workflow permission is READ
+# (`actions/permissions/workflow` -> default_workflow_permissions: "read"), so
+# git-auto-commit-action's push 403s without this block:
+#   fatal: unable to access 'https://github.com/Tanvrit/artifactory/':
+#   The requested URL returned error: 403
+#   Error: Invalid status code: 128
+# — run 35557937492 (2026-09-21), and the same failure is why this workflow has been
+# red since its last run on 2026-04-01. update-manifest.yml already carries the
+# identical declaration for the identical reason; this is not a new grant, it is the
+# missing half of one. Scoped to contents only: nothing here needs packages, issues
+# or pull-requests write.
+permissions:
+  contents: write
+
 jobs:
   tokens:
     name: Generate Platform Token Outputs
