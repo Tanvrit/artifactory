@@ -44,7 +44,16 @@ jobs:
       # runners are not used anywhere in this org. This job needs macOS tooling,
       # so it takes one of the four macOS runners rather than the Linux fleet.
       group: tanvrit
-      labels: [self-hosted, macOS]
+      # X64 pinned 2026-09-21. Unpinned `[self-hosted, macOS]` is the pattern
+      # 41da95c already burned us on once, and the mac pool is not homogeneous:
+      # of the four macs only `macmini` (Amiteshs-Mac-mini) is online, and its
+      # runner agent is the x86_64 build — run 35558851083 resolved the Node
+      # toolchain to `_work/_tool/node/24.21.0/x64`. So X64 is the label it
+      # actually advertises. (The silicon underneath IS arm64 — Homebrew poured
+      # portable-ruby-4.0.7.arm64_big_sur on that same run. That mismatch is the
+      # Rosetta problem the Inkscape step below now handles, and it is why
+      # pinning ARM64 here would match nothing today.)
+      labels: [self-hosted, macOS, X64]
     # Ten products x every platform size, with Inkscape rasterisation, plus a cask
     # install. Generous, but it must bound a hang: this used to burn 24h per run.
     timeout-minutes: 45
@@ -66,7 +75,58 @@ jobs:
           cache-dependency-path: scripts/package-lock.json
 
       - name: Install Inkscape (for Wedding icon SVG filters)
-        run: brew install --cask inkscape
+        run: |
+          set -euo pipefail
+
+          if command -v inkscape >/dev/null 2>&1; then
+            echo "inkscape already present: $(command -v inkscape)"
+            exit 0
+          fi
+
+          # `brew install --cask inkscape` died outright here:
+          #   ##[error]Cannot install under Rosetta 2 in ARM default prefix (/opt/homebrew)!
+          #     arch -arm64 brew install ...
+          #   To install under x86_64, install Homebrew into /usr/local.
+          # — run 35558851083 (2026-09-21), runner `macmini`.
+          #
+          # The host is Apple Silicon (Homebrew poured
+          # portable-ruby-4.0.7.arm64_big_sur) but the Actions runner agent on it
+          # is the x86_64 build, so every `run:` step executes translated under
+          # Rosetta 2. Homebrew refuses to operate on its native arm64 prefix from
+          # an emulated shell, and prints the exact remedy. Take it.
+          BREW="$(command -v brew || true)"
+          if [ -z "$BREW" ]; then
+            echo "::error::Homebrew is not installed on this runner, so Inkscape cannot be installed."
+            exit 1
+          fi
+
+          RUN_BREW=("$BREW")
+          if [ "$(/usr/sbin/sysctl -in sysctl.proc_translated 2>/dev/null || echo 0)" = "1" ]; then
+            echo "Shell is translated (Rosetta 2) — re-exec'ing brew natively as arm64."
+            RUN_BREW=(arch -arm64 "$BREW")
+          fi
+
+          "${RUN_BREW[@]}" install --cask inkscape
+
+          # The cask links its CLI into $(brew --prefix)/bin. Put that on PATH for
+          # the later steps explicitly: this shell's architecture is not the one
+          # brew is installed for, so the prefix is not guaranteed to be inherited.
+          BREW_BIN="$("${RUN_BREW[@]}" --prefix)/bin"
+          if [ -d "$BREW_BIN" ]; then
+            echo "$BREW_BIN" >> "$GITHUB_PATH"
+          fi
+
+          # Assert, do not assume. generate-icons.js:169-181 catches a missing
+          # `inkscape` binary and falls back to sharp with only a log line, and
+          # sharp cannot render the SVG filters the Wedding icon is built from —
+          # so an Inkscape that is installed-but-invisible produces a GREEN run
+          # that ships a wrong icon. That is the one outcome worse than this step
+          # failing.
+          if ! command -v inkscape >/dev/null 2>&1 && [ ! -x "$BREW_BIN/inkscape" ]; then
+            echo "::error::Inkscape is not on PATH after installing the cask. The Wedding icon would silently fall back to sharp, which cannot render its SVG filters."
+            exit 1
+          fi
+          echo "inkscape resolved to: $(command -v inkscape || echo "$BREW_BIN/inkscape")"
 
       - name: Install dependencies
         run: npm ci
