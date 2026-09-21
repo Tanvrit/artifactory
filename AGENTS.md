@@ -83,7 +83,16 @@ fires on `repository_dispatch: update-manifest` (dispatched by each platform's r
 `@viveksingh`). `branding/tokens/generated/` and `branding/icons/dist/` are **generated outputs**
 (CODEOWNER `@tanvrit-bot`) — never hand-edit; run `npm run generate:tokens` / `generate:icons` and
 commit the result. `scripts/sync-to-apps.js` propagates generated tokens/icons into the platform repos.
-The `@tanvrit/tokens` npm package (scripts/package.json) publishes generated tokens to GitHub Packages.
+The `@tanvrit/tokens` package (scripts/package.json) is **not published anywhere** as of
+2026-09-21. It used to `npm publish` to GitHub Packages from `generate-tokens.yml`; that step
+was removed and the package marked `private: true`, because GitHub Packages is not a publish
+target for this org on any repo or platform (everything goes to R2, served through
+`maven.tanvrit.com` / `dl.tanvrit.com`) and because the org is over its Packages quota, so
+every PUT to `*.pkg.github.com` answers 402. Nothing consumed it — `@tanvrit/tokens` has zero
+dependents across the workspace. The live distribution path for generated tokens is the
+committed `branding/tokens/generated/**` tree plus `scripts/sync-to-apps.js`. An R2-hosted
+replacement (`npm pack` + `wrangler r2 object put`) is open, blocked on an R2-scoped CI
+credential — see `.github/workflows/generate-tokens.yml`.
 
 ## Release-template ownership (cross-repo blast radius)
 

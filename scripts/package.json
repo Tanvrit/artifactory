@@ -4,11 +4,7 @@
   "description": "Tanvrit Design Tokens — CSS, TypeScript, Kotlin, Swift",
   "main": "index.js",
   "types": "index.d.ts",
-  "private": false,
-  "publishConfig": {
-    "registry": "https://npm.pkg.github.com",
-    "access": "public"
-  },
+  "private": true,
   "repository": {
     "type": "git",
     "url": "https://github.com/tanvrit/artifactory.git"

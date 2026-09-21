@@ -106,11 +106,35 @@ jobs:
           commit_user_name: "tanvrit-bot"
           commit_user_email: "bot@tanvrit.com"
 
-      - name: Publish @tanvrit/tokens to GitHub Packages
-        if: github.ref == 'refs/heads/main'
-        run: |
-          cd scripts
-          VERSION=$(node -e "const t=require('./package.json'); console.log(t.version)")
-          npm publish --registry https://npm.pkg.github.com
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # REMOVED 2026-09-21: "Publish @tanvrit/tokens to GitHub Packages".
+      #
+      # It ran `npm publish --registry https://npm.pkg.github.com` with
+      # NODE_AUTH_TOKEN=${{ github.token }} and died on
+      #   npm error code ENEEDAUTH
+      #   npm error need auth This command requires you to be logged in to
+      #   https://npm.pkg.github.com/
+      # (run 35558747427, 2026-09-21) — actions/setup-node was never given
+      # `registry-url`, so no .npmrc bound NODE_AUTH_TOKEN to that registry.
+      #
+      # It is NOT being re-plumbed, for two independent reasons:
+      #
+      #  1. Policy. GitHub Packages is not a publish target for this org on any
+      #     repo, platform or target — every artifact goes to R2 and is served
+      #     through the maven.tanvrit.com / dl.tanvrit.com Workers. Fixing the
+      #     .npmrc would be re-enabling a forbidden target.
+      #  2. It could not succeed anyway. The org is over its Packages quota;
+      #     every PUT to *.pkg.github.com answers 402 Payment Required. A
+      #     working token would have moved the failure from ENEEDAUTH to 402.
+      #
+      # Nothing consumed it: `@tanvrit/tokens` has zero dependents anywhere in
+      # the workspace (grepped across all 60 repos — the only hits are this
+      # file, scripts/package.json, and the two doc mirrors). The real
+      # distribution path for generated tokens is the committed
+      # branding/tokens/generated/** tree above plus scripts/sync-to-apps.js,
+      # which copies it straight into the platform repos.
+      #
+      # OPEN, and owner-blocked: there is no R2 replacement yet, because R2
+      # writes from CI currently 403 (see update-manifest.yml's mirror step).
+      # When an R2-scoped credential exists, the sanctioned replacement is
+      # `npm pack` + `wrangler r2 object put` under an npm/ prefix — not a
+      # registry publish.
