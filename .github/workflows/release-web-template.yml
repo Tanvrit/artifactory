@@ -325,10 +325,13 @@ jobs:
           echo "::notice::Packaged web bundle for provenance → $TARBALL"
 
       # SLSA build-provenance attestation for the web bundle. Best-effort: if the
-      # calling job hasn't granted id-token/attestations write, this fails softly
-      # and the build/deploy still succeed (additive, no new secrets required).
+      # calling job hasn't granted id-token/attestations write, or the org lacks
+      # Advanced Security (required for attestations), this fails softly and the
+      # build/deploy still succeed (additive, no new secrets required).
+      # Disabled for Tanvrit org (no Advanced Security) — re-enable when org
+      # has Advanced Security or repos are made public.
       - name: Attest build provenance (SLSA)
-        if: steps.guard.outputs.supported == 'true' && steps.provenance_pkg.outputs.packaged == 'true'
+        if: false  # steps.guard.outputs.supported == 'true' && steps.provenance_pkg.outputs.packaged == 'true'
         continue-on-error: true
         uses: actions/attest-build-provenance@v1
         with:
