@@ -73,14 +73,15 @@ on:
       runner_labels:
         description: >-
           JSON array of self-hosted runner labels (within the "tanvrit" group) the
-          job may run on. Default ["Linux"] keeps the historical behaviour. Pass
-          ["self-hosted"] to let macOS self-hosted runners pick up the Android build
-          when the Linux runner is busy/offline (labels are AND-matched, so the
-          shared "self-hosted" label is the only way to allow either OS). The
-          Android/Gradle build runs on macOS too, so it is a safe fallback.
+          job may run on. Default ["self-hosted","Linux","X64"]: the Android SDK
+          build-tools (aapt2, d8) are x86-64-only on Linux, and a bare ["Linux"] or
+          ["self-hosted"] also matches the Linux ARM64 runners (GX10), where this
+          build fails. Labels are AND-matched, so keep the X64 label on any Linux
+          override. To route to a Mac instead, pass ["self-hosted","macOS"] (the
+          Android/Gradle build runs on macOS too).
         type: string
         required: false
-        default: '["Linux"]'
+        default: '["self-hosted","Linux","X64"]'
     secrets:
       ANDROID_SIGNING_KEYSTORE:
         description: 'Base64-encoded .jks keystore'
@@ -145,7 +146,7 @@ jobs:
       # Self-hosted runners don't reliably export ANDROID_HOME, so Gradle fails
       # with "SDK location not found". Resolve from the runner env, then standard
       # macOS + Linux install locations, and write local.properties. Covers both
-      # OSes because runner_labels:["self-hosted"] lets this land on either.
+      # OSes because a caller's runner_labels override can route this to macOS.
       - name: Resolve Android SDK location
         if: steps.guard.outputs.supported == 'true'
         shell: bash

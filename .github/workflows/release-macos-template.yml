@@ -160,8 +160,10 @@ jobs:
     runs-on:
       group: tanvrit
       # Genuine macOS build (Xcode signing/notarization, .dmg, App Store Connect upload) — stays
-      # on the self-hosted macOS pool; normalized label to match the "tanvrit" group's runners.
-      labels: [self-hosted, macOS]
+      # on the self-hosted macOS pool. ARM64 is pinned because this job ships the Apple Silicon
+      # DMG (named *-macos-arm64.dmg) and jpackage bundles the host JVM's architecture: the
+      # macmini (X64 runner agent, so an x64 JDK; no Xcode) would ship an x64 app as arm64.
+      labels: [self-hosted, macOS, ARM64]
     # Reusable template: `runs-on` resolves against the CALLING repository's runners,
     # not artifactory's, so the self-hosted macOS request here is satisfiable and is
     # left alone. What was missing is a ceiling — without `timeout-minutes` a wedged

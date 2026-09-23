@@ -73,10 +73,11 @@ jobs:
     name: Linux x64
     runs-on:
       group: tanvrit
-      # Linux self-hosted runners back online 2026-07-11 — this job builds the linux-x64
-      # .deb/.AppImage target itself (apt-get fakeroot/binutils/libfuse2), so it belongs on
-      # Linux; reverted from the outage-era macOS fallback per the comment left in place.
-      labels: [self-hosted, Linux]
+      # This job builds the linux-x64 .deb/.AppImage itself (apt-get fakeroot/binutils/libfuse2,
+      # appimagetool-x86_64, artifacts named *-linux-x64.*), so it must run on an x86-64 Linux
+      # runner. A bare [self-hosted, Linux] also matches the Linux ARM64 runners (GX10), which
+      # have no passwordless sudo and would package arm64 binaries under an x64 name.
+      labels: [self-hosted, Linux, X64]
     # Reusable template: `runs-on` resolves against the CALLING repository's runners,
     # not artifactory's, so the self-hosted request here is satisfiable and is left
     # alone. What was missing is a ceiling — without `timeout-minutes` a wedged job
