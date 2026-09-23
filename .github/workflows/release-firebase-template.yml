@@ -78,10 +78,12 @@ jobs:
     name: Web (Firebase Hosting)
     runs-on:
       group: tanvrit
-      # Linux self-hosted runners back online 2026-07-11 — this is the Kotlin/Wasm + npm build
-      # used by release-web-template.yml (OS-agnostic, no macOS/Xcode dependency); reverted from
-      # the outage-era macOS fallback to free up scarce macOS capacity for iOS/macOS builds.
-      labels: [self-hosted, macOS]
+      # The same Kotlin/Wasm + npm build as release-web-template.yml plus a Firebase Hosting
+      # deploy (a Node action); no step needs macOS or Xcode. Reverted 2026-09-23 from the
+      # 2026-09-07 Linux-disk-outage route to macOS, so it stops queueing behind iOS/macOS
+      # releases on the scarcest runners. X64 is explicit because a bare [self-hosted, Linux]
+      # also matches the Linux ARM64 runners (GX10), which are reserved for JVM tests.
+      labels: [self-hosted, Linux, X64]
     # Reusable template: `runs-on` resolves against the CALLING repository's runners,
     # not artifactory's, so the self-hosted request here is satisfiable and is left
     # alone. What was missing is a ceiling — without `timeout-minutes` a wedged job
@@ -109,6 +111,9 @@ jobs:
           fi
           echo "supported=true" >> "$GITHUB_OUTPUT"
 
+      # No GitHub Actions cache (see release-web-template.yml): the self-hosted
+      # runners keep a persistent GRADLE_USER_HOME and ~/.npm, and Actions-cache
+      # save/restore costs 10-49 minutes per job on them.
       - uses: actions/setup-java@v4
         if: steps.guard.outputs.supported == 'true'
         with: { distribution: zulu, java-version: '21' }
@@ -116,8 +121,11 @@ jobs:
         if: steps.guard.outputs.supported == 'true'
         with:
           node-version: '24'
+          package-manager-cache: false
       - uses: gradle/actions/setup-gradle@v4
         if: steps.guard.outputs.supported == 'true'
+        with:
+          cache-disabled: true
 
       - name: Build Wasm/JS bundle
         if: steps.guard.outputs.supported == 'true'

@@ -67,14 +67,15 @@ on:
       runner_labels:
         description: >-
           JSON array of self-hosted runner labels (within the "tanvrit" group) the
-          job may run on. Default ["Linux"] keeps the historical behaviour. Pass
-          ["self-hosted"] to let macOS self-hosted runners pick up the job when the
-          Linux runner is busy/offline (labels are AND-matched, so a label BOTH
-          OSes carry — self-hosted — is the only way to allow either). The web build
-          is OS-agnostic (Node + Gradle), so macOS is a safe fallback.
+          job may run on. Default ["self-hosted","Linux","X64"]: a bare ["Linux"]
+          or ["self-hosted"] also matches the Linux ARM64 runners (GX10), which are
+          reserved for JVM tests and sit on a Wi-Fi uplink that times out large
+          downloads. Labels are AND-matched, so keep the X64 label on any Linux
+          override. The web build is OS-agnostic (Node + Gradle), so
+          ["self-hosted","macOS"] works too, but Macs are the scarcest runners.
         type: string
         required: false
-        default: '["Linux"]'
+        default: '["self-hosted","Linux","X64"]'
     secrets:
       CLOUDFLARE_API_TOKEN:
         description: 'When absent, the Deploy step is skipped — workflow still builds artifacts.'
@@ -154,29 +155,28 @@ jobs:
           fi
           echo "supported=true" >> "$GITHUB_OUTPUT"
 
+      # No GitHub Actions cache for Gradle or npm (2026-09-23). Every runner in
+      # this fleet is self-hosted with a persistent GRADLE_USER_HOME and ~/.npm,
+      # so the Actions cache only adds a network round trip: measured on these
+      # runners, the `Post setup-java` gradle-cache save took medians of 573-776s
+      # on the GX10 through this template and up to 2929s on the Macs, and
+      # `setup-node cache: npm` took 604-1243s. npm ci still reads the runner's
+      # local ~/.npm cache. package-manager-cache: false stops setup-node from
+      # turning caching back on when a package.json declares packageManager.
       - uses: actions/setup-java@v5
         if: steps.guard.outputs.supported == 'true'
         with:
           distribution: zulu
           java-version: '21'
-          cache: 'gradle'
       - uses: actions/setup-node@v7
         if: steps.guard.outputs.supported == 'true'
         with:
           node-version: '24'
-          # Every caller of this template keeps its landing site in a SUBDIRECTORY
-          # (`web/`, `marketplace-web/`) and none has a lock file at the repo root, so
-          # a bare `cache: 'npm'` aborts the job before anything builds:
-          # "Dependencies lock file is not found in <workspace>. Supported file
-          # patterns: package-lock.json,npm-shrinkwrap.json,yarn.lock"
-          # (tanvrit/app-main run 35520648038, "Release Web", 2026-09-20).
-          # Point the cache at the lock file next to the `npm ci` further down, and
-          # switch caching off for the callers that build no landing site at all
-          # (mandee-business, lekhita, control pass landing_build_dir: '').
-          cache: ${{ inputs.landing_build_dir != '' && 'npm' || '' }}
-          cache-dependency-path: ${{ inputs.landing_build_dir }}/package-lock.json
+          package-manager-cache: false
       - uses: gradle/actions/setup-gradle@v4
         if: steps.guard.outputs.supported == 'true'
+        with:
+          cache-disabled: true
 
       - name: Build Wasm/JS bundle
         if: steps.guard.outputs.supported == 'true'

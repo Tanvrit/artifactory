@@ -165,8 +165,10 @@ jobs:
     runs-on:
       group: tanvrit
       # Genuine iOS/Xcode build (xcodebuild archive/export, TestFlight upload) — stays on the
-      # self-hosted macOS pool; normalized label to match the "tanvrit" group's macOS runners.
-      labels: [self-hosted, macOS]
+      # self-hosted macOS pool. ARM64 is pinned because the Apple Silicon Macs are the only
+      # runners with Xcode; the macmini (X64 runner agent) has Command Line Tools only, so
+      # the xcodebuild archive/export steps below cannot run there.
+      labels: [self-hosted, macOS, ARM64]
     # Reusable template: `runs-on` resolves against the CALLING repository's runners,
     # not artifactory's, so the self-hosted macOS request here is satisfiable and is
     # left alone. What was missing is a ceiling — without `timeout-minutes` a wedged
