@@ -105,13 +105,32 @@ runs:
         # were already using a day ago, so it does not lower the trust split
         # below where it was; later writes stay per namespace. Lock files are
         # never copied. The .seeded marker makes this happen once per home.
+        #
+        # X64: the old flat per-runner homes turned out to be nearly empty on
+        # some runners (11-13 MB) while /root/.gradle, the shared home every
+        # X64 job used for months, holds the real cache. So X64 takes the
+        # largest candidate, and a home whose first seed was tiny (< 300 MB,
+        # marker v1) is reseeded once (marker .seeded-v2).
+        modules_mb() { if [ -d "$1/caches/modules-2" ]; then du -sm "$1/caches/modules-2" 2>/dev/null | cut -f1; else echo 0; fi; }
         case "$RUNNER_OS/$RUNNER_ARCH" in
-          Linux/X64) seed_src="/var/lib/vz/ci/gradle-home/${RUNNER_NAME:-}"
-                     [ -d "$seed_src/caches/modules-2" ] || seed_src="$HOME/.gradle-ci/${RUNNER_NAME:-}" ;;
+          Linux/X64)
+            seed_src=""; best=0
+            for c in "/var/lib/vz/ci/gradle-home/${RUNNER_NAME:-}" "$HOME/.gradle-ci/${RUNNER_NAME:-}" "$HOME/.gradle"; do
+              [ "$c" = "$home" ] && continue
+              mb=$(modules_mb "$c"); if [ "${mb:-0}" -gt "$best" ]; then best=$mb; seed_src=$c; fi
+            done ;;
           Linux/ARM64) seed_src="${runner_home%/}" ;;
           macOS/*) seed_src="$HOME/.gradle-ci/${RUNNER_NAME:-}" ;;
           *) seed_src="" ;;
         esac
+        if [ -f "$home/.seeded" ] && [ ! -f "$home/.seeded-v2" ]; then
+          if [ "$(modules_mb "$home")" -lt 300 ] && [ -n "$seed_src" ] && [ "$(modules_mb "$seed_src")" -ge 300 ]; then
+            echo "first seed of this home was small ($(cat "$home/.seeded")); reseeding"
+            rm -f "$home/.seeded"
+          else
+            cp "$home/.seeded" "$home/.seeded-v2"
+          fi
+        fi
         if [ ! -f "$home/.seeded" ]; then
           if [ -n "$seed_src" ] && [ "$seed_src" != "$home" ] && [ -d "$seed_src/caches/modules-2" ]; then
             started=$(date +%s)
@@ -130,13 +149,16 @@ runs:
                 find "$home/wrapper/dists" -name '*.lck' -type f -delete 2>/dev/null || true
               fi
               echo "seeded from $seed_src $(du -sh "$home/caches/modules-2" 2>/dev/null | cut -f1) in $(( $(date +%s) - started ))s" | tee "$home/.seeded"
+              cp "$home/.seeded" "$home/.seeded-v2"
             else
               rm -rf "$home/caches/modules-2.seeding"
               echo "::warning::could not copy the dependency cache from $seed_src; this home starts cold"
               echo "seed copy failed from $seed_src" > "$home/.seeded"
+              cp "$home/.seeded" "$home/.seeded-v2"
             fi
           else
             echo "no pre-split dependency cache for ${RUNNER_NAME:-this runner}; this home starts cold" | tee "$home/.seeded"
+            cp "$home/.seeded" "$home/.seeded-v2"
           fi
         fi
 
@@ -146,6 +168,32 @@ runs:
         if [ ! -f "$home/gradle.properties" ] && [ -f "$runner_home/gradle.properties" ] && [ "$runner_home" != "$home" ]; then
           grep -viE '^[[:space:]]*[^=#]*(key|token|password|secret|user)[^=]*=' "$runner_home/gradle.properties" > "$home/gradle.properties" || true
           chmod 600 "$home/gradle.properties"
+        fi
+
+        # Prefer IPv6 for dependency downloads while it works (TEMPORARY, added
+        # 2026-09-24). Maven Central answers this fleet's IPv4 egress with HTTP
+        # 429 but still serves IPv6, and JVMs prefer IPv4 by default. The GX10's
+        # Wi-Fi IPv6 route has blackholed before, so a 5 s probe decides per
+        # job: if IPv6 reaches Maven Central the Gradle daemon (which does the
+        # downloads) gets -Djava.net.preferIPv6Addresses=true, otherwise the
+        # flag is removed again. Hosts without an IPv6 route fail the probe and
+        # stay on IPv4. Remove this block once the 429s have stopped.
+        v6flag='-Djava.net.preferIPv6Addresses=true'
+        props="$home/gradle.properties"
+        if [ -f "$props" ]; then
+          sed -i.v6bak -e "s| $v6flag||g" "$props" && rm -f "$props.v6bak"
+        fi
+        if curl -6 -sS -m 5 -o /dev/null https://repo.maven.apache.org/maven2/ 2>/dev/null; then
+          jv=$(grep -E '^[[:space:]]*org\.gradle\.jvmargs[[:space:]]*=' "$props" 2>/dev/null | head -1 || true)
+          if [ -n "$jv" ] && ! printf '%s' "$jv" | grep -q '\\$'; then
+            sed -i.v6bak -E "s|^([[:space:]]*org\.gradle\.jvmargs[[:space:]]*=.*)$|\1 $v6flag|" "$props" && rm -f "$props.v6bak"
+            echo "IPv6 reaches Maven Central: the Gradle daemon prefers IPv6 (org.gradle.jvmargs)"
+          else
+            echo "JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }$v6flag" >> "$GITHUB_ENV"
+            echo "IPv6 reaches Maven Central: JVMs prefer IPv6 (JAVA_TOOL_OPTIONS; no single-line org.gradle.jvmargs in $props)"
+          fi
+        else
+          echo "IPv6 does not reach Maven Central from ${RUNNER_NAME:-this runner}; staying on IPv4"
         fi
 
         echo "GRADLE_USER_HOME=$home" >> "$GITHUB_ENV"
