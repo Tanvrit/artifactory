@@ -1,0 +1,94 @@
+name: Per-runner, trust-separated Gradle home
+description: >-
+  Points GRADLE_USER_HOME at a persistent Gradle home that belongs to THIS
+  runner and THIS trust level. Call it as the first step of every job that runs
+  Gradle on a self-hosted runner.
+
+  Why per runner: several runners share one OS user on the same host (Parmar:
+  runner1..10 as root; the MacBook: two runners; the GX10: eight runners), and
+  concurrent Gradle builds sharing one home delete each other's artifact-transform
+  entries.
+
+  Why per trust level: a persistent cache written by a pull_request build must
+  never be read by a build that ships (push to main, tags, schedules, dispatch).
+  Otherwise a branch can plant a modified dependency or transform in the cache
+  and have the next production deploy consume it — CI cache poisoning, flagged
+  by the push security review on 2026-09-24. PR-triggered jobs get the "pr"
+  namespace; everything else gets "main". Both start from a copy of the
+  runner's gradle.properties with credential lines removed.
+
+outputs:
+  home:
+    description: The GRADLE_USER_HOME chosen for this job (empty when left unchanged).
+    value: ${{ steps.pick.outputs.home }}
+  trust:
+    description: '"pr" or "main".'
+    value: ${{ steps.pick.outputs.trust }}
+
+runs:
+  using: composite
+  steps:
+    - id: pick
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+      run: |
+        set -euo pipefail
+
+        key=$(printf '%s' "${RUNNER_NAME:-}" | tr -c 'A-Za-z0-9._-' '-')
+        if [ -z "$key" ]; then
+          echo "::error::RUNNER_NAME is empty; refusing to point every runner at one shared Gradle home."
+          exit 1
+        fi
+
+        # Anything that can execute code which has not yet landed on the
+        # default branch is untrusted. workflow_run and merge_group are treated
+        # as untrusted too: both can build code from a pull request.
+        case "$EVENT_NAME" in
+          pull_request|pull_request_target|pull_request_review|pull_request_review_comment|issue_comment|merge_group|workflow_run)
+            trust=pr ;;
+          *)
+            trust=main ;;
+        esac
+
+        # The runner's own home (set in the runner's .env on the GX10), used as
+        # the source of non-secret settings such as toolchain install paths.
+        runner_home="${GRADLE_USER_HOME:-$HOME/.gradle}"
+
+        case "$RUNNER_OS/$RUNNER_ARCH" in
+          Linux/X64)
+            home="/var/lib/vz/ci/gradle-home/$trust/$key"
+            if ! { mkdir -p "$home" && touch "$home/.write-probe" && rm -f "$home/.write-probe"; } 2>/dev/null; then
+              echo "/var/lib/vz is not writable on this runner; falling back to \$HOME/.gradle-ci"
+              home="$HOME/.gradle-ci/$trust/$key"
+            fi
+            ;;
+          Linux/ARM64)
+            # GX10: each runner's .env sets its own GRADLE_USER_HOME
+            # (…/Runner/rN/gradle-home). Split it by trust level beside it.
+            home="${runner_home%/}-$trust"
+            ;;
+          macOS/*)
+            home="$HOME/.gradle-ci/$trust/$key"
+            ;;
+          *)
+            echo "runner=$RUNNER_NAME ($RUNNER_OS/$RUNNER_ARCH): no shared-home hazard handled here; GRADLE_USER_HOME unchanged (${GRADLE_USER_HOME:-default})"
+            echo "home=" >> "$GITHUB_OUTPUT"
+            echo "trust=$trust" >> "$GITHUB_OUTPUT"
+            exit 0
+            ;;
+        esac
+
+        mkdir -p "$home"
+        # Seed non-secret settings once (e.g. org.gradle.java.installations.paths
+        # on the GX10). Credential-looking lines are never copied, so neither
+        # namespace carries tokens it does not need (maven.tanvrit.com is public).
+        if [ ! -f "$home/gradle.properties" ] && [ -f "$runner_home/gradle.properties" ] && [ "$runner_home" != "$home" ]; then
+          grep -viE '^[[:space:]]*[^=#]*(key|token|password|secret|user)[^=]*=' "$runner_home/gradle.properties" > "$home/gradle.properties" || true
+          chmod 600 "$home/gradle.properties"
+        fi
+
+        echo "GRADLE_USER_HOME=$home" >> "$GITHUB_ENV"
+        echo "home=$home" >> "$GITHUB_OUTPUT"
+        echo "trust=$trust" >> "$GITHUB_OUTPUT"
+        echo "runner=$RUNNER_NAME ($RUNNER_OS/$RUNNER_ARCH) event=$EVENT_NAME trust=$trust GRADLE_USER_HOME=$home"
