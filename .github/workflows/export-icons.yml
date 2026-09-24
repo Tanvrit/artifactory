@@ -34,71 +34,45 @@ on:
 permissions:
   contents: write
 
+# One run per ref at a time: two overlapping runs would both regenerate, race
+# each other's commit to main and upload to R2 twice. Queue, never cancel —
+# this job commits and publishes.
+concurrency:
+  group: export-icons-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   generate:
     name: Generate Platform Icons
-    # Self-hosted macOS. This job genuinely needs macOS, and the `tanvrit`
-    # group supplies it — see the two rationales below (why not Linux, and why
-    # the repo-level runner count does not mean what it looks like).
-    #
-    # Why it cannot move to Linux (checked against the generator, not assumed):
-    # `scripts/generate-icons.js:311` shells out to `iconutil -c icns`, which exists
-    # only on macOS. Its non-darwin branch (:319) falls back to `require('makeicns')`,
-    # and `makeicns` is NOT in scripts/package.json — so on Linux that require throws,
-    # the catch only logs, and the job would finish GREEN having produced iconsets but
-    # no .icns at all. `scripts/verify-assets.js:67-68` would not catch it either: it
-    # downgrades every missing .icns to a warning when `process.platform !== 'darwin'`,
-    # while 8 products (tanvrit, friendly, desipops, mandee, swyft, school, control,
-    # bharat-bandhu) list a .icns as a required asset. A Linux move here is precisely
-    # the "green run that did nothing" failure mode, so: macOS.
-    #
-    # Why `group: tanvrit` + `[self-hosted, macOS]` DOES schedule, despite the
-    # measurement that used to say otherwise. This block read, until 2026-09-21:
-    # "this repository has ZERO attached self-hosted runners
-    # (`GET /repos/Tanvrit/artifactory/actions/runners` → total_count: 0), so that
-    # request could never be scheduled" — and concluded `macos-latest`. The
-    # measurement is still literally true (that endpoint returns total_count 0
-    # today), but the inference was wrong: it enumerates REPOSITORY-level runners
-    # only. Every Tanvrit runner is registered at the ORG level in the `tanvrit`
-    # group, which this repo is granted, so a repo-level count of 0 says nothing
-    # about schedulability. Run 35579806808 (2026-09-21) executed here on runner
-    # `macmini` / machine `Amiteshs-Mac-mini`, runner group `tanvrit` — it
-    # generated, verified and committed every icon, and failed only on the R2
-    # mirror. Run 29148550557 (2026-07-11) queuing for 24h was an offline/
-    # unlabelled-pool problem of that date, not proof the pool cannot serve this
-    # repo. Do NOT restore `macos-latest` on the strength of the old paragraph:
-    # hosted images are now forbidden org-wide and
-    # `scripts/check-self-hosted-runners.sh` (the Self-hosted runner guard
-    # workflow) fails the push that adds one.
     runs-on:
-      # Self-hosted macOS. Retargeted 2026-08-22 from macos-latest — hosted
-      # runners are not used anywhere in this org. This job needs macOS tooling,
-      # so it takes one of the four macOS runners rather than the Linux fleet.
       group: tanvrit
-      # X64 pinned 2026-09-21. Unpinned `[self-hosted, macOS]` is the pattern
-      # 41da95c already burned us on once, and the mac pool is not homogeneous.
-      # Measured, not assumed: `macmini` (Amiteshs-Mac-mini) advertises exactly
-      # `self-hosted,macOS,X64` — it served tanvrit/ai run 35519736471's
-      # "Build and publish macOS .dmg (x64)" leg under that label set on
-      # 2026-09-20, and run 35558445109 here landed on it under this pin.
+      # Linux X64 since 2026-09-24. Until then this was [self-hosted, macOS, X64]
+      # (`macmini`, an x86_64 runner agent under Rosetta 2 on the fleet's
+      # scarcest pool), and the pin was right for the code it ran:
+      #   * .icns came from `iconutil`, which exists only on macOS. The non-darwin
+      #     branch required `makeicns`, which was never a dependency, and
+      #     verify-assets.js downgraded a missing .icns to a warning off macOS —
+      #     so a Linux run would have gone green with no .icns at all.
+      #   * Inkscape came from `brew install --cask`.
+      # Neither holds now. generate-icons.js writes .icns itself (writeIcns: the
+      # same ten entries iconutil wrote into the committed files, checked by
+      # round-tripping the output through `iconutil -c iconset`), verify-assets.js
+      # fails a missing or malformed .icns on every OS, and Inkscape is the
+      # pinned, sha256-checked AppImage below. Nothing here needs a mac.
       #
-      # ARM64 is NOT an empty set — that would be the easy wrong reason to pick
-      # X64. Two Apple Silicon runners are live and taking work: `macbook second`
-      # (tanvrit/ai 35519736471, arm64 .dmg leg, success, 2026-09-20) and
-      # `Viveks-MacBook-Pro` (tanvrit/sdk 35570123137, publish-ios, 2026-09-21).
-      # X64 is chosen because those two are the fleet's release-critical macs,
-      # saturated by the KMP/iOS builds, and a 45-minute icon regeneration has no
-      # business competing with a release for them. macmini is the spare.
-      #
-      # The cost of that choice is real and is paid in the Inkscape step below:
-      # macmini's silicon is arm64 (Homebrew poured
-      # portable-ruby-4.0.7.arm64_big_sur) while its runner agent is the x86_64
-      # build (run 35558851083 resolved Node to _work/_tool/node/24.21.0/x64), so
-      # every step here runs translated under Rosetta 2. That step handles it.
-      labels: [self-hosted, macOS, X64]
-    # Ten products x every platform size, with Inkscape rasterisation, plus a cask
-    # install. Generous, but it must bound a hang: this used to burn 24h per run.
+      # X64, never a bare `Linux`: that label set also matches the ARM64 GX10,
+      # and the Inkscape AppImage is x86_64-only.
+      labels: [self-hosted, Linux, X64]
+    # The last mac run (35875810338, 2026-09-23) generated every icon in about a
+    # minute and was then cancelled by this timeout 44 minutes into the R2
+    # upload. The upload step below explains the fix.
     timeout-minutes: 45
+    env:
+      INKSCAPE_VERSION: '1.4.4'
+      # https://inkscape.org/release/inkscape-1.4.4/gnulinux/appimage/dl/ — the
+      # sha256 below is the one published on that page.
+      INKSCAPE_APPIMAGE_URL: 'https://media.inkscape.org/dl/resources/file/Inkscape-1.4.4.AppImage'
+      INKSCAPE_APPIMAGE_SHA256: 'd217fe05c92faaed5c3af46856b6299c98933dc722819cb5bc2ca052c5522166'
 
     steps:
       - name: Checkout
@@ -106,77 +80,81 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # runner1..10 on the X64 host are processes of one OS sharing HOME=/root,
+      # so shared tool homes race under concurrency, and the root disk is nearly
+      # full. The npm cache is per runner (npm ci checks every tarball against the
+      # lockfile's integrity hash) and the Inkscape download is shared but
+      # sha256-checked, both on the /var/lib/vz pool. Falls back to $HOME if that
+      # is not writable. This workflow only runs on trusted events (push to main,
+      # dispatch), never on a pull request.
+      - name: Per-runner cache directories
+        run: |
+          set -euo pipefail
+          base=/var/lib/vz/ci
+          if ! { mkdir -p "$base/npm-cache/$RUNNER_NAME" "$base/tools" && [ -w "$base/tools" ]; } 2>/dev/null; then
+            base="$HOME/.ci-cache"
+            mkdir -p "$base/npm-cache/$RUNNER_NAME" "$base/tools"
+          fi
+          echo "npm_config_cache=$base/npm-cache/$RUNNER_NAME" >> "$GITHUB_ENV"
+          echo "CI_TOOLS_DIR=$base/tools" >> "$GITHUB_ENV"
+          echo "cache base: $base"
+
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version: '24'
-          cache: 'npm'
-          # Key the cache on the lockfile, not package.json — `npm ci` below refuses to
-          # run without scripts/package-lock.json anyway, and hashing package.json
-          # misses lock-only dependency changes.
-          cache-dependency-path: scripts/package-lock.json
+          # No `cache: npm`: the Actions cache is slow on self-hosted runners, and
+          # npm's own cache is already persistent and per runner (step above).
 
       - name: Install Inkscape (for Wedding icon SVG filters)
         run: |
           set -euo pipefail
 
-          if command -v inkscape >/dev/null 2>&1; then
-            echo "inkscape already present: $(command -v inkscape)"
-            exit 0
+          # Only the downloaded AppImage is shared between runs, and it is
+          # re-verified against the pinned sha256 on every run. The extracted tree
+          # that actually executes lives in this job's $RUNNER_TEMP, so nothing
+          # another job left on the shared host can run here with this job's
+          # contents:write token and Cloudflare credentials in scope.
+          cache="$CI_TOOLS_DIR/Inkscape-$INKSCAPE_VERSION.AppImage"
+          if ! echo "$INKSCAPE_APPIMAGE_SHA256  $cache" | sha256sum -c --status - 2>/dev/null; then
+            tmp="$(mktemp "$CI_TOOLS_DIR/.Inkscape-$INKSCAPE_VERSION.XXXXXX")"
+            trap 'rm -f "$tmp"' EXIT
+            curl -fsSL --retry 3 -o "$tmp" "$INKSCAPE_APPIMAGE_URL"
+            echo "$INKSCAPE_APPIMAGE_SHA256  $tmp" | sha256sum -c -
+            # rename() is atomic, so a concurrent run sees the old file or the new
+            # one, never a partial download.
+            mv -f "$tmp" "$cache"
           fi
 
-          # `brew install --cask inkscape` died outright here:
-          #   ##[error]Cannot install under Rosetta 2 in ARM default prefix (/opt/homebrew)!
-          #     arch -arm64 brew install ...
-          #   To install under x86_64, install Homebrew into /usr/local.
-          # — run 35558851083 (2026-09-21), runner `macmini`.
-          #
-          # The host is Apple Silicon (Homebrew poured
-          # portable-ruby-4.0.7.arm64_big_sur) but the Actions runner agent on it
-          # is the x86_64 build, so every `run:` step executes translated under
-          # Rosetta 2. Homebrew refuses to operate on its native arm64 prefix from
-          # an emulated shell, and prints the exact remedy. Take it.
-          BREW="$(command -v brew || true)"
-          if [ -z "$BREW" ]; then
-            echo "::error::Homebrew is not installed on this runner, so Inkscape cannot be installed."
-            exit 1
-          fi
+          # Copy, then verify the copy: what runs is exactly what was checked,
+          # even if another runner replaces the cache in between.
+          app="$RUNNER_TEMP/Inkscape.AppImage"
+          cp "$cache" "$app"
+          echo "$INKSCAPE_APPIMAGE_SHA256  $app" | sha256sum -c -
+          chmod +x "$app"
+          # Extract rather than mount: no FUSE, no root needed.
+          (cd "$RUNNER_TEMP" && ./Inkscape.AppImage --appimage-extract >/dev/null)
+          rm -f "$app"
 
-          RUN_BREW=("$BREW")
-          if [ "$(/usr/sbin/sysctl -in sysctl.proc_translated 2>/dev/null || echo 0)" = "1" ]; then
-            echo "Shell is translated (Rosetta 2) — re-exec'ing brew natively as arm64."
-            RUN_BREW=(arch -arm64 "$BREW")
-          fi
+          bin="$RUNNER_TEMP/inkscape-bin"
+          mkdir -p "$bin"
+          printf '#!/bin/sh\nexec "%s/squashfs-root/AppRun" "$@"\n' "$RUNNER_TEMP" > "$bin/inkscape"
+          chmod +x "$bin/inkscape"
+          echo "$bin" >> "$GITHUB_PATH"
 
-          "${RUN_BREW[@]}" install --cask inkscape
-
-          # The cask links its CLI into $(brew --prefix)/bin. Put that on PATH for
-          # the later steps explicitly: this shell's architecture is not the one
-          # brew is installed for, so the prefix is not guaranteed to be inherited.
-          BREW_BIN="$("${RUN_BREW[@]}" --prefix)/bin"
-          if [ -d "$BREW_BIN" ]; then
-            echo "$BREW_BIN" >> "$GITHUB_PATH"
-          fi
-
-          # Assert, do not assume. generate-icons.js:169-181 catches a missing
-          # `inkscape` binary and falls back to sharp with only a log line, and
-          # sharp cannot render the SVG filters the Wedding icon is built from —
-          # so an Inkscape that is installed-but-invisible produces a GREEN run
-          # that ships a wrong icon. That is the one outcome worse than this step
-          # failing.
-          if ! command -v inkscape >/dev/null 2>&1 && [ ! -x "$BREW_BIN/inkscape" ]; then
-            echo "::error::Inkscape is not on PATH after installing the cask. The Wedding icon would silently fall back to sharp, which cannot render its SVG filters."
-            exit 1
-          fi
-          echo "inkscape resolved to: $(command -v inkscape || echo "$BREW_BIN/inkscape")"
+          # Assert, do not assume. Under GITHUB_ACTIONS generate-icons.js now
+          # fails on a missing or failing inkscape instead of falling back to
+          # sharp, which cannot render the Wedding icon's SVG filters.
+          "$bin/inkscape" --version
 
       - name: Install dependencies
         run: npm ci
         working-directory: scripts
 
       - name: Generate icons
+        env:
+          PRODUCT: ${{ github.event.inputs.product }}
         run: |
-          PRODUCT="${{ github.event.inputs.product }}"
           if [ -n "$PRODUCT" ]; then
             node scripts/generate-icons.js --product "$PRODUCT"
           else
@@ -186,8 +164,21 @@ jobs:
       - name: Verify generated assets
         run: node scripts/verify-assets.js
 
+      # Bytes vs pixels: a regeneration on another machine or library version
+      # rewrites many files whose pixels barely move. compare-dist.js decodes
+      # each changed raster in both versions and says which ones visibly changed.
+      - name: Summarise changes
+        run: |
+          report="$(node scripts/compare-dist.js)"
+          echo "$report"
+          { echo '```'; echo "$report"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      # main only. A dispatch on any other branch is a dry run: it proves the
+      # generator on this runner and reports the diff above, and must not push
+      # bot commits onto someone's branch or publish to the CDN.
       - name: Commit generated icons
         id: commit
+        if: github.ref == 'refs/heads/main'
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore(icons): regenerate dist assets [skip ci]"
@@ -208,6 +199,7 @@ jobs:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN_FALLBACK: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID_FALLBACK: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: 'false'
         run: |
           set -euo pipefail
 
@@ -218,48 +210,93 @@ jobs:
             exit 1
           fi
 
-          # Three bugs fixed here, all of which made this step pass while uploading
-          # nothing:
-          #  1. `working-directory: worker`. There is no worker/branding — `find` ran
-          #     against a path that does not exist. `find` failing inside a pipeline
-          #     leaves the `while` loop's exit status at 0, so the step went GREEN
-          #     having transferred zero bytes. Run from the repo root instead.
-          #  2. `--remote`. Wrangler v4 defaults `r2 object put` to LOCAL storage: it
-          #     writes into ./.wrangler and exits 0, again without a byte reaching the
-          #     bucket.
-          #  3. Unpinned `npx wrangler` resolved whatever major was current. Pin to v4.
+          # Earlier fixes, still load-bearing: run from the repo root (a
+          # `working-directory: worker` once made `find` scan a path that does not
+          # exist and upload nothing, green); `--remote` (wrangler v4 otherwise
+          # writes to local ./.wrangler storage and exits 0); wrangler pinned to v4.
           #
-          # Sync branding dist to R2 under the /brand/ prefix the worker serves.
-          COUNT=0
-          while IFS= read -r file; do
-            key="brand/${file#branding/icons/dist/}"
-            npx --yes wrangler@4 r2 object put "tanvrit-artifacts/$key" \
-              --file "$file" \
-              --content-type "$(file --mime-type -b "$file")" \
-              --remote
-            COUNT=$((COUNT + 1))
-          done < <(find branding/icons/dist -type f)
+          # Why this step used to time out: it ran `npx --yes wrangler@4` once per
+          # object, sequentially — about 3.7 s of npx resolution and wrangler
+          # start-up per file, for ~1040 files, i.e. over an hour. Run 35875810338
+          # was cancelled at the 45-minute job timeout after 44 minutes of it.
+          # Now wrangler is installed once and four uploads run at a time:
+          # enough to finish in minutes, few enough to stay well inside
+          # Cloudflare's API limit of 1200 requests per 5 minutes.
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/wrangler" wrangler@4 >/dev/null
+          export WRANGLER="$RUNNER_TEMP/wrangler/node_modules/.bin/wrangler"
+          "$WRANGLER" --version
 
+          upload_one() {
+            local file="$1" key type attempt err
+            key="brand/${file#branding/icons/dist/}"
+            # Same types `file --mime-type` produced before, without depending on
+            # `file` being installed on the runner.
+            case "$file" in
+              *.png)  type=image/png ;;
+              *.webp) type=image/webp ;;
+              *.svg)  type=image/svg+xml ;;
+              *.ico)  type=image/vnd.microsoft.icon ;;
+              *.icns) type=image/x-icns ;;
+              *.json) type=application/json ;;
+              *.xml)  type=text/xml ;;
+              *)      type=application/octet-stream ;;
+            esac
+            err="$(mktemp)"
+            for attempt in 1 2 3; do
+              if "$WRANGLER" r2 object put "tanvrit-artifacts/$key" \
+                  --file "$file" --content-type "$type" --remote >/dev/null 2>"$err"; then
+                rm -f "$err"
+                return 0
+              fi
+              sleep $((attempt * 5))
+            done
+            echo "::error::R2 upload failed 3 times: $key"
+            tail -n 20 "$err"
+            rm -f "$err"
+            return 1
+          }
+          export -f upload_one
+
+          TOTAL="$(find branding/icons/dist -type f | wc -l | tr -d ' ')"
           # An empty dist tree means the generator produced nothing. That is a failure,
           # not a no-op — it is exactly what the old step reported as success.
-          if [ "$COUNT" -eq 0 ]; then
-            echo "::error::Uploaded 0 objects — branding/icons/dist is empty, so icon generation produced nothing."
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "::error::branding/icons/dist is empty, so icon generation produced nothing."
             exit 1
           fi
-          echo "Uploaded $COUNT branding objects to R2."
+
+          # xargs exits non-zero if any upload failed, which fails this step.
+          # shellcheck disable=SC2016 # $1 is expanded by the inner bash, on purpose
+          find branding/icons/dist -type f -print0 \
+            | xargs -0 -n 1 -P 4 bash -c 'upload_one "$1"' _
+          echo "Uploaded $TOTAL branding objects to R2."
 
       - name: Notify product repos
         # Only when the icons actually changed. This fans a repository_dispatch out to
-        # eight product repos and wakes their CI; firing it on every no-op regeneration
-        # (icon output is deterministic, so most runs commit nothing) is pure noise.
+        # the product repos; firing it on every no-op regeneration (icon output is
+        # deterministic, so most runs commit nothing) is pure noise.
+        #
+        # Best effort, and it must never turn a run red after the icons are already
+        # committed and on the CDN. The list used to name repos that do not exist
+        # (tanvrit/friendly, tanvrit/mandee, tanvrit/school, tanvrit/swyft,
+        # tanvrit/desipops, tanvrit/bharat-bandhu, tanvrit/wedding all 404 — `gh repo
+        # list Tanvrit`, 2026-09-24), so the first dispatch failed the step. It had
+        # never surfaced because every recent run failed earlier, in the R2 upload.
+        # No product workflow listens for `branding-updated` today (grep of
+        # platforms/*, client/* and control on 2026-09-24), so nothing is lost when a
+        # dispatch fails; each failure is a warning.
         if: github.ref == 'refs/heads/main' && steps.commit.outputs.changes_detected == 'true'
-        run: |
-          # Dispatch to each product repo to pick up new icons
-          for repo in "tanvrit/friendly" "tanvrit/mandee" "tanvrit/school" "tanvrit/swyft" "tanvrit/desipops" "tanvrit/bharat-bandhu" "tanvrit/wedding" "tanvrit/control"; do
-            gh api repos/$repo/dispatches \
-              --method POST \
-              --field event_type=branding-updated \
-              --field client_payload='{"branding_sha":"${{ github.sha }}"}'
-          done
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+          BRANDING_SHA: ${{ github.sha }}
+        run: |
+          for repo in Tanvrit/app-main Tanvrit/app-mandee-biz Tanvrit/app-school Tanvrit/app-swyft Tanvrit/app-desipops Tanvrit/app-wedding Tanvrit/control; do
+            if gh api "repos/$repo/dispatches" --method POST \
+                --field event_type=branding-updated \
+                --field "client_payload[branding_sha]=$BRANDING_SHA" >/dev/null; then
+              echo "dispatched branding-updated to $repo"
+            else
+              echo "::warning::branding-updated dispatch to $repo failed"
+            fi
+          done
