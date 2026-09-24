@@ -170,29 +170,18 @@ runs:
           chmod 600 "$home/gradle.properties"
         fi
 
-        # Prefer IPv6 for dependency downloads while it works (TEMPORARY, added
-        # 2026-09-24). Maven Central answers this fleet's IPv4 egress with HTTP
-        # 429 but still serves IPv6, and JVMs prefer IPv4 by default. The GX10's
-        # Wi-Fi IPv6 route has blackholed before, so a 5 s probe decides per
-        # job. If IPv6 reaches Maven Central, JAVA_TOOL_OPTIONS carries
-        # -Djava.net.preferIPv6Addresses=true for every later step, which
-        # reaches the Gradle client, the daemon and forked JVMs even when a
-        # workflow passes its own -Dorg.gradle.jvmargs (desipops run
-        # 35969334810 did, so a gradle.properties flag was not enough). Every
-        # JVM then prints "Picked up JAVA_TOOL_OPTIONS" on stderr. Hosts without
-        # an IPv6 route fail the probe and stay on IPv4. Remove this block once
-        # the 429s have stopped.
-        v6flag='-Djava.net.preferIPv6Addresses=true'
+        # The temporary IPv6 preference (#11, #12) is gone: Maven Central
+        # stopped answering this fleet's IPv4 with HTTP 429 at 09:29Z on
+        # 2026-09-24. It also had a trap: a workflow that sets GRADLE_OPTS=
+        # -Djava.net.preferIPv4Stack=true (swyft, admin, store, ai) gives the
+        # Gradle client an IPv4-only stack, while JAVA_TOOL_OPTIONS
+        # preferIPv6Addresses=true makes the daemon listen on ::1, so the
+        # client cannot reach its own daemon ("Could not connect to the Gradle
+        # daemon"; ai c602e715). Only the cleanup of #11's gradle.properties
+        # flag stays, for homes that still carry it.
         props="$home/gradle.properties"
-        # Undo the gradle.properties variant from #11: one mechanism only.
-        if [ -f "$props" ] && grep -q -- "$v6flag" "$props"; then
-          sed -i.v6bak -e "s| $v6flag||g" "$props" && rm -f "$props.v6bak"
-        fi
-        if curl -6 -sS -m 5 -o /dev/null https://repo.maven.apache.org/maven2/ 2>/dev/null; then
-          echo "JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }$v6flag" >> "$GITHUB_ENV"
-          echo "IPv6 reaches Maven Central: JVMs in this job prefer IPv6 (JAVA_TOOL_OPTIONS)"
-        else
-          echo "IPv6 does not reach Maven Central from ${RUNNER_NAME:-this runner}; staying on IPv4"
+        if [ -f "$props" ] && grep -q -- '-Djava.net.preferIPv6Addresses=true' "$props"; then
+          sed -i.v6bak -e 's| -Djava.net.preferIPv6Addresses=true||g' "$props" && rm -f "$props.v6bak"
         fi
 
         echo "GRADLE_USER_HOME=$home" >> "$GITHUB_ENV"
