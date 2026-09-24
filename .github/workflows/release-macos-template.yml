@@ -173,6 +173,56 @@ jobs:
     # 120 leaves room for a slow notarization without licensing a 6h hang.
     timeout-minutes: 120
     steps:
+      # Per-runner, persistent GRADLE_USER_HOME (2026-09-24). Concurrent Gradle
+      # builds sharing one home corrupt each other's artifact-transform cache
+      # (FileNotFoundException on jars Gradle itself just produced, measured on
+      # the X64 host), and some runner processes share one OS user:
+      #   * Linux X64 ("Parmar"): runner1..runner10 all run as root with
+      #     HOME=/root, on a nearly full root disk. Each runner gets its own home
+      #     on the large /var/lib/vz pool, or $HOME/.gradle-ci/<runner> when the
+      #     pool is not writable. Same paths as tanvrit/server server-deploy.yml
+      #     and tanvrit/admin e2e.yml, so a runner reuses ONE warm home across
+      #     repos (a runner runs one job at a time).
+      #   * macOS: the two runners on the M2 Max MacBook share one user home, so
+      #     each gets $HOME/.gradle-ci/<runner>.
+      #   * Linux ARM64 (GX10) and anything else: left alone; each GX10 runner is
+      #     provisioned with its own home.
+      # Never the workspace: checkout wipes it, so it would be cold on every run.
+      # The runner name is reduced to [A-Za-z0-9._-] ("macbook second" becomes
+      # "macbook-second") so no tool downstream sees a space in the path. This
+      # goes through GITHUB_ENV because job-level `env` cannot read the `runner`
+      # context, and it runs before setup-gradle, which writes its init scripts
+      # into whatever GRADLE_USER_HOME is set at that point.
+      - name: Per-runner Gradle home
+        shell: bash
+        run: |
+          set -euo pipefail
+          key=$(printf '%s' "$RUNNER_NAME" | tr -c 'A-Za-z0-9._-' '-')
+          if [ -z "$key" ]; then
+            echo "::error::RUNNER_NAME is empty; refusing to point every runner at one shared Gradle home."
+            exit 1
+          fi
+          case "$RUNNER_OS/$RUNNER_ARCH" in
+            Linux/X64)
+              home="/var/lib/vz/ci/gradle-home/$key"
+              if ! { mkdir -p "$home" && touch "$home/.write-probe" && rm -f "$home/.write-probe"; } 2>/dev/null; then
+                echo "/var/lib/vz is not writable on this runner; falling back to \$HOME/.gradle-ci"
+                home="$HOME/.gradle-ci/$key"
+                mkdir -p "$home"
+              fi
+              ;;
+            macOS/*)
+              home="$HOME/.gradle-ci/$key"
+              mkdir -p "$home"
+              ;;
+            *)
+              echo "runner=$RUNNER_NAME ($RUNNER_OS/$RUNNER_ARCH): keeping the runner's own GRADLE_USER_HOME (${GRADLE_USER_HOME:-default})"
+              exit 0
+              ;;
+          esac
+          echo "GRADLE_USER_HOME=$home" >> "$GITHUB_ENV"
+          echo "runner=$RUNNER_NAME ($RUNNER_OS/$RUNNER_ARCH) host=$(uname -n) GRADLE_USER_HOME=$home"
+
       - uses: actions/checkout@v4
 
       - name: Verify target supported
@@ -226,10 +276,18 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      # cache-disabled: the per-runner home set in the first step IS the cache.
+      # With it on, every job that starts on a new (empty) home round-trips its
+      # Gradle state through the Actions cache, which costs 10-49 min per job on
+      # these self-hosted runners (measured; see release-web-template.yml).
+      # (cache-encryption-key is gone with it: it only encrypted configuration-
+      # cache entries stored in the Actions cache, the build below runs with
+      # --no-configuration-cache, and GRADLE_CACHE_KEY was never a declared
+      # workflow_call secret.)
       - uses: gradle/actions/setup-gradle@v4
         if: steps.guard.outputs.supported == 'true'
         with:
-          cache-encryption-key: ${{ secrets.GRADLE_CACHE_KEY || '' }}
+          cache-disabled: true
 
       # Resolve the "Developer ID Application" identity already present in
       # the macOS runner login keychain (created via the signed-in Xcode account).
