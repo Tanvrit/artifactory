@@ -28,6 +28,13 @@ permissions:
 jobs:
   guard:
     name: No GitHub-hosted runners
+    # This repo is PUBLIC and the job runs on the self-hosted `tanvrit` fleet
+    # (the X64 host runs jobs as root; the ARM64 box is a workstation holding
+    # credentials). A pull_request from a FORK must never execute there, so
+    # the job only runs for PRs whose head branch lives in this repository.
+    # push / workflow_dispatch are unaffected. Second layer behind the org's
+    # "require approval for all outside collaborators" fork-PR setting.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on:
       group: tanvrit
       labels: [self-hosted, Linux, X64]
