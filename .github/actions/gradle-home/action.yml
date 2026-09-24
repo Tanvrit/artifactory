@@ -94,6 +94,52 @@ runs:
         esac
 
         mkdir -p "$home"
+
+        # One-time dependency seed. Splitting homes by trust level left every
+        # runner with two cold homes, and the resulting re-download storm got
+        # both egress IPs rate-limited by Maven Central (HTTP 429 on
+        # 2026-09-24, across the GX10, the Macs and the X64 host). So the first
+        # job in each new home copies the runner's pre-split dependency cache
+        # (caches/modules-2) and wrapper distributions, and only goes to the
+        # network for what that cache lacks. The seed is the state these builds
+        # were already using a day ago, so it does not lower the trust split
+        # below where it was; later writes stay per namespace. Lock files are
+        # never copied. The .seeded marker makes this happen once per home.
+        case "$RUNNER_OS/$RUNNER_ARCH" in
+          Linux/X64) seed_src="/var/lib/vz/ci/gradle-home/${RUNNER_NAME:-}"
+                     [ -d "$seed_src/caches/modules-2" ] || seed_src="$HOME/.gradle-ci/${RUNNER_NAME:-}" ;;
+          Linux/ARM64) seed_src="${runner_home%/}" ;;
+          macOS/*) seed_src="$HOME/.gradle-ci/${RUNNER_NAME:-}" ;;
+          *) seed_src="" ;;
+        esac
+        if [ ! -f "$home/.seeded" ]; then
+          if [ -n "$seed_src" ] && [ "$seed_src" != "$home" ] && [ -d "$seed_src/caches/modules-2" ]; then
+            started=$(date +%s)
+            mkdir -p "$home/caches"
+            rm -rf "$home/caches/modules-2.seeding"
+            if cp -a "$seed_src/caches/modules-2" "$home/caches/modules-2.seeding" 2>/dev/null; then
+              find "$home/caches/modules-2.seeding" -name '*.lock' -type f -delete 2>/dev/null || true
+              rm -rf "$home/caches/modules-2"
+              mv "$home/caches/modules-2.seeding" "$home/caches/modules-2"
+              if [ -d "$seed_src/wrapper/dists" ]; then
+                mkdir -p "$home/wrapper/dists"
+                for d in "$seed_src/wrapper/dists"/*; do
+                  [ -d "$d" ] || continue
+                  [ -e "$home/wrapper/dists/$(basename "$d")" ] || cp -a "$d" "$home/wrapper/dists/" 2>/dev/null || true
+                done
+                find "$home/wrapper/dists" -name '*.lck' -type f -delete 2>/dev/null || true
+              fi
+              echo "seeded from $seed_src $(du -sh "$home/caches/modules-2" 2>/dev/null | cut -f1) in $(( $(date +%s) - started ))s" | tee "$home/.seeded"
+            else
+              rm -rf "$home/caches/modules-2.seeding"
+              echo "::warning::could not copy the dependency cache from $seed_src; this home starts cold"
+              echo "seed copy failed from $seed_src" > "$home/.seeded"
+            fi
+          else
+            echo "no pre-split dependency cache for ${RUNNER_NAME:-this runner}; this home starts cold" | tee "$home/.seeded"
+          fi
+        fi
+
         # Seed non-secret settings once (e.g. org.gradle.java.installations.paths
         # on the GX10). Credential-looking lines are never copied, so neither
         # namespace carries tokens it does not need (maven.tanvrit.com is public).
