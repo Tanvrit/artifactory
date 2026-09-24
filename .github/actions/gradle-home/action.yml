@@ -10,12 +10,15 @@ description: >-
   entries.
 
   Why per trust level: a persistent cache written by a pull_request build must
-  never be read by a build that ships (push to main, tags, schedules, dispatch).
+  never be read by a build that ships (default branch, tags, schedules).
   Otherwise a branch can plant a modified dependency or transform in the cache
   and have the next production deploy consume it — CI cache poisoning, flagged
-  by the push security review on 2026-09-24. PR-triggered jobs get the "pr"
-  namespace; everything else gets "main". Both start from a copy of the
-  runner's gradle.properties with credential lines removed.
+  by the push security review on 2026-09-24. Only code that is already on the
+  default branch, a tag, or a schedule (which always runs the default branch)
+  gets the "main" namespace. Everything else gets "pr": PR-triggered events,
+  and also pushes and manual dispatches on any other branch, because those run
+  code that has not landed. Both namespaces start from a copy of the runner's
+  gradle.properties with credential lines removed.
 
 outputs:
   home:
@@ -32,6 +35,8 @@ runs:
       shell: bash
       env:
         EVENT_NAME: ${{ github.event_name }}
+        GIT_REF: ${{ github.ref }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       run: |
         set -euo pipefail
 
@@ -43,12 +48,21 @@ runs:
 
         # Anything that can execute code which has not yet landed on the
         # default branch is untrusted. workflow_run and merge_group are treated
-        # as untrusted too: both can build code from a pull request.
+        # as untrusted too: both can build code from a pull request. So are a
+        # push or a workflow_dispatch on any branch other than the default one.
         case "$EVENT_NAME" in
           pull_request|pull_request_target|pull_request_review|pull_request_review_comment|issue_comment|merge_group|workflow_run)
             trust=pr ;;
-          *)
+          schedule)
+            # Scheduled runs always use the default branch's workflow and code.
             trust=main ;;
+          *)
+            case "$GIT_REF" in
+              refs/tags/*) trust=main ;;
+              "refs/heads/${DEFAULT_BRANCH:-main}") trust=main ;;
+              *) trust=pr ;;
+            esac
+            ;;
         esac
 
         # The runner's own home (set in the runner's .env on the GX10), used as
@@ -91,4 +105,4 @@ runs:
         echo "GRADLE_USER_HOME=$home" >> "$GITHUB_ENV"
         echo "home=$home" >> "$GITHUB_OUTPUT"
         echo "trust=$trust" >> "$GITHUB_OUTPUT"
-        echo "runner=$RUNNER_NAME ($RUNNER_OS/$RUNNER_ARCH) event=$EVENT_NAME trust=$trust GRADLE_USER_HOME=$home"
+        echo "runner=$RUNNER_NAME ($RUNNER_OS/$RUNNER_ARCH) event=$EVENT_NAME ref=${GIT_REF:-?} trust=$trust GRADLE_USER_HOME=$home"
