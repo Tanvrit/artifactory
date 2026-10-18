@@ -58,33 +58,56 @@ const CHECKS = [
   { product: 'control', platform: 'macos', file: 'control.icns' },
 ];
 
+// The .icns entries generate-icons.js writes (ICNS_ENTRIES there). A file that
+// exists but lacks one is as broken as a missing file.
+const REQUIRED_ICNS_TYPES = ['ic04', 'ic05', 'ic07', 'ic08', 'ic09', 'ic10', 'ic11', 'ic12', 'ic13', 'ic14'];
+
+// Returns a problem description, or null when the container is well formed.
+function icnsProblem(filePath) {
+  const buf = fs.readFileSync(filePath);
+  if (buf.length < 8 || buf.toString('latin1', 0, 4) !== 'icns') return 'no icns magic';
+  if (buf.readUInt32BE(4) !== buf.length) return `header says ${buf.readUInt32BE(4)} bytes, file is ${buf.length}`;
+  const seen = new Set();
+  for (let off = 8; off < buf.length;) {
+    if (off + 8 > buf.length) return `truncated entry header at ${off}`;
+    const len = buf.readUInt32BE(off + 4);
+    if (len < 8 || off + len > buf.length) return `entry ${buf.toString('latin1', off, off + 4)} overruns the file`;
+    seen.add(buf.toString('latin1', off, off + 4));
+    off += len;
+  }
+  const missing = REQUIRED_ICNS_TYPES.filter((t) => !seen.has(t));
+  return missing.length ? `missing entries ${missing.join(', ')}` : null;
+}
+
 let errors = 0;
-let warnings = 0;
 
 for (const check of CHECKS) {
   const filePath = path.join(DIST, check.product, check.platform, check.file);
+  // .icns used to be a warning off macOS, because only iconutil could write it.
+  // generate-icons.js now writes it on every OS, so a missing one is an error
+  // everywhere; the downgrade is what let a Linux run go green without them.
   if (!fs.existsSync(filePath)) {
-    // macOS .icns files are macOS-only — treat as warning on non-macOS
-    if (check.file.endsWith('.icns') && process.platform !== 'darwin') {
-      process.stderr.write(`  ⚠ (expected on macOS only): ${check.product}/${check.platform}/${check.file}\n`);
-      warnings++;
-    } else {
-      process.stderr.write(`  ✗ MISSING: ${check.product}/${check.platform}/${check.file}\n`);
-      errors++;
-    }
+    process.stderr.write(`  ✗ MISSING: ${check.product}/${check.platform}/${check.file}\n`);
+    errors++;
   } else {
     const stat = fs.statSync(filePath);
     if (stat.size === 0) {
       process.stderr.write(`  ✗ EMPTY: ${check.product}/${check.platform}/${check.file}\n`);
       errors++;
+    } else if (check.file.endsWith('.icns')) {
+      const problem = icnsProblem(filePath);
+      if (problem) {
+        process.stderr.write(`  ✗ BAD ICNS: ${check.product}/${check.platform}/${check.file} — ${problem}\n`);
+        errors++;
+      }
     }
   }
 }
 
 if (errors === 0) {
-  process.stdout.write(`\n✓ All ${CHECKS.length} asset checks passed (${warnings} macOS warnings)\n\n`);
+  process.stdout.write(`\n✓ All ${CHECKS.length} asset checks passed\n\n`);
   process.exit(0);
 } else {
-  process.stderr.write(`\n✗ ${errors} missing assets. Run: node generate-icons.js --all\n\n`);
+  process.stderr.write(`\n✗ ${errors} missing or malformed assets. Run: node generate-icons.js --all\n\n`);
   process.exit(1);
 }

@@ -36,6 +36,11 @@ on:
 permissions:
   contents: read
 
+# A test, not a publish: a newer push to the same ref supersedes the older run.
+concurrency:
+  group: selftest-resolve-module-dir-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   selftest:
     name: resolve-module-dir fixtures
