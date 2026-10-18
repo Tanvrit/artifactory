@@ -22,7 +22,8 @@ const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');
 const { execSync, spawnSync } = require('child_process');
-const pngToIco = require('png-to-ico');
+// png-to-ico 3 is ESM; dynamic import preserves this CommonJS CLI.
+const pngToIco = (...args) => import('png-to-ico').then(({ default: convert }) => convert(...args));
 
 const ROOT = path.join(__dirname, '..');
 const ICONS_SRC = path.join(ROOT, 'branding/icons/src');

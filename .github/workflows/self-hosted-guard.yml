@@ -44,6 +44,6 @@ jobs:
         # Declared, never inherited: the `tanvrit` group is heterogeneous.
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check every job runs on a self-hosted runner
         run: bash scripts/check-self-hosted-runners.sh
