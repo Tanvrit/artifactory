@@ -13,8 +13,8 @@ class PrepareMacTest(unittest.TestCase):
             root = pathlib.Path(directory)
             binary = root / "bin"
             binary.mkdir()
-            home = root / "home"
-            (home / "Library/Android/sdk/platforms").mkdir(parents=True)
+            fixture_sdk = root / "sdk-fixture/Library/Android/sdk"
+            (fixture_sdk / "platforms").mkdir(parents=True)
             prefix = root / "prefix"
             for formula in ["bash", "coreutils", "findutils", "grep", "jq", "openssl@3"]:
                 (prefix / formula / "libexec/gnubin").mkdir(parents=True)
@@ -32,9 +32,7 @@ class PrepareMacTest(unittest.TestCase):
                 path = binary / name
                 path.write_text(text)
                 path.chmod(0o755)
-            env = dict(os.environ, RUNNER_TEMP=directory, FIXTURE=directory, HOME=str(home), PATH=str(binary) + os.pathsep + os.environ["PATH"], GITHUB_PATH=str(root / "paths"), GITHUB_ENV=str(root / "environment"))
-            env.pop("ANDROID_HOME", None)
-            env.pop("ANDROID_SDK_ROOT", None)
+            env = dict(os.environ, RUNNER_TEMP=directory, FIXTURE=directory, ANDROID_HOME=str(fixture_sdk), ANDROID_SDK_ROOT=str(fixture_sdk), PATH=str(binary) + os.pathsep + os.environ["PATH"], GITHUB_PATH=str(root / "paths"), GITHUB_ENV=str(root / "environment"))
             env.update(overrides)
             result = subprocess.run(["/bin/bash", str(SCRIPT)], env=env, capture_output=True, text=True)
             files = {name: (root / name).read_text() if (root / name).exists() else "" for name in ["paths", "environment", "installed"]}
