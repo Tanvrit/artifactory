@@ -30,7 +30,7 @@ cd portal
 npm ci
 npm run build            # next build; next.config.ts has output:'export' → portal/out/
 npm run dev              # next dev, local
-npm run deploy           # opennextjs-cloudflare build && deploy  (BLAST RADIUS)
+npm run deploy           # next build + wrangler pages deploy → tanvrit-artifacts-portal (BLAST RADIUS)
 
 # Scripts — token/icon generation + manifest/version tooling (scripts/, pkg @tanvrit/tokens)
 cd scripts
