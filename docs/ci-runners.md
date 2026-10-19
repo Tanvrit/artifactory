@@ -16,6 +16,8 @@ A workflow change cannot make an offline or inaccessible runner accept jobs.
   continues to select its own JDK, Node and Python versions.
 - `.github/actions/macos-ci-tools` provisions missing GNU command tools, Bash, jq
   and OpenSSL through Homebrew, and exports their paths. Existing packages are reused.
+  Concurrent registrations retry explicit Homebrew busy-lock errors; other install
+  failures stop the job immediately.
 - Docker jobs require Docker Desktop, Colima, or a configured Docker context with a
   running Linux-container engine. The action fails before a build if only the CLI exists.
 - Compose UI tests require the runner user to own an active console login. Start

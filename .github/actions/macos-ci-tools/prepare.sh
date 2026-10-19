@@ -18,7 +18,35 @@ fi
 export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
 for formula in bash coreutils findutils grep jq openssl@3; do
   if ! "$brew_bin" list --versions "$formula" >/dev/null 2>&1; then
-    "$brew_bin" install "$formula"
+    # Several runner registrations can share one Mac and Homebrew prefix.
+    # Homebrew owns the package locks; wait only for its explicit busy errors.
+    log_file=$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/brew-ci.XXXXXX")
+    ready=false
+    for attempt in $(seq 1 60); do
+      if "$brew_bin" install "$formula" > "$log_file" 2>&1; then
+        cat "$log_file"
+        ready=true
+        break
+      fi
+      if "$brew_bin" list --versions "$formula" >/dev/null 2>&1; then
+        ready=true
+        break
+      fi
+      if ! grep -Eiq 'already locked|already holds|another.*Homebrew|already running' "$log_file"; then
+        cat "$log_file"
+        rm -f "$log_file"
+        exit 1
+      fi
+      echo "Waiting for concurrent Homebrew provisioning: $formula (attempt $attempt/60)"
+      sleep 5
+    done
+    if [ "$ready" != true ]; then
+      cat "$log_file"
+      rm -f "$log_file"
+      echo "::error::Timed out waiting for Homebrew to provision $formula"
+      exit 1
+    fi
+    rm -f "$log_file"
   fi
   prefix=$("$brew_bin" --prefix "$formula")
   for dir in "$prefix/libexec/gnubin" "$prefix/bin"; do

@@ -21,8 +21,9 @@ class PrepareMacTest(unittest.TestCase):
                 (prefix / formula / "bin").mkdir()
             scripts = {
                 "uname": '#!/bin/sh\nif [ "$1" = -s ]; then echo "${TEST_OS:-Darwin}"; else echo arm64; fi\n',
-                "brew": '#!/bin/sh\ncase "$1" in list) [ "$3" != "${TEST_MISSING:-}" ] ;; install) echo "$2" >> "$FIXTURE/installed" ;; --prefix) echo "$FIXTURE/prefix/$2" ;; *) exit 2 ;; esac\n',
+                "brew": '#!/bin/sh\ncase "$1" in list) [ "$3" != "${TEST_MISSING:-}" ] || [ -f "$FIXTURE/installed-$3" ] ;; install) if [ "${TEST_BUSY:-}" = true ] && [ ! -f "$FIXTURE/busy-seen" ]; then touch "$FIXTURE/busy-seen"; echo "A brew process has already locked this package"; exit 1; fi; if [ "${TEST_INSTALL_FAIL:-}" = true ]; then echo "Permission denied"; exit 1; fi; touch "$FIXTURE/installed-$2"; echo "$2" >> "$FIXTURE/installed" ;; --prefix) echo "$FIXTURE/prefix/$2" ;; *) exit 2 ;; esac\n',
                 "docker": '#!/bin/sh\n[ "${TEST_DOCKER_FAIL:-}" != true ] || exit 1\nif [ "$2" = --format ]; then echo "${TEST_DOCKER_OS:-linux}"; fi\n',
+                "sleep": "#!/bin/sh\nexit 0\n",
                 "launchctl": '#!/bin/sh\nexit 1\n',
             }
             for tool in ["sha256sum", "timeout", "jq", "openssl"]:
@@ -31,7 +32,7 @@ class PrepareMacTest(unittest.TestCase):
                 path = binary / name
                 path.write_text(text)
                 path.chmod(0o755)
-            env = dict(os.environ, FIXTURE=directory, HOME=str(home), PATH=str(binary) + os.pathsep + os.environ["PATH"], GITHUB_PATH=str(root / "paths"), GITHUB_ENV=str(root / "environment"))
+            env = dict(os.environ, RUNNER_TEMP=directory, FIXTURE=directory, HOME=str(home), PATH=str(binary) + os.pathsep + os.environ["PATH"], GITHUB_PATH=str(root / "paths"), GITHUB_ENV=str(root / "environment"))
             env.pop("ANDROID_HOME", None)
             env.pop("ANDROID_SDK_ROOT", None)
             env.update(overrides)
@@ -51,6 +52,18 @@ class PrepareMacTest(unittest.TestCase):
         result, files = self.run_fixture(TEST_MISSING="findutils")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(files["installed"].strip(), "findutils")
+
+    def test_waits_for_a_concurrent_homebrew_install(self):
+        result, files = self.run_fixture(TEST_MISSING="findutils", TEST_BUSY="true")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(files["installed"].strip(), "findutils")
+        self.assertIn("Waiting for concurrent Homebrew", result.stdout)
+
+    def test_does_not_retry_a_permission_failure(self):
+        result, _ = self.run_fixture(TEST_MISSING="findutils", TEST_INSTALL_FAIL="true")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Permission denied", result.stdout)
+        self.assertNotIn("Waiting for concurrent Homebrew", result.stdout)
 
     def test_rejects_a_non_mac_host(self):
         result, files = self.run_fixture(TEST_OS="Linux")
