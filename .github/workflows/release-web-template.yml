@@ -66,16 +66,12 @@ on:
         default: ''
       runner_labels:
         description: >-
-          JSON array of self-hosted runner labels (within the "tanvrit" group) the
-          job may run on. Default ["self-hosted","Linux","X64"]: a bare ["Linux"]
-          or ["self-hosted"] also matches the Linux ARM64 runners (GX10), which are
-          reserved for JVM tests and sit on a Wi-Fi uplink that times out large
-          downloads. Labels are AND-matched, so keep the X64 label on any Linux
-          override. The web build is OS-agnostic (Node + Gradle), so
-          ["self-hosted","macOS"] works too, but Macs are the scarcest runners.
+          JSON labels within the tanvrit runner group. Defaults to
+          ["self-hosted","macOS","ARM64"]. Override only for a provisioned
+          self-hosted host with the required OS and architecture toolchain.
         type: string
         required: false
-        default: '["self-hosted","Linux","X64"]'
+        default: '["self-hosted","macOS","ARM64"]'
     secrets:
       CLOUDFLARE_API_TOKEN:
         description: 'When absent, the Deploy step is skipped — workflow still builds artifacts.'
@@ -133,6 +129,9 @@ jobs:
     # worst real run by ~40 min.
     timeout-minutes: 90
     steps:
+      - name: Prepare macOS CI tools
+        if: runner.os == 'macOS'
+        uses: tanvrit/artifactory/.github/actions/macos-ci-tools@main
       # Per-runner, persistent GRADLE_USER_HOME (2026-09-24). Concurrent Gradle
       # builds sharing one home corrupt each other's artifact-transform cache
       # (FileNotFoundException on jars Gradle itself just produced, measured on

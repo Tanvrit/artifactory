@@ -41,17 +41,17 @@ commit on `tanvrit/artifactory` was `53c7436`.
 
 ## The templates
 
-All under `tanvrit/artifactory/.github/workflows/`:
+All under `tanvrit/artifactory/.github/workflows/`. See [CI runner setup and native OS exceptions](ci-runners.md):
 
 | Template | Runner | Output |
 |---|---|---|
-| `release-android-template.yml` | `ubuntu-latest` | Signed `.apk` + `.aab`; optional Play Store upload |
-| `release-ios-template.yml` | `macos-14` | Signed `.ipa` via xcodebuild archive + exportArchive |
-| `release-macos-template.yml` | `macos-14` + `macos-13` (two parallel jobs) | Signed + notarized `.dmg` for arm64 + x64 |
-| `release-windows-template.yml` | `windows-latest` | `.msi` (Authenticode signing scaffolded; gated on `WINDOWS_SIGNING_CERT`) |
-| `release-linux-template.yml` | `ubuntu-latest` | `.deb` + `.AppImage` via appimagetool |
-| `release-web-template.yml` | `ubuntu-latest` | Cloudflare Pages deploy of Wasm/JS bundle + optional Next.js landing merge |
-| `release-firebase-template.yml` | `ubuntu-latest` | Firebase Hosting deploy (used by `desipops`; everyone else uses Cloudflare Pages) |
+| `release-android-template.yml` | self-hosted macOS ARM64 | Signed `.apk` + `.aab`; optional Play Store upload |
+| `release-ios-template.yml` | self-hosted macOS ARM64 | Signed `.ipa` via xcodebuild archive + exportArchive |
+| `release-macos-template.yml` | self-hosted macOS ARM64 | Signed + notarized Apple Silicon `.dmg` |
+| `release-windows-template.yml` | self-hosted Windows (native packaging) | `.msi` (Authenticode signing scaffolded; gated on `WINDOWS_SIGNING_CERT`) |
+| `release-linux-template.yml` | self-hosted Linux X64 (native packaging) | `.deb` + `.AppImage` via appimagetool |
+| `release-web-template.yml` | self-hosted macOS ARM64 | Cloudflare Pages deploy of Wasm/JS bundle + optional Next.js landing merge |
+| `release-firebase-template.yml` | self-hosted macOS ARM64 | Firebase Hosting deploy (used by `desipops`; everyone else uses Cloudflare Pages) |
 
 Each template begins with a **graceful-skip guard** that checks whether the
 caller platform's source even targets that OS:

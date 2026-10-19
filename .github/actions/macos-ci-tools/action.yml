@@ -1,0 +1,21 @@
+name: Prepare macOS CI tools
+description: Prepare GNU command compatibility and check optional Docker or GUI requirements.
+inputs:
+  docker:
+    description: Require a running Linux Docker engine reachable by the runner user.
+    default: 'false'
+  gui:
+    description: Require the runner user to own an active macOS console login for Compose UI tests.
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Prepare the macOS runner
+      if: runner.os == 'macOS'
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      env:
+        ACTION_DIR: ${{ github.action_path }}
+        CI_REQUIRE_DOCKER: ${{ inputs.docker }}
+        CI_REQUIRE_GUI: ${{ inputs.gui }}
+      run: bash "$ACTION_DIR/prepare.sh"

@@ -37,13 +37,16 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on:
       group: tanvrit
-      labels: [self-hosted, Linux, X64]
+      labels: [self-hosted, macOS, ARM64]
     timeout-minutes: 5
     defaults:
       run:
         # Declared, never inherited: the `tanvrit` group is heterogeneous.
         shell: bash
     steps:
+      - name: Prepare macOS CI tools
+        if: runner.os == 'macOS'
+        uses: tanvrit/artifactory/.github/actions/macos-ci-tools@main
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check every job runs on a self-hosted runner
         run: bash scripts/check-self-hosted-runners.sh

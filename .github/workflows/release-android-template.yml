@@ -72,16 +72,12 @@ on:
         default: ''
       runner_labels:
         description: >-
-          JSON array of self-hosted runner labels (within the "tanvrit" group) the
-          job may run on. Default ["self-hosted","Linux","X64"]: the Android SDK
-          build-tools (aapt2, d8) are x86-64-only on Linux, and a bare ["Linux"] or
-          ["self-hosted"] also matches the Linux ARM64 runners (GX10), where this
-          build fails. Labels are AND-matched, so keep the X64 label on any Linux
-          override. To route to a Mac instead, pass ["self-hosted","macOS"] (the
-          Android/Gradle build runs on macOS too).
+          JSON labels within the tanvrit runner group. Defaults to
+          ["self-hosted","macOS","ARM64"]. Override only for a provisioned
+          self-hosted host with the required OS and architecture toolchain.
         type: string
         required: false
-        default: '["self-hosted","Linux","X64"]'
+        default: '["self-hosted","macOS","ARM64"]'
     secrets:
       ANDROID_SIGNING_KEYSTORE:
         description: 'Base64-encoded .jks keystore'
@@ -125,6 +121,9 @@ jobs:
     # is generous headroom that still bounds a hang.
     timeout-minutes: 90
     steps:
+      - name: Prepare macOS CI tools
+        if: runner.os == 'macOS'
+        uses: tanvrit/artifactory/.github/actions/macos-ci-tools@main
       # Per-runner, persistent GRADLE_USER_HOME (2026-09-24). Concurrent Gradle
       # builds sharing one home corrupt each other's artifact-transform cache
       # (FileNotFoundException on jars Gradle itself just produced, measured on
@@ -177,36 +176,9 @@ jobs:
       # with "SDK location not found". Resolve from the runner env, then standard
       # macOS + Linux install locations, and write local.properties. Covers both
       # OSes because a caller's runner_labels override can route this to macOS.
-      - name: Resolve Android SDK location
+      - name: Prepare Android SDK
         if: steps.guard.outputs.supported == 'true'
-        shell: bash
-        run: |
-          set -uo pipefail
-          echo "Runner Android env: ANDROID_HOME=${ANDROID_HOME:-<unset>} ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-<unset>}"
-          CANDIDATES=(
-            "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}"
-            "$HOME/Library/Android/sdk"
-            "$HOME/Android/Sdk" "$HOME/android-sdk"
-            "/opt/android-sdk" "/usr/lib/android-sdk" "/usr/local/lib/android/sdk"
-          )
-          SDK_DIR=""
-          for c in "${CANDIDATES[@]}"; do
-            [ -n "$c" ] || continue
-            if [ -d "$c/platform-tools" ] || [ -d "$c/cmdline-tools" ] || [ -d "$c/platforms" ]; then
-              SDK_DIR="$c"; break
-            fi
-          done
-          if [ -z "$SDK_DIR" ]; then
-            echo "::error::Android SDK not found on runner. Checked: ${CANDIDATES[*]}"
-            ls -la "$HOME" 2>/dev/null | head -40 || true
-            exit 1
-          fi
-          echo "Resolved Android SDK: $SDK_DIR"
-          echo "ANDROID_HOME=$SDK_DIR" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK_DIR" >> "$GITHUB_ENV"
-          echo "$SDK_DIR/platform-tools" >> "$GITHUB_PATH"
-          echo "sdk.dir=$SDK_DIR" > local.properties
-
+        uses: tanvrit/artifactory/.github/actions/android-sdk@main
       # Decode the keystore into a temp file. Android Gradle plugin reads
       # signing config from env vars our build.gradle.kts blocks reference
       # (RELEASE_STORE_FILE, RELEASE_STORE_PASSWORD, etc.).

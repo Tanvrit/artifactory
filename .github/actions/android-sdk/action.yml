@@ -1,0 +1,53 @@
+name: Prepare Android SDK
+description: Resolve the SDK and install the platform selected by the repository version catalog.
+inputs:
+  compile-sdk:
+    description: Override the numeric compile SDK when the repository has no version catalog.
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Resolve Android platform and SDK directory
+      id: resolve
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        COMPILE_SDK_INPUT: ${{ inputs.compile-sdk }}
+        ACTION_DIR: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        compile_sdk="$COMPILE_SDK_INPUT"
+        if [ -z "$compile_sdk" ]; then
+          compile_sdk=$(python3 "$ACTION_DIR/compile-sdk.py")
+        fi
+        [[ "$compile_sdk" =~ ^[0-9]+$ ]] || { echo "::error::compile-sdk must be numeric"; exit 1; }
+        sdk_dir=""
+        for candidate in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" "$HOME/Library/Android/sdk" "$HOME/Android/Sdk"; do
+          if [ -n "$candidate" ] && { [ -d "$candidate/platforms" ] || [ -d "$candidate/cmdline-tools" ]; }; then
+            sdk_dir=$candidate; break
+          fi
+        done
+        if [ -z "$sdk_dir" ]; then
+          if [ "$(uname -s)" = Darwin ]; then sdk_dir="$HOME/Library/Android/sdk"; else sdk_dir="$HOME/Android/Sdk"; fi
+        fi
+        printf 'ANDROID_HOME=%s\nANDROID_SDK_ROOT=%s\n' "$sdk_dir" "$sdk_dir" >> "$GITHUB_ENV"
+        echo "compile_sdk=$compile_sdk" >> "$GITHUB_OUTPUT"
+    - name: Install platform tools using the host OS archive
+      uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+      with:
+        cmdline-tools-version: '15859902'
+        packages: platform-tools
+        log-accepted-android-sdk-licenses: 'false'
+    - name: Ensure the catalog Android platform is installed
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        COMPILE_SDK: ${{ steps.resolve.outputs.compile_sdk }}
+      run: |
+        set -euo pipefail
+        for dir in "$ANDROID_HOME/platforms/android-$COMPILE_SDK" "$ANDROID_HOME/platforms/android-$COMPILE_SDK."*; do
+          if [ -d "$dir" ]; then echo "Android API $COMPILE_SDK is installed"; exit 0; fi
+        done
+        platform="android-$COMPILE_SDK"
+        if [ "$COMPILE_SDK" -ge 37 ]; then platform="$platform.0"; fi
+        sdkmanager "platforms;$platform"

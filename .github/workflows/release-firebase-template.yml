@@ -78,12 +78,7 @@ jobs:
     name: Web (Firebase Hosting)
     runs-on:
       group: tanvrit
-      # The same Kotlin/Wasm + npm build as release-web-template.yml plus a Firebase Hosting
-      # deploy (a Node action); no step needs macOS or Xcode. Reverted 2026-09-23 from the
-      # 2026-09-07 Linux-disk-outage route to macOS, so it stops queueing behind iOS/macOS
-      # releases on the scarcest runners. X64 is explicit because a bare [self-hosted, Linux]
-      # also matches the Linux ARM64 runners (GX10), which are reserved for JVM tests.
-      labels: [self-hosted, Linux, X64]
+      labels: [self-hosted, macOS, ARM64]
     # Reusable template: `runs-on` resolves against the CALLING repository's runners,
     # not artifactory's, so the self-hosted request here is satisfiable and is left
     # alone. What was missing is a ceiling — without `timeout-minutes` a wedged job
@@ -91,6 +86,9 @@ jobs:
     # time. Kotlin/Wasm + npm builds of this shape run 2-52 min in the fleet.
     timeout-minutes: 90
     steps:
+      - name: Prepare macOS CI tools
+        if: runner.os == 'macOS'
+        uses: tanvrit/artifactory/.github/actions/macos-ci-tools@main
       # Per-runner, persistent GRADLE_USER_HOME (2026-09-24). Concurrent Gradle
       # builds sharing one home corrupt each other's artifact-transform cache
       # (FileNotFoundException on jars Gradle itself just produced, measured on

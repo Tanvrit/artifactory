@@ -173,6 +173,9 @@ jobs:
     # 120 leaves room for a slow notarization without licensing a 6h hang.
     timeout-minutes: 120
     steps:
+      - name: Prepare macOS CI tools
+        if: runner.os == 'macOS'
+        uses: tanvrit/artifactory/.github/actions/macos-ci-tools@main
       # Per-runner, persistent GRADLE_USER_HOME (2026-09-24). Concurrent Gradle
       # builds sharing one home corrupt each other's artifact-transform cache
       # (FileNotFoundException on jars Gradle itself just produced, measured on
