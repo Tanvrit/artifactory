@@ -16,7 +16,7 @@ class PrepareMacTest(unittest.TestCase):
             home = root / "home"
             (home / "Library/Android/sdk/platforms").mkdir(parents=True)
             prefix = root / "prefix"
-            for formula in ["bash", "coreutils", "findutils", "gnu-sed", "grep", "jq", "openssl@3"]:
+            for formula in ["bash", "coreutils", "findutils", "grep", "jq", "openssl@3"]:
                 (prefix / formula / "libexec/gnubin").mkdir(parents=True)
                 (prefix / formula / "bin").mkdir()
             scripts = {
@@ -48,9 +48,9 @@ class PrepareMacTest(unittest.TestCase):
         self.assertEqual(files["installed"], "")
 
     def test_installs_only_the_missing_formula(self):
-        result, files = self.run_fixture(TEST_MISSING="gnu-sed")
+        result, files = self.run_fixture(TEST_MISSING="findutils")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(files["installed"].strip(), "gnu-sed")
+        self.assertEqual(files["installed"].strip(), "findutils")
 
     def test_rejects_a_non_mac_host(self):
         result, files = self.run_fixture(TEST_OS="Linux")

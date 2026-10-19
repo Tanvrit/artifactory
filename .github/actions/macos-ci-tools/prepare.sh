@@ -16,7 +16,7 @@ if [ -z "$brew_bin" ]; then
   exit 1
 fi
 export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
-for formula in bash coreutils findutils gnu-sed grep jq openssl@3; do
+for formula in bash coreutils findutils grep jq openssl@3; do
   if ! "$brew_bin" list --versions "$formula" >/dev/null 2>&1; then
     "$brew_bin" install "$formula"
   fi
