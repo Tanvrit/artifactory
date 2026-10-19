@@ -46,23 +46,7 @@ jobs:
     name: Generate Platform Icons
     runs-on:
       group: tanvrit
-      # Linux X64 since 2026-09-24. Until then this was [self-hosted, macOS, X64]
-      # (`macmini`, an x86_64 runner agent under Rosetta 2 on the fleet's
-      # scarcest pool), and the pin was right for the code it ran:
-      #   * .icns came from `iconutil`, which exists only on macOS. The non-darwin
-      #     branch required `makeicns`, which was never a dependency, and
-      #     verify-assets.js downgraded a missing .icns to a warning off macOS —
-      #     so a Linux run would have gone green with no .icns at all.
-      #   * Inkscape came from `brew install --cask`.
-      # Neither holds now. generate-icons.js writes .icns itself (writeIcns: the
-      # same ten entries iconutil wrote into the committed files, checked by
-      # round-tripping the output through `iconutil -c iconset`), verify-assets.js
-      # fails a missing or malformed .icns on every OS, and Inkscape is the
-      # pinned, sha256-checked AppImage below. Nothing here needs a mac.
-      #
-      # X64, never a bare `Linux`: that label set also matches the ARM64 GX10,
-      # and the Inkscape AppImage is x86_64-only.
-      labels: [self-hosted, Linux, X64]
+      labels: [self-hosted, macOS, ARM64]
     # The last mac run (35875810338, 2026-09-23) generated every icon in about a
     # minute and was then cancelled by this timeout 44 minutes into the R2
     # upload. The upload step below explains the fix.
@@ -75,6 +59,9 @@ jobs:
       INKSCAPE_APPIMAGE_SHA256: 'd217fe05c92faaed5c3af46856b6299c98933dc722819cb5bc2ca052c5522166'
 
     steps:
+      - name: Prepare macOS CI tools
+        if: runner.os == 'macOS'
+        uses: tanvrit/artifactory/.github/actions/macos-ci-tools@main
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -108,6 +95,45 @@ jobs:
 
       - name: Install Inkscape (for Wedding icon SVG filters)
         run: |
+          set -euo pipefail
+
+          # Native macOS DMGs are pinned to the official Homebrew installer checksums.
+          if [ "$(uname -s)" = Darwin ]; then
+            case "$(uname -m)" in
+              arm64) url="https://media.inkscape.org/dl/resources/file/Inkscape-1.4.4_arm64.dmg"; want="eacca94ab01e59467cdd5452a2867c3734450f9a4cfb3346956cc9b07f34f3f1" ;;
+              x86_64) url="https://media.inkscape.org/dl/resources/file/Inkscape-1.4.4_x86_64.dmg"; want="17ff9f49b60115237cad9b60605950e26b11b04600e726a4513224aa373aee11" ;;
+              *) echo "::error::Unsupported macOS architecture"; exit 1 ;;
+            esac
+            cache="$CI_TOOLS_DIR/Inkscape-$INKSCAPE_VERSION-$(uname -m).dmg"
+            if ! echo "$want  $cache" | sha256sum -c --status - 2>/dev/null; then
+              tmp="$(mktemp "$CI_TOOLS_DIR/.Inkscape.XXXXXX")"
+              trap 'rm -f "$tmp"' EXIT
+              curl -fsSL --retry 3 -o "$tmp" "$url"
+              echo "$want  $tmp" | sha256sum -c -
+              mv -f "$tmp" "$cache"
+              trap - EXIT
+            fi
+            image="$RUNNER_TEMP/Inkscape.dmg"
+            cp "$cache" "$image"
+            echo "$want  $image" | sha256sum -c -
+            mount="$(mktemp -d "$RUNNER_TEMP/inkscape-mount.XXXXXX")"
+            trap 'hdiutil detach "$mount" >/dev/null 2>&1 || true' EXIT
+            hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$image" >/dev/null
+            app="$RUNNER_TEMP/Inkscape-$INKSCAPE_VERSION.app"
+            ditto "$mount/Inkscape.app" "$app"
+            hdiutil detach "$mount" >/dev/null
+            trap - EXIT
+            rmdir "$mount"
+            codesign --verify --deep --strict "$app"
+            bin="$RUNNER_TEMP/inkscape-bin"
+            mkdir -p "$bin"
+            printf '#!/bin/sh\nexec "%s/Contents/MacOS/inkscape" "$@"\n' "$app" > "$bin/inkscape"
+            chmod +x "$bin/inkscape"
+            echo "$bin" >> "$GITHUB_PATH"
+            "$bin/inkscape" --version
+            exit 0
+          fi
+
           set -euo pipefail
 
           # Only the downloaded AppImage is shared between runs, and it is
@@ -146,7 +172,6 @@ jobs:
           # fails on a missing or failing inkscape instead of falling back to
           # sharp, which cannot render the Wedding icon's SVG filters.
           "$bin/inkscape" --version
-
       - name: Install dependencies
         run: npm ci
         working-directory: scripts
