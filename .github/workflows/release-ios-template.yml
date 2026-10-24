@@ -62,6 +62,11 @@ on:
       bundle_id:
         type: string
         required: true
+      additional_bundle_ids:
+        description: 'JSON array of additional app-extension bundle IDs. Match fetches and exports each target with its own profile.'
+        type: string
+        required: false
+        default: '[]'
       xcodeproj_path:
         type: string
         required: false
@@ -304,7 +309,7 @@ jobs:
             if [ -d "$XCODE_APP_ALT" ]; then
               XCODE_APP="$XCODE_APP_ALT"
             else
-              echo "::error::Xcode ${VERSION} not installed on this runner. Available: $(ls /Applications | grep -i Xcode || echo 'none')"
+              echo "::error::Xcode ${VERSION} not installed on this runner. Available: $(find /Applications -maxdepth 1 -iname '*xcode*' -print)"
               exit 1
             fi
           fi
@@ -351,13 +356,24 @@ jobs:
       # + App Store provisioning profile into that keychain WITHOUT mutating the
       # Match repo. The temp keychain name/password are exported for the manual
       # archive/export steps below.
+      - name: Plan application and extension provisioning
+        id: ios-signing
+        if: steps.guard.outputs.supported == 'true' && steps.signmode.outputs.match == 'true'
+        uses: tanvrit/artifactory/.github/actions/ios-signing-plan@main
+        with:
+          bundle_id: ${{ inputs.bundle_id }}
+          additional_bundle_ids: ${{ inputs.additional_bundle_ids }}
+          apple_team_id: ${{ inputs.apple_team_id }}
+          export_method: ${{ inputs.export_method }}
+          export_options_path: ${{ runner.temp }}/exportOptions.plist
+
       - name: Set up Fastlane Match signing
         if: steps.guard.outputs.supported == 'true' && steps.signmode.outputs.match == 'true'
         env:
           MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
-          BUNDLE_ID: ${{ inputs.bundle_id }}
+          MATCH_APP_IDENTIFIERS: ${{ steps.ios-signing.outputs.app_identifiers }}
           APPLE_TEAM_ID: ${{ inputs.apple_team_id }}
           MATCH_TYPE: appstore
         run: |
@@ -382,12 +398,16 @@ jobs:
           security set-keychain-settings -lut 21600 "$SIGN_KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PW" "$SIGN_KEYCHAIN"
           # Prepend to the user search list, preserving the existing keychains.
-          security list-keychains -d user -s "$SIGN_KEYCHAIN" $(security list-keychains -d user | sed 's/"//g')
+          EXISTING_KEYCHAINS=()
+          while IFS= read -r keychain; do
+            if [ -n "$keychain" ]; then EXISTING_KEYCHAINS+=("$keychain"); fi
+          done < <(security list-keychains -d user | sed -E 's/^[[:space:]]*"//; s/"[[:space:]]*$//')
+          security list-keychains -d user -s "$SIGN_KEYCHAIN" "${EXISTING_KEYCHAINS[@]}"
           # --readonly: never generate/revoke — just fetch existing material.
           fastlane match "$MATCH_TYPE" \
             --readonly \
             --git_url "$MATCH_GIT_URL" \
-            --app_identifier "$BUNDLE_ID" \
+            --app_identifier "$MATCH_APP_IDENTIFIERS" \
             --team_id "$APPLE_TEAM_ID" \
             --keychain_name "$SIGN_KEYCHAIN" \
             --keychain_password "$KEYCHAIN_PW"
@@ -438,10 +458,9 @@ jobs:
         if: steps.guard.outputs.supported == 'true' && steps.signmode.outputs.match == 'true'
         env:
           DEVELOPMENT_TEAM: ${{ inputs.apple_team_id }}
-          BUNDLE_ID: ${{ inputs.bundle_id }}
+          PROFILE_SPECIFIER: ${{ steps.ios-signing.outputs.profile_specifier }}
         run: |
           set -euo pipefail
-          PROFILE="match AppStore ${BUNDLE_ID}"
           xcodebuild \
             -project "${{ inputs.xcodeproj_path }}" \
             -scheme "${{ inputs.scheme }}" \
@@ -451,7 +470,7 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
             CODE_SIGN_IDENTITY="Apple Distribution" \
-            PROVISIONING_PROFILE_SPECIFIER="$PROFILE" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_SPECIFIER" \
             OTHER_CODE_SIGN_FLAGS="--keychain $SIGN_KEYCHAIN" \
             archive
 
@@ -478,30 +497,12 @@ jobs:
             -allowProvisioningUpdates
 
       # Manual export (Match path): pin the signing certificate + the Match
-      # provisioning profile explicitly. No -allowProvisioningUpdates.
+      # provisioning profiles per bundle ID. No -allowProvisioningUpdates.
       - name: xcodebuild -exportArchive (Match manual signing)
         if: steps.guard.outputs.supported == 'true' && steps.signmode.outputs.match == 'true'
-        env:
-          BUNDLE_ID: ${{ inputs.bundle_id }}
         run: |
           set -euo pipefail
-          PROFILE="match AppStore ${BUNDLE_ID}"
-          cat > "$RUNNER_TEMP/exportOptions.plist" <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key><string>${{ inputs.export_method }}</string>
-            <key>teamID</key><string>${{ inputs.apple_team_id }}</string>
-            <key>signingStyle</key><string>manual</string>
-            <key>signingCertificate</key><string>Apple Distribution</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>${BUNDLE_ID}</key><string>${PROFILE}</string>
-            </dict>
-          </dict>
-          </plist>
-          EOF
+          # The validated signing-plan action wrote every app/extension profile.
           xcodebuild \
             -exportArchive \
             -archivePath "$RUNNER_TEMP/${{ inputs.product }}.xcarchive" \

@@ -464,3 +464,25 @@ After landing a new template or modifying an existing one, verify on
 | 2026-05-11 | Final retirement of release-desktop-template.yml | Zero callers remained |
 | 2026-05-12 | Expand `PLATFORM_CONFIGS` to use `ALL_OS_KEYS` constant | Every platform has every target; no per-product OS list to maintain |
 | 2026-05-13 | Author this canonical doc | Bus-factor protection |
+
+### iOS app extensions and portable Match signing
+
+The iOS template accepts optional `additional_bundle_ids`, a JSON array such as
+`["com.example.App.ScreenShare"]`. These must be distinct descendants of the main
+`bundle_id`. The default `[]` retains the single-app Match profile behavior.
+For opted-in extensions, Match fetches the existing App Store profiles for every
+identifier, manual archive resolves `match AppStore $(PRODUCT_BUNDLE_IDENTIFIER)`
+for each target, and exportOptions maps every bundle ID to its own profile. The
+main app profile is never reused for a Broadcast Upload Extension.
+
+Register the actual bundle IDs and shared App Group in the existing Apple
+Developer team and update the encrypted Match repository before a signed release;
+Match remains `--readonly`. The automatic-signing path still resolves each
+project target from the existing signed-in Apple account. Neither path creates a
+new team or changes an application's identity. A simulator build does not verify
+provisioning or permission for a physical-device screen broadcast.
+
+The bounded planner's fixtures run without signing credentials:
+`python3 -m unittest discover -s .github/actions/ios-signing-plan -p test_plan.py -v`.
+This optional template change is shared by the fleet; unrelated callers keep the
+empty extension list and automatic signing is unchanged.

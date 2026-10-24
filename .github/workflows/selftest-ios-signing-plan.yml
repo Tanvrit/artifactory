@@ -1,0 +1,25 @@
+name: Self-test iOS signing plan
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/actions/ios-signing-plan/**'
+      - '.github/workflows/release-ios-template.yml'
+      - '.github/workflows/selftest-ios-signing-plan.yml'
+  push:
+    paths:
+      - '.github/actions/ios-signing-plan/**'
+      - '.github/workflows/release-ios-template.yml'
+      - '.github/workflows/selftest-ios-signing-plan.yml'
+permissions:
+  contents: read
+jobs:
+  signing-plan:
+    runs-on:
+      group: tanvrit
+      labels: [self-hosted, macOS, ARM64]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify bounded multi-target signing plan
+        run: python3 -m unittest discover -s .github/actions/ios-signing-plan -p test_plan.py -v

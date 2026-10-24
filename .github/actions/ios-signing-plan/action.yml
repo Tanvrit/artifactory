@@ -1,0 +1,38 @@
+name: iOS signing plan
+description: Validated Match identifiers and per-target manual provisioning for app extensions.
+inputs:
+  bundle_id:
+    required: true
+    description: Main application bundle ID.
+  additional_bundle_ids:
+    required: false
+    default: '[]'
+    description: JSON array of extension bundle IDs beneath the main application bundle ID.
+  apple_team_id:
+    required: true
+    description: Existing Apple Developer team ID.
+  export_method:
+    required: true
+    description: Xcode archive export method.
+  export_options_path:
+    required: true
+    description: Job-private exportOptions plist path.
+outputs:
+  app_identifiers:
+    value: ${{ steps.plan.outputs.app_identifiers }}
+    description: Comma-separated application and extension IDs passed to Fastlane Match.
+  profile_specifier:
+    value: ${{ steps.plan.outputs.profile_specifier }}
+    description: Literal per-target Xcode profile expression when extensions are configured.
+runs:
+  using: composite
+  steps:
+    - id: plan
+      shell: bash
+      env:
+        BUNDLE_ID: ${{ inputs.bundle_id }}
+        ADDITIONAL_BUNDLE_IDS: ${{ inputs.additional_bundle_ids }}
+        APPLE_TEAM_ID: ${{ inputs.apple_team_id }}
+        EXPORT_METHOD: ${{ inputs.export_method }}
+        EXPORT_OPTIONS_PATH: ${{ inputs.export_options_path }}
+      run: python3 "$GITHUB_ACTION_PATH/plan.py"
