@@ -159,6 +159,25 @@ class AndroidPublicationTest(unittest.TestCase):
         for flag in ("--no-daemon", "--no-configuration-cache", "-Pkotlin.compiler.execution.strategy=in-process"):
             self.assertIn(flag, build["run"])
 
+    def test_private_project_cache_is_scoped_to_owned_temporary_directory(self):
+        prepare = self.steps["Prepare private Android project cache"]
+        cleanup = self.steps["Remove private Android project cache"]
+        self.assertIn("umask 077", prepare["run"])
+        self.assertIn('mktemp -d "$RUNNER_TEMP/release-project-cache.XXXXXX"', prepare["run"])
+        self.assertIn("always()", cleanup["if"])
+        self.assertNotIn("inputs.publish_artifacts", cleanup["if"])
+        self.assertEqual(self.steps["Build APK + AAB"]["env"]["ANDROID_PROJECT_CACHE"], "${{ steps.android-project-cache.outputs.path }}")
+        self.assertIn('--project-cache-dir "$ANDROID_PROJECT_CACHE"', self.steps["Build APK + AAB"]["run"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            unrelated = root / "existing-project-cache"
+            unrelated.mkdir()
+            result = subprocess.run(["bash", "-c", cleanup["run"]], cwd=root,
+                                    env={"PATH": os.environ["PATH"], "RUNNER_TEMP": directory,
+                                         "ANDROID_PROJECT_CACHE": str(unrelated)}, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertTrue(unrelated.exists())
+
     def test_generated_signing_configuration_cleanup_is_always_and_bounded_without_reading_files(self):
         cleanup = self.steps["Remove generated Android signing configuration"]
         self.assertIn("always()", cleanup["if"])
@@ -222,9 +241,13 @@ class AndroidPublicationTest(unittest.TestCase):
                 root = Path(directory)
                 wrapper = root / "gradlew"
                 wrapper.write_text("#!/usr/bin/env python3\nimport os,sys\n"
+                                   + "from pathlib import Path\n"
                                    + "assert all(os.environ.get(k) == v for k,v in " + repr(private) + ".items())\n"
                                    + "assert 'ANDROID_SIGNING_KEYSTORE' not in os.environ\n"
                                    + "assert {'--no-daemon','--no-configuration-cache','-Pkotlin.compiler.execution.strategy=in-process'} <= set(sys.argv)\n"
+                                   + "cache = Path(sys.argv[sys.argv.index('--project-cache-dir') + 1])\n"
+                                   + "assert cache == Path(os.environ['ANDROID_PROJECT_CACHE']) and cache.stat().st_mode & 0o777 == 0o700\n"
+                                   + "(cache / 'execution-history-fixture').write_text('SYNTHETIC private history; cleanup must not read it')\n"
                                    + "sys.exit(int(os.environ['SYNTHETIC_EXIT']))\n")
                 wrapper.chmod(0o700)
                 command_env = {"PATH": os.environ["PATH"], "RUNNER_TEMP": directory,
@@ -235,8 +258,12 @@ class AndroidPublicationTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertNotIn(base64.b64encode(b"synthetic-key").decode(), result.stdout + result.stderr)
                 created = Path(dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())["path"])
+                result = subprocess.run(["bash", "-c", self.steps["Prepare private Android project cache"]["run"]], cwd=root,
+                                        env=dict(command_env, GITHUB_OUTPUT=str(root / "cache-output")), capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                cache = Path(dict(line.split("=", 1) for line in (root / "cache-output").read_text().splitlines())["path"])
                 result = subprocess.run(["bash", "-x", "-c", build], cwd=root,
-                                        env=dict(command_env, RELEASE_STORE_FILE=str(created), SYNTHETIC_EXIT=str(exit_code), **private),
+                                        env=dict(command_env, RELEASE_STORE_FILE=str(created), ANDROID_PROJECT_CACHE=str(cache), SYNTHETIC_EXIT=str(exit_code), **private),
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, exit_code, result.stderr)
                 self.assertFalse((root / "injected").exists())
@@ -247,6 +274,10 @@ class AndroidPublicationTest(unittest.TestCase):
                                                 env=dict(command_env, KEYSTORE_PATH=str(created)), capture_output=True, text=True)
                 self.assertEqual(cleanup_result.returncode, 0, cleanup_result.stderr)
                 self.assertFalse(created.exists())
+                cache_cleanup = subprocess.run(["bash", "-c", self.steps["Remove private Android project cache"]["run"]], cwd=root,
+                                               env=dict(command_env, ANDROID_PROJECT_CACHE=str(cache)), capture_output=True, text=True)
+                self.assertEqual(cache_cleanup.returncode, 0, cache_cleanup.stderr)
+                self.assertFalse(cache.exists())
 
 
 if __name__ == "__main__":

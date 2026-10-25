@@ -210,6 +210,16 @@ jobs:
             exit 1
           fi
 
+      - name: Prepare private Android project cache
+        id: android-project-cache
+        if: steps.guard.outputs.supported == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          CACHE_DIR="$(mktemp -d "$RUNNER_TEMP/release-project-cache.XXXXXX")"
+          printf 'path=%s\n' "$CACHE_DIR" >> "$GITHUB_OUTPUT"
+
       # Decode the keystore into a temp file. Android Gradle plugin reads
       # signing config from env vars our build.gradle.kts blocks reference
       # (RELEASE_STORE_FILE, RELEASE_STORE_PASSWORD, etc.).
@@ -280,6 +290,7 @@ jobs:
           RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEYSTORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
+          ANDROID_PROJECT_CACHE: ${{ steps.android-project-cache.outputs.path }}
         run: |
           set +x
           # --no-configuration-cache: AGP 9.x + Gradle 9.x trips a serialization
@@ -289,6 +300,7 @@ jobs:
                     :${{ inputs.gradle_module }}:bundleRelease \
                     -PappVersion=${{ inputs.version }} \
                     -Pkotlin.compiler.execution.strategy=in-process \
+                    --project-cache-dir "$ANDROID_PROJECT_CACHE" \
                     --no-daemon --no-configuration-cache
 
       # ── Signature gate (2026-08-22) ───────────────────────────────────────
@@ -629,6 +641,26 @@ jobs:
         env:
           KEYSTORE_PATH: ${{ steps.android-keystore.outputs.path }}
         run: rm -f -- "$KEYSTORE_PATH"
+
+      - name: Remove private Android project cache
+        if: always() && steps.android-project-cache.outputs.path != ''
+        shell: bash
+        env:
+          ANDROID_PROJECT_CACHE: ${{ steps.android-project-cache.outputs.path }}
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          import shutil
+          import sys
+          path = Path(os.environ['ANDROID_PROJECT_CACHE'])
+          if path.parent.resolve() != Path(os.environ['RUNNER_TEMP']).resolve() or not path.name.startswith('release-project-cache.'):
+              sys.exit('::error::Refusing to remove a project cache outside this job temporary-directory contract.')
+          if path.is_symlink():
+              path.unlink()
+          elif path.exists():
+              shutil.rmtree(path)
+          PYTHON
 
       - name: Remove temporary Firebase configuration
         if: always() && steps.firebase-config.outputs.created == 'true'
