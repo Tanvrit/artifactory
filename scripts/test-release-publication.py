@@ -1,8 +1,12 @@
 """Workflow guard regressions. Synthetic inputs only; never executes a release."""
 
 import ast
+import base64
+import os
 import re
 from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -110,6 +114,34 @@ class AndroidPublicationTest(unittest.TestCase):
         self.assertIn("umask 077", decode["run"])
         self.assertIn('mktemp "$RUNNER_TEMP/release-signing.XXXXXX"', decode["run"])
         self.assertEqual(keystore["env"]["KEYSTORE_PATH"], "${{ steps.android-keystore.outputs.path }}")
+
+    def test_synthetic_keystore_is_private_unique_and_cleaned_without_overwriting_an_existing_file(self):
+        decode = self.steps["Decode signing keystore"]["run"]
+        # Expand only fixed secret expressions with synthetic fixture values;
+        # this test never reads a credential store or contacts a signing service.
+        decode = re.sub(r"\$\{\{\s*secrets\.[A-Z_]+\s*\}\}", "synthetic-fixture", decode)
+        cleanup = self.steps["Remove temporary Android signing keystore"]["run"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            existing = root / "release.keystore"
+            existing.write_bytes(b"existing-unrelated-file")
+            existing.chmod(0o644)
+            env = {"PATH": os.environ["PATH"], "RUNNER_TEMP": directory,
+                   "GITHUB_ENV": str(root / "environment"), "GITHUB_OUTPUT": str(root / "output"),
+                   "ANDROID_SIGNING_KEYSTORE": base64.b64encode(b"synthetic-key-bytes").decode()}
+            result = subprocess.run(["bash", "-c", decode], cwd=root, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            values = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+            created = Path(values["path"])
+            self.assertNotEqual(created, existing)
+            self.assertEqual(created.read_bytes(), b"synthetic-key-bytes")
+            self.assertEqual(created.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(existing.read_bytes(), b"existing-unrelated-file")
+            env["KEYSTORE_PATH"] = str(created)
+            result = subprocess.run(["bash", "-c", cleanup], cwd=root, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(created.exists())
+            self.assertTrue(existing.exists())
 
 
 if __name__ == "__main__":
