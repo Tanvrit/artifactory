@@ -1,6 +1,7 @@
 """Synthetic App Store API/profile tests; no real account or signing material."""
 
 import base64
+import io
 from datetime import datetime, timedelta
 from pathlib import Path
 import tempfile
@@ -8,12 +9,39 @@ import json
 import os
 import subprocess
 import unittest
+from urllib.request import HTTPSHandler, build_opener
+from urllib.response import addinfourl
 
 import provision
 from test_sign import Client, Tools, profile
 
 
 class ProvisionTest(unittest.TestCase):
+    def test_redirects_never_forward_the_token_to_another_endpoint(self):
+        for code in (301, 302, 303, 307, 308):
+            for body in (None, {"synthetic": True}):
+                with self.subTest(code=code, method="POST" if body else "GET"):
+                    calls = []
+
+                    class SyntheticHTTPS(HTTPSHandler):
+                        def https_open(self, request):
+                            calls.append((request.full_url, request.get_header("Authorization")))
+                            response = addinfourl(io.BytesIO(b"SYNTHETIC-PRIVATE-RESPONSE"),
+                                                  {"Location": "https://foreign.example/token-sink"},
+                                                  request.full_url, code)
+                            response.msg = "Redirect"
+                            return response
+
+                    client = provision.AppStoreClient("SYNTHETIC-TOKEN")
+                    client.opener = build_opener(provision.NoRedirect(), SyntheticHTTPS())
+                    with self.assertRaisesRegex(provision.ProvisioningError, rf"HTTP {code}") as error:
+                        client.request("certificates", body=body)
+                    self.assertEqual(len(calls), 1)
+                    self.assertEqual(calls[0][0], "https://api.appstoreconnect.apple.com/v1/certificates")
+                    self.assertEqual(calls[0][1].split()[1], "SYNTHETIC-TOKEN")
+                    self.assertNotIn("SYNTHETIC", str(error.exception))
+                    self.assertNotIn("foreign.example", str(error.exception))
+
     def test_jwt_signature_verifies_with_generated_synthetic_p256_key(self):
         def execute(stage, args, env):
             result = subprocess.run(args, env=env, capture_output=True, check=True)

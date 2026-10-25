@@ -10,11 +10,18 @@ import time
 import uuid
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 class ProvisioningError(Exception):
     pass
+
+
+class NoRedirect(HTTPRedirectHandler):
+    """A provisioning JWT must never be forwarded to a redirected endpoint."""
+
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        return None
 
 
 def b64url(value):
@@ -59,6 +66,7 @@ class AppStoreClient:
 
     def __init__(self, token):
         self.token = token
+        self.opener = build_opener(NoRedirect())
 
     def request(self, path, *, body=None):
         url = path if path.startswith(self.origin) else self.origin + path
@@ -68,7 +76,7 @@ class AppStoreClient:
         request = Request(url, data=data, headers={"Authorization": " ".join(("Bearer", self.token)),
                           "Content-Type": "application/json"}, method="POST" if body is not None else "GET")
         try:
-            with urlopen(request, timeout=60) as response:
+            with self.opener.open(request, timeout=60) as response:
                 raw = response.read(4_000_001)
         except HTTPError as error:
             raise ProvisioningError(f"Provisioning API request failed (HTTP {error.code}); response withheld") from None
