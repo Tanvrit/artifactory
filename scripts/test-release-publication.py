@@ -159,6 +159,34 @@ class AndroidPublicationTest(unittest.TestCase):
         for flag in ("--no-daemon", "--no-configuration-cache", "-Pkotlin.compiler.execution.strategy=in-process"):
             self.assertIn(flag, build["run"])
 
+    def test_generated_signing_configuration_cleanup_is_always_and_bounded_without_reading_files(self):
+        cleanup = self.steps["Remove generated Android signing configuration"]
+        self.assertIn("always()", cleanup["if"])
+        self.assertNotIn("inputs.publish_artifacts", cleanup["if"])
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
+            root = Path(directory)
+            module = root / "composeApp"
+            target = module / "build/intermediates/signing_config_data"
+            private_file = target / "release/signingConfigWriterRelease/signing-config-data.json"
+            private_file.parent.mkdir(parents=True)
+            private_file.write_bytes(b"SYNTHETIC private signing fixture; never read by cleanup")
+            private_file.chmod(0o000)
+            public_file = module / "build/outputs/apk/release/test.apk"
+            public_file.parent.mkdir(parents=True)
+            public_file.write_bytes(b"unrelated synthetic artifact")
+            env = {"PATH": os.environ["PATH"], "MODULE_DIR": "composeApp"}
+            result = subprocess.run(["bash", "-c", cleanup["run"]], cwd=root, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(target.exists())
+            self.assertTrue(public_file.exists())
+            self.assertNotIn("SYNTHETIC private", result.stdout + result.stderr)
+            outside_target = Path(outside) / "build/intermediates/signing_config_data"
+            outside_target.mkdir(parents=True)
+            result = subprocess.run(["bash", "-c", cleanup["run"]], cwd=root,
+                                    env=dict(env, MODULE_DIR=outside), capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertTrue(outside_target.exists())
+
     def test_invalid_synthetic_keystore_is_reported_without_values_and_owned_file_is_cleanable(self):
         fixture = "%%% invalid SYNTHETIC encoded private input %%%"
         with tempfile.TemporaryDirectory() as directory:

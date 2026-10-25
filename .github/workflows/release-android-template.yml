@@ -599,6 +599,30 @@ jobs:
               "release_notes_hi": "${{ inputs.release_notes_hi }}"
             }
 
+      # AGP can serialize signing passwords for feature/test signing. Delete only
+      # that generated artifact directory without opening its credential files.
+      - name: Remove generated Android signing configuration
+        if: always() && steps.guard.outputs.supported == 'true'
+        shell: bash
+        env:
+          MODULE_DIR: ${{ steps.guard.outputs.module_dir }}
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          import shutil
+          import sys
+          path = Path(os.environ['MODULE_DIR']) / 'build/intermediates/signing_config_data'
+          try:
+              path.resolve().relative_to(Path.cwd().resolve())
+          except ValueError:
+              sys.exit('::error::Refusing signing-configuration cleanup outside the application checkout.')
+          if path.is_symlink():
+              path.unlink()
+          elif path.exists():
+              shutil.rmtree(path)
+          PYTHON
+
       - name: Remove temporary Android signing keystore
         if: always() && steps.android-keystore.outputs.path != ''
         shell: bash
