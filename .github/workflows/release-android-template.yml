@@ -220,15 +220,15 @@ jobs:
           KEYSTORE_PRESENT: ${{ secrets.ANDROID_SIGNING_KEYSTORE != '' && 'true' || 'false' }}
           ANDROID_SIGNING_KEYSTORE: ${{ secrets.ANDROID_SIGNING_KEYSTORE }}
         run: |
+          set +x
           set -euo pipefail
           umask 077
           KS="$(mktemp "$RUNNER_TEMP/release-signing.XXXXXX")"
           echo "path=$KS" >> "$GITHUB_OUTPUT"
-          echo "$ANDROID_SIGNING_KEYSTORE" | base64 --decode > "$KS"
-          echo "RELEASE_STORE_FILE=$KS" >> "$GITHUB_ENV"
-          echo "RELEASE_STORE_PASSWORD=${{ secrets.ANDROID_SIGNING_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
-          echo "RELEASE_KEY_ALIAS=${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}" >> "$GITHUB_ENV"
-          echo "RELEASE_KEY_PASSWORD=${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          if ! printf '%s' "$ANDROID_SIGNING_KEYSTORE" | base64 --decode > "$KS" 2>/dev/null; then
+            echo "::error::Signing keystore decoding failed; values were withheld."
+            exit 1
+          fi
 
       - name: Prepare app-specific Firebase Messaging configuration
         id: firebase-config
@@ -276,12 +276,19 @@ jobs:
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE_STORE_FILE: ${{ steps.android-keystore.outputs.path }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
         run: |
+          set +x
           # --no-configuration-cache: AGP 9.x + Gradle 9.x trips a serialization
           # error in ProcessNavigationXmlTask when config cache is on.
+          # Keep signing values out of command files and reusable compiler daemons.
           ./gradlew :${{ inputs.gradle_module }}:assembleRelease \
                     :${{ inputs.gradle_module }}:bundleRelease \
                     -PappVersion=${{ inputs.version }} \
+                    -Pkotlin.compiler.execution.strategy=in-process \
                     --no-daemon --no-configuration-cache
 
       # ── Signature gate (2026-08-22) ───────────────────────────────────────

@@ -117,9 +117,7 @@ class AndroidPublicationTest(unittest.TestCase):
 
     def test_synthetic_keystore_is_private_unique_and_cleaned_without_overwriting_an_existing_file(self):
         decode = self.steps["Decode signing keystore"]["run"]
-        # Expand only fixed secret expressions with synthetic fixture values;
-        # this test never reads a credential store or contacts a signing service.
-        decode = re.sub(r"\$\{\{\s*secrets\.[A-Z_]+\s*\}\}", "synthetic-fixture", decode)
+        self.assertNotIn("secrets.", decode)
         cleanup = self.steps["Remove temporary Android signing keystore"]["run"]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -142,6 +140,85 @@ class AndroidPublicationTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(created.exists())
             self.assertTrue(existing.exists())
+
+    def test_signing_values_are_scoped_to_build_environment_without_rendered_secret_scripts(self):
+        private = {
+            "RELEASE_STORE_PASSWORD": "ANDROID_SIGNING_KEYSTORE_PASSWORD",
+            "RELEASE_KEY_ALIAS": "ANDROID_SIGNING_KEY_ALIAS",
+            "RELEASE_KEY_PASSWORD": "ANDROID_SIGNING_KEY_PASSWORD",
+        }
+        build = self.steps["Build APK + AAB"]
+        self.assertEqual(build["env"]["RELEASE_STORE_FILE"], "${{ steps.android-keystore.outputs.path }}")
+        for key, secret in private.items():
+            self.assertEqual(build["env"][key], "${{ secrets." + secret + " }}")
+            for name, step in self.steps.items():
+                self.assertNotIn("secrets." + secret, step.get("run", ""), name)
+                self.assertNotIn("GITHUB_ENV", step.get("run", ""), name)
+                if name != "Build APK + AAB":
+                    self.assertNotIn(key, step.get("env", {}), name)
+        for flag in ("--no-daemon", "--no-configuration-cache", "-Pkotlin.compiler.execution.strategy=in-process"):
+            self.assertIn(flag, build["run"])
+
+    def test_invalid_synthetic_keystore_is_reported_without_values_and_owned_file_is_cleanable(self):
+        fixture = "%%% invalid SYNTHETIC encoded private input %%%"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {"PATH": os.environ["PATH"], "RUNNER_TEMP": directory,
+                   "GITHUB_ENV": str(root / "environment"), "GITHUB_OUTPUT": str(root / "output"),
+                   "ANDROID_SIGNING_KEYSTORE": fixture}
+            result = subprocess.run(["bash", "-x", "-c", self.steps["Decode signing keystore"]["run"]],
+                                    cwd=root, env=env, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn(fixture, result.stdout + result.stderr)
+            self.assertIn("values were withheld", result.stdout)
+            created = Path(dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())["path"])
+            self.assertEqual(created.stat().st_mode & 0o777, 0o600)
+            self.assertFalse((root / "environment").exists())
+            result = subprocess.run(["bash", "-c", self.steps["Remove temporary Android signing keystore"]["run"]],
+                                    cwd=root, env=dict(env, KEYSTORE_PATH=str(created)), capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(created.exists())
+
+    def test_synthetic_build_receives_literal_private_values_without_persistence_on_success_or_failure(self):
+        # Execute only a fake Gradle wrapper with synthetic strings. Shell syntax
+        # in the fixture must remain literal, never become generated shell source.
+        private = {"RELEASE_STORE_PASSWORD": 'SYNTHETIC $(touch injected) "password"\nsecond line',
+                   "RELEASE_KEY_ALIAS": "SYNTHETIC `touch injected` alias",
+                   "RELEASE_KEY_PASSWORD": "SYNTHETIC key password"}
+        build = self.steps["Build APK + AAB"]["run"]
+        build = build.replace("${{ inputs.gradle_module }}", "composeApp").replace("${{ inputs.version }}", "0.0.0")
+        decode = self.steps["Decode signing keystore"]["run"]
+        cleanup = self.steps["Remove temporary Android signing keystore"]["run"]
+        for exit_code in (0, 23):
+            with self.subTest(exit_code=exit_code), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                wrapper = root / "gradlew"
+                wrapper.write_text("#!/usr/bin/env python3\nimport os,sys\n"
+                                   + "assert all(os.environ.get(k) == v for k,v in " + repr(private) + ".items())\n"
+                                   + "assert 'ANDROID_SIGNING_KEYSTORE' not in os.environ\n"
+                                   + "assert {'--no-daemon','--no-configuration-cache','-Pkotlin.compiler.execution.strategy=in-process'} <= set(sys.argv)\n"
+                                   + "sys.exit(int(os.environ['SYNTHETIC_EXIT']))\n")
+                wrapper.chmod(0o700)
+                command_env = {"PATH": os.environ["PATH"], "RUNNER_TEMP": directory,
+                               "GITHUB_ENV": str(root / "environment"), "GITHUB_OUTPUT": str(root / "output")}
+                result = subprocess.run(["bash", "-x", "-c", decode], cwd=root,
+                                        env=dict(command_env, ANDROID_SIGNING_KEYSTORE=base64.b64encode(b"synthetic-key").decode()),
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn(base64.b64encode(b"synthetic-key").decode(), result.stdout + result.stderr)
+                created = Path(dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())["path"])
+                result = subprocess.run(["bash", "-x", "-c", build], cwd=root,
+                                        env=dict(command_env, RELEASE_STORE_FILE=str(created), SYNTHETIC_EXIT=str(exit_code), **private),
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, exit_code, result.stderr)
+                self.assertFalse((root / "injected").exists())
+                self.assertFalse((root / "environment").exists())
+                for value in private.values():
+                    self.assertNotIn(value, result.stdout + result.stderr + (root / "output").read_text())
+                cleanup_result = subprocess.run(["bash", "-c", cleanup], cwd=root,
+                                                env=dict(command_env, KEYSTORE_PATH=str(created)), capture_output=True, text=True)
+                self.assertEqual(cleanup_result.returncode, 0, cleanup_result.stderr)
+                self.assertFalse(created.exists())
 
 
 if __name__ == "__main__":
