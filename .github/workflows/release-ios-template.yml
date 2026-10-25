@@ -613,7 +613,7 @@ jobs:
       # archive/export. No P8 is written into the shared runner HOME.
       - name: Portable certificate/API-key signing
         if: steps.guard.outputs.supported == 'true' && inputs.portable_signing
-        uses: tanvrit/artifactory/.github/actions/portable-ios-signing@main
+        uses: tanvrit/artifactory/.github/actions/portable-ios-signing@0bc52ef28a8cb75d6e6a30ce89cb9805e32fb941
         with:
           project: ${{ inputs.xcodeproj_path }}
           scheme: ${{ inputs.scheme }}
