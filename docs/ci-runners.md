@@ -63,3 +63,17 @@ with YAML parsing, actionlint and the self-hosted runner guard. Publish Artifact
 first because callers consume its shared actions and reusable workflows at `main`.
 Only then publish the caller workflow changes. Existing queued runs keep the labels
 from their original commit; a new commit creates runs with the new selection.
+
+### macOS display session for Compose tests
+
+The runner LaunchAgent must use `SessionCreate=false`. `SessionCreate=true`
+creates a separate security session even under the logged-in user's GUI domain:
+AWT then fails with `WindowServer is not available`. This was reproduced with
+the same Java 21 display probe under two temporary LaunchAgents on 2026-10-25;
+only `false` could initialize `LWCToolkit` and read the screen dimensions.
+
+Keep the GUI login active. Back up the runner plist before changing this setting,
+and reload each LaunchAgent only after its current `Runner.Worker` has exited.
+Do not interrupt a build or publication to restart the service. Verify an AWT
+display probe from a runner job after reloading, then retry failed UI test jobs.
+Do not set tests headless or skip Compose tests to work around this host issue.
