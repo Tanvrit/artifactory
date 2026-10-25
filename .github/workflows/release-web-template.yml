@@ -276,6 +276,11 @@ jobs:
             if command -v sha256sum >/dev/null 2>&1; then h=$(sha256sum "$cj" | cut -c1-10); else h=$(shasum -a 256 "$cj" | cut -c1-10); fi
             mv "$cj" "$d/composeApp.$h.js"
             [ -f "$d/composeApp.js.map" ] && mv "$d/composeApp.js.map" "$d/composeApp.$h.js.map"
+            # The bundle's license comment is rewritten below too. Keep its
+            # hashed target and the original attribution file available.
+            if [ -f "$d/composeApp.js.LICENSE.txt" ]; then
+              cp "$d/composeApp.js.LICENSE.txt" "$d/composeApp.$h.js.LICENSE.txt"
+            fi
             # Rewrite the bundle's OWN composeApp.js references (its Compose-threading
             # web worker + sourceMappingURL) to the hashed name, else the worker 404s.
             sed -i.bak "s|composeApp\.js|composeApp.$h.js|g" "$d/composeApp.$h.js" && rm -f "$d/composeApp.$h.js.bak"
