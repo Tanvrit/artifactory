@@ -144,6 +144,17 @@ app-specific provisioning. Its defaults preserve existing runner/Match callers.
 See [portable iOS signing](portable-ios-signing.md) for required repository secrets,
 Firebase configuration, cleanup and validation builds that do not publish artifacts.
 
+Both native templates accept `publish_artifacts: false` for build/signature
+validation without GitHub Release, R2 or manifest publication. Their default is
+`true`, preserving existing release callers. Android additionally requires
+`upload_play_store: true` to upload to Play during a validation run; iOS uses its
+separate `portable_upload_testflight` opt-in. Existing Android release callers
+retain their credential-gated Play behavior when publication is enabled. Neither
+validation mode changes checked-in version properties or creates a release tag.
+An explicit Android `upload_play_store: true` request fails if its Play credential
+is absent or the upload fails; default release callers retain their existing
+optional upload failure behavior.
+
 ## Manifest fan-out
 
 Each template's last step is `peter-evans/repository-dispatch@v3` posting an
