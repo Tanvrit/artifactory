@@ -33,9 +33,7 @@ jobs:
     #
     # The old comment justified self-hosted with "local npm + wrangler cache; build
     # takes ~12min on ubuntu-latest without cache warmth". Cache warmth is a
-    # preference, not a requirement — and actions/setup-node's npm cache below covers
-    # most of it. A 12-minute deploy that happens beats a 0-minute deploy that never
-    # does. Do not move this back without first confirming a runner is actually
+    # preference, not a requirement. Do not move this back without first confirming a runner is actually
     # attached to this repo AND in the `tanvrit` group.
     runs-on:
       group: tanvrit
@@ -59,8 +57,9 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: portal/package-lock.json
+          # The persistent runner already retains npm's local cache. Uploading its
+          # shared 23 GB cache after a deploy can exhaust this job's time budget.
+          package-manager-cache: false
 
       - name: Install dependencies
         run: cd portal && npm ci
