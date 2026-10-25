@@ -102,9 +102,14 @@ class AndroidPublicationTest(unittest.TestCase):
         self.assertIn("always()", cleanup["if"])
         self.assertNotIn("inputs.publish_artifacts", cleanup["if"])
         keystore = self.steps["Remove temporary Android signing keystore"]
-        self.assertEqual(keystore["if"], "always()")
-        self.assertIn('"$RUNNER_TEMP/release.keystore"', keystore["run"])
-        self.assertIn("umask 077", self.steps["Decode signing keystore"]["run"])
+        self.assertIn("always()", keystore["if"])
+        self.assertNotIn("inputs.publish_artifacts", keystore["if"])
+        self.assertIn('"$KEYSTORE_PATH"', keystore["run"])
+        decode = self.steps["Decode signing keystore"]
+        self.assertEqual(decode["id"], "android-keystore")
+        self.assertIn("umask 077", decode["run"])
+        self.assertIn('mktemp "$RUNNER_TEMP/release-signing.XXXXXX"', decode["run"])
+        self.assertEqual(keystore["env"]["KEYSTORE_PATH"], "${{ steps.android-keystore.outputs.path }}")
 
 
 if __name__ == "__main__":

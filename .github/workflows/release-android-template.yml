@@ -214,6 +214,7 @@ jobs:
       # signing config from env vars our build.gradle.kts blocks reference
       # (RELEASE_STORE_FILE, RELEASE_STORE_PASSWORD, etc.).
       - name: Decode signing keystore
+        id: android-keystore
         if: steps.guard.outputs.supported == 'true' && env.KEYSTORE_PRESENT == 'true'
         env:
           KEYSTORE_PRESENT: ${{ secrets.ANDROID_SIGNING_KEYSTORE != '' && 'true' || 'false' }}
@@ -221,7 +222,8 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          KS="$RUNNER_TEMP/release.keystore"
+          KS="$(mktemp "$RUNNER_TEMP/release-signing.XXXXXX")"
+          echo "path=$KS" >> "$GITHUB_OUTPUT"
           echo "$ANDROID_SIGNING_KEYSTORE" | base64 --decode > "$KS"
           echo "RELEASE_STORE_FILE=$KS" >> "$GITHUB_ENV"
           echo "RELEASE_STORE_PASSWORD=${{ secrets.ANDROID_SIGNING_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
@@ -591,9 +593,11 @@ jobs:
             }
 
       - name: Remove temporary Android signing keystore
-        if: always()
+        if: always() && steps.android-keystore.outputs.path != ''
         shell: bash
-        run: rm -f -- "$RUNNER_TEMP/release.keystore"
+        env:
+          KEYSTORE_PATH: ${{ steps.android-keystore.outputs.path }}
+        run: rm -f -- "$KEYSTORE_PATH"
 
       - name: Remove temporary Firebase configuration
         if: always() && steps.firebase-config.outputs.created == 'true'
