@@ -1,0 +1,39 @@
+name: Portable iOS signing
+description: Import a job-scoped distribution certificate and provision an app-specific App Store profile through Apple's API.
+inputs:
+  project:
+    required: true
+    description: Checked-out Xcode project path.
+  scheme:
+    required: true
+    description: Application scheme.
+  configuration:
+    default: Release
+    description: Xcode configuration.
+  bundle-id:
+    required: true
+    description: Expected application identifier; never overrides the project.
+  team-id:
+    required: true
+    description: Expected Apple team; must agree with APPLE_TEAM_ID when supplied.
+  export-method:
+    default: app-store
+    description: App Store export method.
+  upload-testflight:
+    default: 'false'
+    description: Explicitly upload an internal-only TestFlight build after export.
+runs:
+  using: composite
+  steps:
+    - name: Sign, export and clean temporary credentials
+      shell: bash
+      env:
+        PORTABLE_IOS_PROJECT: ${{ inputs.project }}
+        PORTABLE_IOS_SCHEME: ${{ inputs.scheme }}
+        PORTABLE_IOS_CONFIGURATION: ${{ inputs.configuration }}
+        PORTABLE_IOS_BUNDLE_ID: ${{ inputs.bundle-id }}
+        PORTABLE_IOS_TEAM_ID: ${{ inputs.team-id }}
+        PORTABLE_IOS_EXPORT_METHOD: ${{ inputs.export-method }}
+        PORTABLE_IOS_UPLOAD_TESTFLIGHT: ${{ inputs.upload-testflight }}
+        PORTABLE_IOS_ACTION_PATH: ${{ github.action_path }}
+      run: python3 "$PORTABLE_IOS_ACTION_PATH/sign.py"

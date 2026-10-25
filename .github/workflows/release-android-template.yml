@@ -62,6 +62,11 @@ on:
         type: string
         required: false
         default: 'internal'
+      firebase_messaging:
+        description: 'Opt-in to per-app GOOGLE_SERVICES_JSON validation and temporary build injection.'
+        type: boolean
+        required: false
+        default: false
       release_notes:
         type: string
         required: false
@@ -79,6 +84,9 @@ on:
         required: false
         default: '["self-hosted","macOS","ARM64"]'
     secrets:
+      GOOGLE_SERVICES_JSON:
+        description: 'Raw Firebase Android client JSON for opted-in Messaging builds; never logged or retained.'
+        required: false
       ANDROID_SIGNING_KEYSTORE:
         description: 'Base64-encoded .jks keystore'
         required: false
@@ -195,6 +203,47 @@ jobs:
           echo "RELEASE_STORE_PASSWORD=${{ secrets.ANDROID_SIGNING_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
           echo "RELEASE_KEY_ALIAS=${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}" >> "$GITHUB_ENV"
           echo "RELEASE_KEY_PASSWORD=${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+
+      - name: Prepare app-specific Firebase Messaging configuration
+        id: firebase-config
+        if: steps.guard.outputs.supported == 'true' && inputs.firebase_messaging
+        shell: bash
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          FIREBASE_EXPECTED_BUNDLE_ID: ${{ inputs.application_id }}
+          FIREBASE_ANDROID_MODULE: ${{ steps.guard.outputs.module_dir }}
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          path = Path(os.environ['FIREBASE_ANDROID_MODULE']) / 'google-services.json'
+          try:
+              path.resolve().relative_to(Path.cwd().resolve())
+          except ValueError:
+              sys.exit('::error::Firebase configuration path must be inside the application checkout.')
+          validator = Path('scripts/validate-firebase-config.py')
+          config = os.environ.get('GOOGLE_SERVICES_JSON', '')
+          if not config.strip() or not validator.is_file():
+              sys.exit('::error::Firebase Messaging requires GOOGLE_SERVICES_JSON and the caller configuration validator.')
+          try:
+              descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+          except FileExistsError:
+              sys.exit('::error::Refusing to overwrite an existing Firebase Android configuration.')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print('created=true', file=output)
+              print('path=' + str(path), file=output)
+          with os.fdopen(descriptor, 'w') as output:
+              output.write(config)
+          child_env = {key: value for key, value in os.environ.items() if key != 'GOOGLE_SERVICES_JSON'}
+          result = subprocess.run([sys.executable, str(validator), '--android', str(path), '--bundle-id',
+                                   os.environ['FIREBASE_EXPECTED_BUNDLE_ID']], env=child_env,
+                                  capture_output=True, timeout=30, check=False)
+          if result.returncode:
+              sys.exit('::error::Firebase Android configuration validation failed; configuration values were withheld.')
+          print('Firebase Android configuration validated for this application.')
+          PYTHON
 
       - name: Build APK + AAB
         if: steps.guard.outputs.supported == 'true'
@@ -517,3 +566,10 @@ jobs:
               "release_notes": "${{ inputs.release_notes }}",
               "release_notes_hi": "${{ inputs.release_notes_hi }}"
             }
+
+      - name: Remove temporary Firebase configuration
+        if: always() && steps.firebase-config.outputs.created == 'true'
+        shell: bash
+        env:
+          FIREBASE_CONFIG_PATH: ${{ steps.firebase-config.outputs.path }}
+        run: python3 -c 'import os; from pathlib import Path; Path(os.environ["FIREBASE_CONFIG_PATH"]).unlink(missing_ok=True)'

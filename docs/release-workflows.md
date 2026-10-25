@@ -139,6 +139,11 @@ jobs:
 Inputs are passed as plain strings; secrets are inherited via `secrets: inherit`
 (no per-caller secret list — secrets live at the org or per-product repo level).
 
+The iOS template additionally supports explicit certificate/API-key signing with
+app-specific provisioning. Its defaults preserve existing runner/Match callers.
+See [portable iOS signing](portable-ios-signing.md) for required repository secrets,
+Firebase configuration, cleanup and validation builds that do not publish artifacts.
+
 ## Manifest fan-out
 
 Each template's last step is `peter-evans/repository-dispatch@v3` posting an

@@ -33,6 +33,14 @@
 # with CODE_SIGN_STYLE=Manual. This path is fully additive: with the Match secrets
 # absent, the automatic path above runs unchanged.
 #
+# Signing (certificate/API key, explicit opt-in): portable_signing=true imports
+# IOS_DISTRIBUTION_CERTIFICATE_BASE64 into a private temporary keychain and uses
+# APPSTORE_CONNECT_* API-key provisioning for this app, then manual distribution
+# signing with the exact imported certificate and app-specific profile. It takes
+# precedence over Match only when explicitly enabled. The action signs/exports
+# and removes all temporary credentials in one bounded process. Optional
+# portable_upload_testflight=true uploads an internal-only build; default false.
+#
 # Scope: sign + export + TestFlight upload. The .ipa ships to:
 #   1. TestFlight (xcrun altool) — when asc_api_key_id input is set and
 #      AuthKey_<id>.p8 exists at ~/.appstoreconnect/private_keys/ on the runner
@@ -86,9 +94,9 @@ on:
         default: 'app-store'
       xcode_version:
         description: |
-          Major.minor Xcode version to select on the build runner (e.g., "16.2").
+          Major.minor Xcode version to select on the build runner (e.g., "26.1").
           Required for App Store submission since 2026-04-28 — Apple enforces
-          iOS 26 SDK which ships with Xcode 16.x. When set, the workflow runs
+          iOS 26 SDK which ships with Xcode 26 or later. When set, the workflow runs
           `xcode-select` to point at /Applications/Xcode_<version>.app. When
           empty, falls back to whatever `xcode-select -p` resolves on the
           runner — which may produce an .ipa built against an older SDK and
@@ -116,6 +124,26 @@ on:
         type: string
         required: false
         default: ''
+      portable_signing:
+        description: 'Explicit opt-in to isolated certificate/API-key automatic signing. Existing runner/Match callers are unchanged.'
+        type: boolean
+        required: false
+        default: false
+      portable_upload_testflight:
+        description: 'With portable_signing, explicitly upload an internal-only TestFlight build; never changes version/build numbers.'
+        type: boolean
+        required: false
+        default: false
+      firebase_messaging:
+        description: 'Opt-in to a validated per-app Firebase plist supplied by GOOGLE_SERVICE_INFO_PLIST; removed after the build.'
+        type: boolean
+        required: false
+        default: false
+      publish_artifacts:
+        description: 'Publish IPA to the Artifactory release, R2 and manifest. Set false for signing validation builds.'
+        type: boolean
+        required: false
+        default: true
       release_notes:
         type: string
         required: false
@@ -162,6 +190,25 @@ on:
         required: false
       ASC_API_ISSUER_ID:
         description: 'App Store Connect API Issuer ID paired with ASC_API_KEY_P8/ASC_API_KEY_ID.'
+        required: false
+      # AI-compatible certificate/API-key signing. Read only by the explicit
+      # portable_signing path; inherited presence never changes existing callers.
+      IOS_DISTRIBUTION_CERTIFICATE_BASE64:
+        required: false
+      IOS_P12_PASSWORD:
+        required: false
+      APPSTORE_CONNECT_PRIVATE_KEY:
+        description: 'Raw PEM App Store Connect API private key, same format as the AI workflow.'
+        required: false
+      APPSTORE_CONNECT_KEY_ID:
+        required: false
+      APPSTORE_CONNECT_ISSUER_ID:
+        required: false
+      APPLE_TEAM_ID:
+        description: 'Optional team cross-check; must agree with apple_team_id input.'
+        required: false
+      GOOGLE_SERVICE_INFO_PLIST:
+        description: 'Raw XML GoogleService-Info.plist for firebase_messaging callers; never logged or retained on the runner.'
         required: false
 
 jobs:
@@ -261,10 +308,28 @@ jobs:
         if: steps.guard.outputs.supported == 'true'
         shell: bash
         env:
-          MATCH_PRESENT: ${{ secrets.MATCH_GIT_URL != '' && secrets.MATCH_PASSWORD != '' && 'true' || 'false' }}
+          MATCH_PRESENT: ${{ !inputs.portable_signing && secrets.MATCH_GIT_URL != '' && secrets.MATCH_PASSWORD != '' && 'true' || 'false' }}
+          PORTABLE_SIGNING: ${{ inputs.portable_signing }}
+          PORTABLE_UPLOAD: ${{ inputs.portable_upload_testflight }}
+          PORTABLE_SECRETS_PRESENT: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 != '' && secrets.IOS_P12_PASSWORD != '' && secrets.APPSTORE_CONNECT_PRIVATE_KEY != '' && secrets.APPSTORE_CONNECT_KEY_ID != '' && secrets.APPSTORE_CONNECT_ISSUER_ID != '' && 'true' || 'false' }}
+          ADDITIONAL_BUNDLE_IDS: ${{ inputs.additional_bundle_ids }}
         run: |
+          if [ "$PORTABLE_UPLOAD" = "true" ] && [ "$PORTABLE_SIGNING" != "true" ]; then
+            echo "::error::portable_upload_testflight requires portable_signing=true."
+            exit 1
+          fi
+          if [ "$PORTABLE_SIGNING" = "true" ] && [ "$PORTABLE_SECRETS_PRESENT" != "true" ]; then
+            echo "::error::Explicit portable signing requires IOS_DISTRIBUTION_CERTIFICATE_BASE64, IOS_P12_PASSWORD and APPSTORE_CONNECT_PRIVATE_KEY/KEY_ID/ISSUER_ID."
+            exit 1
+          fi
           echo "match=$MATCH_PRESENT" >> "$GITHUB_OUTPUT"
-          if [ "$MATCH_PRESENT" = "true" ]; then
+          if [ "$PORTABLE_SIGNING" = "true" ]; then
+            if [ "$ADDITIONAL_BUNDLE_IDS" != '[]' ]; then
+              echo "::error::Portable certificate/API-key signing currently supports one application target; use Match for extensions."
+              exit 1
+            fi
+            echo "::notice::iOS signing mode: isolated certificate with app-specific API provisioning"
+          elif [ "$MATCH_PRESENT" = "true" ]; then
             echo "::notice::iOS signing mode: Fastlane Match (portable certs, manual code-signing)"
           else
             echo "::notice::iOS signing mode: automatic login-keychain (MATCH_* secrets not set)"
@@ -322,12 +387,47 @@ jobs:
         if: steps.guard.outputs.supported == 'true' && inputs.xcode_version == ''
         shell: bash
         run: |
-          echo "::warning::xcode_version input not set — building with whatever Xcode is active on this runner ($(xcode-select -p)). Apple enforces iOS 26 SDK for submissions since 2026-04-28; if this run is for App Store, set xcode_version to '16.x' to pin."
+          echo "::warning::xcode_version input not set — building with whatever Xcode is active on this runner ($(xcode-select -p)). Apple enforces iOS 26 SDK for submissions since 2026-04-28; if this run is for App Store, pin an installed Xcode 26 or later version."
 
       # No cert/profile import: signing is automatic off the macOS runner login
       # keychain where the Apple Developer account is signed into Xcode.
       # `xcodebuild -allowProvisioningUpdates` fetches/creates the
       # distribution cert + provisioning profile on demand.
+
+      - name: Prepare app-specific Firebase Messaging configuration
+        id: firebase-config
+        if: steps.guard.outputs.supported == 'true' && inputs.firebase_messaging
+        shell: bash
+        env:
+          GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
+          FIREBASE_EXPECTED_BUNDLE_ID: ${{ inputs.bundle_id }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          path = Path('iosApp/iosApp/GoogleService-Info.plist')
+          validator = Path('scripts/validate-firebase-config.py')
+          config = os.environ.get('GOOGLE_SERVICE_INFO_PLIST', '')
+          if not config.strip() or not validator.is_file():
+              sys.exit('::error::Firebase Messaging requires GOOGLE_SERVICE_INFO_PLIST and the caller configuration validator.')
+          try:
+              descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+          except FileExistsError:
+              sys.exit('::error::Refusing to overwrite an existing Firebase iOS configuration.')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print('created=true', file=output)
+          with os.fdopen(descriptor, 'w') as output:
+              output.write(config)
+          child_env = {key: value for key, value in os.environ.items() if key != 'GOOGLE_SERVICE_INFO_PLIST'}
+          result = subprocess.run([sys.executable, str(validator), '--ios', str(path), '--bundle-id',
+                                   os.environ['FIREBASE_EXPECTED_BUNDLE_ID']], env=child_env,
+                                  capture_output=True, timeout=30, check=False)
+          if result.returncode:
+              sys.exit('::error::Firebase iOS configuration validation failed; configuration values were withheld.')
+          print('Firebase iOS configuration validated for this application.')
+          PY
 
       # Build the KMP iOS framework. The actual task name depends on the
       # module's binary configuration:
@@ -435,7 +535,7 @@ jobs:
       # -allowProvisioningUpdates lets it create/download a matching profile on
       # demand for the bundle id. Skipped when Match signing is active.
       - name: xcodebuild archive
-        if: steps.guard.outputs.supported == 'true' && steps.signmode.outputs.match != 'true'
+        if: steps.guard.outputs.supported == 'true' && steps.signmode.outputs.match != 'true' && !inputs.portable_signing
         env:
           DEVELOPMENT_TEAM: ${{ inputs.apple_team_id }}
         run: |
@@ -475,7 +575,7 @@ jobs:
             archive
 
       - name: xcodebuild -exportArchive
-        if: steps.guard.outputs.supported == 'true' && steps.signmode.outputs.match != 'true'
+        if: steps.guard.outputs.supported == 'true' && steps.signmode.outputs.match != 'true' && !inputs.portable_signing
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/exportOptions.plist" <<EOF
@@ -509,6 +609,27 @@ jobs:
             -exportPath "$RUNNER_TEMP/export" \
             -exportOptionsPlist "$RUNNER_TEMP/exportOptions.plist"
 
+      # A single action keeps keychain changes and credential cleanup scoped to
+      # archive/export. No P8 is written into the shared runner HOME.
+      - name: Portable certificate/API-key signing
+        if: steps.guard.outputs.supported == 'true' && inputs.portable_signing
+        uses: tanvrit/artifactory/.github/actions/portable-ios-signing@main
+        with:
+          project: ${{ inputs.xcodeproj_path }}
+          scheme: ${{ inputs.scheme }}
+          configuration: ${{ inputs.configuration }}
+          bundle-id: ${{ inputs.bundle_id }}
+          team-id: ${{ inputs.apple_team_id }}
+          export-method: ${{ inputs.export_method }}
+          upload-testflight: ${{ inputs.portable_upload_testflight }}
+        env:
+          IOS_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+          APPSTORE_CONNECT_PRIVATE_KEY: ${{ secrets.APPSTORE_CONNECT_PRIVATE_KEY }}
+          APPSTORE_CONNECT_KEY_ID: ${{ secrets.APPSTORE_CONNECT_KEY_ID }}
+          APPSTORE_CONNECT_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
       - name: Rename + checksum artifact
         if: steps.guard.outputs.supported == 'true'
         run: |
@@ -533,7 +654,7 @@ jobs:
       # ::warning::). What is gone is failure-swallowing once an upload is
       # actually attempted — from there, its failure is the job's failure.
       - name: Upload to TestFlight (xcrun altool)
-        if: steps.guard.outputs.supported == 'true' && inputs.asc_api_key_id != ''
+        if: steps.guard.outputs.supported == 'true' && inputs.asc_api_key_id != '' && !inputs.portable_signing
         env:
           ASC_API_KEY_ID: ${{ inputs.asc_api_key_id }}
           ASC_API_ISSUER_ID: ${{ inputs.asc_api_issuer_id }}
@@ -564,7 +685,7 @@ jobs:
       # A report may be best-effort. A DELIVERABLE may not: a release with no
       # installer attached is a failed release and must say so.
       - name: Verify release upload preconditions
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && inputs.publish_artifacts
         shell: bash
         env:
           ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
@@ -588,7 +709,7 @@ jobs:
           echo "Release upload preconditions OK for ${PRODUCT} ${VERSION} (ios)."
 
       - name: Upload to GitHub Release
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && inputs.publish_artifacts
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           repository: Tanvrit/artifactory
@@ -626,7 +747,7 @@ jobs:
       # self-hosted nodes — a missing `aws` binary was one more failure the old
       # continue-on-error swallowed.
       - name: Mirror to Cloudflare R2
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && inputs.publish_artifacts
         shell: bash
         env:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -715,7 +836,7 @@ jobs:
           echo "Mirrored and verified ${mirrored} object(s) under r2://tanvrit-artifacts/${prefix}/"
 
       - name: Dispatch manifest update
-        if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
+        if: steps.guard.outputs.supported == 'true' && inputs.publish_artifacts && env.ARTIFACTS_TOKEN_PRESENT == 'true'
         continue-on-error: true
         env:
           ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
@@ -734,3 +855,8 @@ jobs:
               "release_notes": "${{ inputs.release_notes }}",
               "release_notes_hi": "${{ inputs.release_notes_hi }}"
             }
+
+      - name: Remove temporary Firebase configuration
+        if: always() && steps.firebase-config.outputs.created == 'true'
+        shell: bash
+        run: rm -f -- iosApp/iosApp/GoogleService-Info.plist
