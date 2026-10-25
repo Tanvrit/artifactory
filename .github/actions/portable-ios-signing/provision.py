@@ -79,7 +79,9 @@ class AppStoreClient:
             with self.opener.open(request, timeout=60) as response:
                 raw = response.read(4_000_001)
         except HTTPError as error:
-            raise ProvisioningError(f"Provisioning API request failed (HTTP {error.code}); response withheld") from None
+            status = error.code
+            error.close()
+            raise ProvisioningError(f"Provisioning API request failed (HTTP {status}); response withheld") from None
         except URLError:
             raise ProvisioningError("Provisioning API connection failed; diagnostics withheld") from None
         if len(raw) > 4_000_000:
