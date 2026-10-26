@@ -85,9 +85,9 @@ class AndroidPublicationTest(unittest.TestCase):
         self.assertEqual("${{ steps.guard.outputs.module_dir }}/build/outputs/bundle/release", step["with"]["bundle-dir"])
         action_commit = step["uses"].rsplit("@", 1)[1]
         self.assertRegex(action_commit, r"^[0-9a-f]{40}$")
-        self.assertEqual("50e81f1467e98b0465294ede84df11a45d1414cb", action_commit)
+        self.assertEqual("9bf4b76ba7bb34b5ab2d8b190000f8ffc3762eb1", action_commit)
         helper = ROOT / ".github/actions/verify-android-signatures/verify-android-bundle.py"
-        self.assertEqual("093a7ff1e8b60514e7e4eb08e22e710c6dd95eedaf3254f4e838a292c9eb11b2",
+        self.assertEqual("344847e547017f5ad472b95f65fcd6619f4a340034f9806f2140ce5abbd6c599",
                          hashlib.sha256(helper.read_bytes()).hexdigest())
         names = list(self.steps)
         self.assertLess(names.index("Verify APK + AAB release signatures"), names.index("Rename + checksum artifacts"))
