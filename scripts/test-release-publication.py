@@ -85,9 +85,9 @@ class AndroidPublicationTest(unittest.TestCase):
         self.assertEqual("${{ steps.guard.outputs.module_dir }}/build/outputs/bundle/release", step["with"]["bundle-dir"])
         action_commit = step["uses"].rsplit("@", 1)[1]
         self.assertRegex(action_commit, r"^[0-9a-f]{40}$")
-        self.assertEqual("e1065305ec9b02c9de35bc83a83314de2b0e9bf8", action_commit)
+        self.assertEqual("44d0c9afc30c6f592f6dad3eaa4c23b8b2456259", action_commit)
         helper = ROOT / ".github/actions/verify-android-signatures/verify-android-bundle.py"
-        self.assertEqual("a10ac8274ef34fbefa7723ead56079a19098df33f79bd05a3c1becbef89ba10e",
+        self.assertEqual("263393ad1a6cb0a50aedb70edeca53a7df812e58fd7bca1cb003c82c76038165",
                          hashlib.sha256(helper.read_bytes()).hexdigest())
         names = list(self.steps)
         self.assertLess(names.index("Verify APK + AAB release signatures"), names.index("Rename + checksum artifacts"))
@@ -95,6 +95,16 @@ class AndroidPublicationTest(unittest.TestCase):
             self.assertLess(names.index("Verify APK + AAB release signatures"), names.index(name))
         self.assertNotIn("APK Sig Block 42", ANDROID.read_text())
         self.assertNotIn("signature-block scan", ANDROID.read_text())
+
+    def test_optional_expected_certificate_preserves_empty_default_and_reaches_signature_gate(self):
+        value = self.workflow["on"]["workflow_call"]["inputs"]["expected_certificate_sha256"]
+        self.assertEqual("string", value["type"])
+        self.assertEqual("false", value["required"])
+        self.assertEqual("", value["default"])
+        gate = self.steps["Verify APK + AAB release signatures"]
+        self.assertEqual("${{ inputs.expected_certificate_sha256 }}", gate["with"]["expected_certificate_sha256"])
+        self.assertTrue(enabled(gate["if"], publication=False))
+        self.assertNotIn("expected_certificate_sha256", self.steps["Build APK + AAB"]["env"])
 
     def test_explicit_play_only_upload_never_enables_public_release_or_manifest(self):
         self.assertTrue(enabled(self.steps[PLAY]["if"], publication=False, play=True))

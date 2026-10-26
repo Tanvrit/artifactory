@@ -55,6 +55,11 @@ on:
         description: 'Android application ID (e.g. com.tanvrit.friendly)'
         type: string
         required: true
+      expected_certificate_sha256:
+        description: 'Optional public approved Android signing certificate SHA-256; empty preserves signer-agreement checks.'
+        type: string
+        required: false
+        default: ''
       package_name:
         type: string
         required: true
@@ -308,10 +313,11 @@ jobs:
       # verification and complete AAB payload signatures before any rename/upload.
       - name: Verify APK + AAB release signatures
         if: steps.guard.outputs.supported == 'true'
-        uses: Tanvrit/artifactory/.github/actions/verify-android-signatures@e1065305ec9b02c9de35bc83a83314de2b0e9bf8
+        uses: Tanvrit/artifactory/.github/actions/verify-android-signatures@44d0c9afc30c6f592f6dad3eaa4c23b8b2456259
         with:
           apk-dir: ${{ steps.guard.outputs.module_dir }}/build/outputs/apk/release
           bundle-dir: ${{ steps.guard.outputs.module_dir }}/build/outputs/bundle/release
+          expected_certificate_sha256: ${{ inputs.expected_certificate_sha256 }}
 
       - name: Rename + checksum artifacts
         if: steps.guard.outputs.supported == 'true'
