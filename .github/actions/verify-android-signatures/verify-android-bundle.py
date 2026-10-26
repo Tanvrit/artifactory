@@ -6,6 +6,7 @@ in memory; no signing key, password, trust-store change or network is required.
 An optional public certificate pin also enforces the approved release identity.
 """
 import argparse
+from enum import Enum
 import os
 from pathlib import Path
 import re
@@ -62,8 +63,24 @@ class BundleSignatureCheck {
 """
 
 
+class FailureStage(Enum):
+    ARTIFACT_DISCOVERY = "artifact-discovery"
+    APK_TOOL_VERIFICATION = "apk-tool-verification"
+    APK_CERTIFICATE_FORMAT = "apk-certificate-format"
+    MULTIPLE_APK_SIGNERS = "multiple-apk-signers"
+    APPROVED_PIN_FORMAT = "approved-pin-format"
+    APPROVED_PIN_MISMATCH = "approved-pin-mismatch"
+    AAB_PAYLOAD_OR_TOOL_VERIFICATION = "aab-payload-or-tool-verification"
+    AAB_SIGNER_FORMAT = "aab-signer-format"
+    AAB_SIGNER_MISMATCH = "aab-signer-mismatch"
+
+
 class SignatureVerificationError(Exception):
-    pass
+    def __init__(self, stage):
+        if not isinstance(stage, FailureStage):
+            raise ValueError() from None
+        self.stage = stage
+        super().__init__()
 
 
 def tool_environment():
@@ -72,14 +89,14 @@ def tool_environment():
             "LANG": "C", "LC_ALL": "C"}
 
 
-def run_tool(arguments):
+def run_tool(arguments, failure_stage):
     try:
         result = subprocess.run(arguments, env=tool_environment(), stdin=subprocess.DEVNULL,
                                 capture_output=True, text=True, timeout=120, check=False)
     except (OSError, subprocess.SubprocessError, UnicodeError):
-        raise SignatureVerificationError() from None
+        raise SignatureVerificationError(failure_stage) from None
     if result.returncode:
-        raise SignatureVerificationError()
+        raise SignatureVerificationError(failure_stage)
     return result.stdout
 
 
@@ -92,15 +109,17 @@ def bundle_signers(bundle):
         source = Path(directory) / "BundleSignatureCheck.java"
         source.write_text(JAVA_SOURCE)
         source.chmod(0o600)
-        output = run_tool([java_executable(), "--source", "21", str(source), str(bundle)])
+        output = run_tool([java_executable(), "--source", "21", str(source), str(bundle)],
+                          FailureStage.AAB_PAYLOAD_OR_TOOL_VERIFICATION)
     digests = output.splitlines()
     if not digests or any(not re.fullmatch(r"[0-9a-f]{64}", digest) for digest in digests):
-        raise SignatureVerificationError()
+        raise SignatureVerificationError(FailureStage.AAB_SIGNER_FORMAT)
     return frozenset(digests)
 
 
 def apk_signers(apk, signer):
-    output = run_tool([str(signer), "verify", "--print-certs", str(apk)])
+    output = run_tool([str(signer), "verify", "--print-certs", str(apk)],
+                      FailureStage.APK_TOOL_VERIFICATION)
     # apksigner uses scheme/range labels for v3 signers in newer build tools.
     # Inspect every certificate line so an unknown/rotated signer cannot be
     # silently omitted while another recognized signer satisfies the pin.
@@ -115,10 +134,10 @@ def apk_signers(apk, signer):
             continue  # A source stamp is not the APK's signing identity.
         match = pattern.fullmatch(line)
         if match is None:
-            raise SignatureVerificationError()
+            raise SignatureVerificationError(FailureStage.APK_CERTIFICATE_FORMAT)
         digests.append(match.group(1))
     if not digests:
-        raise SignatureVerificationError()
+        raise SignatureVerificationError(FailureStage.APK_CERTIFICATE_FORMAT)
     return frozenset(digest.lower() for digest in digests)
 
 
@@ -127,7 +146,7 @@ def expected_certificate(value):
         return None
     value = value.strip()
     if not re.fullmatch(r"(?:[0-9a-fA-F]{64}|(?:[0-9a-fA-F]{2}:){31}[0-9a-fA-F]{2})", value):
-        raise SignatureVerificationError()
+        raise SignatureVerificationError(FailureStage.APPROVED_PIN_FORMAT)
     return frozenset([value.replace(":", "").lower()])
 
 
@@ -138,14 +157,14 @@ def release_files(directory, suffix):
         path.resolve().relative_to(root)
         files = sorted(path.rglob("*" + suffix))
         if not files:
-            raise SignatureVerificationError()
+            raise SignatureVerificationError(FailureStage.ARTIFACT_DISCOVERY)
         for artifact in files:
             artifact.resolve().relative_to(root)
             if artifact.is_symlink() or not artifact.is_file():
-                raise SignatureVerificationError()
+                raise SignatureVerificationError(FailureStage.ARTIFACT_DISCOVERY)
         return files
     except (OSError, ValueError):
-        raise SignatureVerificationError() from None
+        raise SignatureVerificationError(FailureStage.ARTIFACT_DISCOVERY) from None
 
 
 def main():
@@ -155,20 +174,27 @@ def main():
     parser.add_argument("--apksigner", required=True)
     parser.add_argument("--expected-certificate-sha256", default="")
     arguments = parser.parse_args()
+    stage = FailureStage.ARTIFACT_DISCOVERY
     try:
         apks = release_files(arguments.apk_dir, ".apk")
         bundles = release_files(arguments.bundle_dir, ".aab")
+        stage = FailureStage.APK_TOOL_VERIFICATION
         signers = {apk_signers(apk, Path(arguments.apksigner)) for apk in apks}
         if len(signers) != 1:
-            raise SignatureVerificationError()
+            raise SignatureVerificationError(FailureStage.MULTIPLE_APK_SIGNERS)
         actual = next(iter(signers))
+        stage = FailureStage.APPROVED_PIN_FORMAT
         approved = expected_certificate(arguments.expected_certificate_sha256)
         if approved is not None and actual != approved:
-            raise SignatureVerificationError()
+            raise SignatureVerificationError(FailureStage.APPROVED_PIN_MISMATCH)
+        stage = FailureStage.AAB_PAYLOAD_OR_TOOL_VERIFICATION
         if any(bundle_signers(bundle) != actual for bundle in bundles):
-            raise SignatureVerificationError()
-    except (SignatureVerificationError, OSError, ValueError):
+            raise SignatureVerificationError(FailureStage.AAB_SIGNER_MISMATCH)
+    except (SignatureVerificationError, OSError, ValueError) as failure:
+        if isinstance(failure, SignatureVerificationError):
+            stage = failure.stage
         print("::error::Android release signature verification failed.", file=sys.stderr)
+        print(f"::error::Android release signature failure stage: {stage.value}.", file=sys.stderr)
         return 1
     if approved is not None:
         print("Android release APK and bundle signatures match the approved certificate.")

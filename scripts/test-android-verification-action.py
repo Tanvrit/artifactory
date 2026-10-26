@@ -21,7 +21,8 @@ class AndroidVerificationActionTest(unittest.TestCase):
         cls.action = yaml.load(ACTION.read_text(), Loader=yaml.BaseLoader)
         cls.step = cls.action["runs"]["steps"][0]
 
-    def invoke(self, *, signer=True, executable=True, helper_status=0, literal_paths=False, expected=""):
+    def invoke(self, *, signer=True, executable=True, helper_status=0, literal_paths=False, expected="",
+               failure_stage=None):
         with tempfile.TemporaryDirectory(prefix="synthetic-android-action-") as directory:
             root = Path(directory)
             caller = root / "caller checkout"
@@ -30,8 +31,12 @@ class AndroidVerificationActionTest(unittest.TestCase):
             action.mkdir()
             capture = root / "arguments.json"
             helper = action / "verify-android-bundle.py"
+            fixed_failure = ("print('::error::Android release signature verification failed.', file=sys.stderr)\n"
+                             f"print({'::error::Android release signature failure stage: ' + failure_stage + '.'!r}, file=sys.stderr)\n"
+                             if failure_stage else "")
             helper.write_text("import json,os,sys\nfrom pathlib import Path\n"
                               "Path(os.environ['SYNTHETIC_ARGUMENTS']).write_text(json.dumps(sys.argv[1:]))\n"
+                              + fixed_failure +
                               f"sys.exit({helper_status})\n")
             sdk = root / "public sdk"
             if signer:
@@ -85,6 +90,14 @@ class AndroidVerificationActionTest(unittest.TestCase):
         result, arguments, *_ = self.invoke(helper_status=19)
         self.assertEqual(19, result.returncode)
         self.assertIsNotNone(arguments)
+
+    def test_fixed_failure_stage_reaches_caller_without_exposing_values(self):
+        result, arguments, *_ = self.invoke(helper_status=1, failure_stage="approved-pin-mismatch",
+                                           expected="A1" * 32)
+        self.assertEqual(1, result.returncode)
+        self.assertIsNotNone(arguments)
+        self.assertIn("::error::Android release signature verification failed.\n", result.stderr)
+        self.assertIn("::error::Android release signature failure stage: approved-pin-mismatch.\n", result.stderr)
 
     def test_inputs_are_literal_environment_arguments(self):
         result, arguments, _, apk, _ = self.invoke(literal_paths=True)

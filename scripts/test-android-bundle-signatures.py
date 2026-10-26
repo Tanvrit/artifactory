@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Real JDK signature checks using disposable synthetic archives and test keys."""
 import importlib.util
+from contextlib import redirect_stderr, redirect_stdout
+import io
 import os
 from pathlib import Path
 import shutil
@@ -8,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import warnings
 import zipfile
 
@@ -56,8 +59,11 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
         self.assertEqual(self.signers, VERIFY.bundle_signers(self.signed))
 
     def test_unsigned_bundle_fails(self):
-        with self.assertRaises(VERIFY.SignatureVerificationError):
+        with self.assertRaises(VERIFY.SignatureVerificationError) as failure:
             VERIFY.bundle_signers(self.unsigned)
+        self.assertIs(VERIFY.FailureStage.AAB_PAYLOAD_OR_TOOL_VERIFICATION, failure.exception.stage)
+        self.assertNotEqual(0, self.exercise_cli(bundle_fixture=self.unsigned,
+                            expected_stage="aab-payload-or-tool-verification"))
 
     def test_tampered_signed_payload_fails(self):
         tampered = self.root / "tampered.aab"
@@ -65,24 +71,27 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
             for entry in before.infolist():
                 data = b"changed synthetic payload" if entry.filename == "base/dex/classes.dex" else before.read(entry)
                 after.writestr(entry, data)
-        with self.assertRaises(VERIFY.SignatureVerificationError):
+        with self.assertRaises(VERIFY.SignatureVerificationError) as failure:
             VERIFY.bundle_signers(tampered)
+        self.assertIs(VERIFY.FailureStage.AAB_PAYLOAD_OR_TOOL_VERIFICATION, failure.exception.stage)
 
     def test_unsigned_extra_payload_fails_even_when_other_entries_are_signed(self):
         partial = self.root / "partial.aab"
         shutil.copyfile(self.signed, partial)
         with zipfile.ZipFile(partial, "a") as archive:
             archive.writestr("base/assets/unsigned.txt", b"unsigned synthetic fixture")
-        with self.assertRaises(VERIFY.SignatureVerificationError):
+        with self.assertRaises(VERIFY.SignatureVerificationError) as failure:
             VERIFY.bundle_signers(partial)
+        self.assertIs(VERIFY.FailureStage.AAB_PAYLOAD_OR_TOOL_VERIFICATION, failure.exception.stage)
 
     def test_unsigned_meta_inf_application_metadata_is_not_a_signature_exception(self):
         partial = self.root / "partial-metadata.aab"
         shutil.copyfile(self.signed, partial)
         with zipfile.ZipFile(partial, "a") as archive:
             archive.writestr("META-INF/services/synthetic.Provider", b"unsigned synthetic metadata")
-        with self.assertRaises(VERIFY.SignatureVerificationError):
+        with self.assertRaises(VERIFY.SignatureVerificationError) as failure:
             VERIFY.bundle_signers(partial)
+        self.assertIs(VERIFY.FailureStage.AAB_PAYLOAD_OR_TOOL_VERIFICATION, failure.exception.stage)
 
     def test_duplicate_payload_names_fail_closed(self):
         duplicate = self.root / "duplicate.aab"
@@ -91,23 +100,28 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
             warnings.simplefilter("ignore", UserWarning)
             with zipfile.ZipFile(duplicate, "a") as archive:
                 archive.writestr("base/dex/classes.dex", b"synthetic payload fixture")
-        with self.assertRaises(VERIFY.SignatureVerificationError):
+        with self.assertRaises(VERIFY.SignatureVerificationError) as failure:
             VERIFY.bundle_signers(duplicate)
+        self.assertIs(VERIFY.FailureStage.AAB_PAYLOAD_OR_TOOL_VERIFICATION, failure.exception.stage)
 
     def exercise_cli(self, *, matching=True, signer_failure=False, bundle_present=True, expected=None,
-                     signer_label="Signer #1", extra_certificate_line=None):
+                     signer_label="Signer #1", extra_certificate_line=None, expected_stage=None,
+                     multiple_apks=False, bundle_fixture=None):
         with tempfile.TemporaryDirectory(prefix="synthetic-signature-cli-") as directory:
             root = Path(directory)
             apk_dir, bundle_dir = root / "apks", root / "bundles"
             apk_dir.mkdir()
             bundle_dir.mkdir()
             (apk_dir / "synthetic.apk").write_bytes(b"fake APK; signer is independently stubbed")
+            if multiple_apks:
+                (apk_dir / "second.apk").write_bytes(b"second fake APK; distinct signer stub")
             if bundle_present:
-                shutil.copyfile(self.signed, bundle_dir / "synthetic.aab")
+                shutil.copyfile(bundle_fixture or self.signed, bundle_dir / "synthetic.aab")
             signer = root / "apksigner"
             digest = next(iter(self.signers)) if matching else "0" * 64
-            signer.write_text(f"#!{sys.executable}\nimport sys\n"
-                              f"print({signer_label + ' certificate SHA-256 digest: ' + digest!r})\n"
+            signer.write_text(f"#!{sys.executable}\nimport sys\nfrom pathlib import Path\n"
+                              f"digest = {'0' * 64!r} if {multiple_apks!r} and Path(sys.argv[-1]).name == 'second.apk' else {digest!r}\n"
+                              f"print({signer_label + ' certificate SHA-256 digest: '!r} + digest)\n"
                               + (f"print({extra_certificate_line!r})\n" if extra_certificate_line else "") +
                               "print('synthetic-diagnostic-canary', file=sys.stderr)\n"
                               f"sys.exit({1 if signer_failure else 0})\n")
@@ -122,9 +136,24 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
                 arguments += ["--expected-certificate-sha256", value]
             result = subprocess.run(arguments, cwd=root, env=VERIFY.tool_environment(),
                                     capture_output=True, text=True, timeout=120, check=False)
-            self.assertNotIn(digest, result.stdout + result.stderr)
-            self.assertNotIn(PASSWORD, result.stdout + result.stderr)
-            self.assertNotIn("synthetic-diagnostic-canary", result.stdout + result.stderr)
+            output = result.stdout + result.stderr
+            for private in (digest, PASSWORD, "synthetic-diagnostic-canary", str(root), str(self.store)):
+                self.assertNotIn(private, output)
+            if expected is not None and value.strip():
+                self.assertNotIn(value, output)
+            if result.returncode:
+                lines = result.stderr.splitlines()
+                self.assertEqual("", result.stdout)
+                self.assertEqual(2, len(lines))
+                self.assertEqual("::error::Android release signature verification failed.", lines[0])
+                allowed = {f"::error::Android release signature failure stage: {stage.value}."
+                           for stage in VERIFY.FailureStage}
+                self.assertIn(lines[1], allowed)
+                if expected_stage is not None:
+                    self.assertEqual(f"::error::Android release signature failure stage: {expected_stage}.", lines[1])
+            else:
+                self.assertIsNone(expected_stage)
+                self.assertEqual("", result.stderr)
             return result.returncode
 
     def test_bundle_matches_verified_apk_signer(self):
@@ -149,11 +178,13 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
 
     def test_other_sdk_range_signer_is_not_ignored(self):
         self.assertNotEqual(0, self.exercise_cli(expected="match", extra_certificate_line=
-                            "V3.1 Signer: (minSdkVersion=33, maxSdkVersion=2147483647) certificate SHA-256 digest: " + "0" * 64))
+                            "V3.1 Signer: (minSdkVersion=33, maxSdkVersion=2147483647) certificate SHA-256 digest: " + "0" * 64,
+                            expected_stage="approved-pin-mismatch"))
 
     def test_unknown_certificate_label_fails_closed_instead_of_being_ignored(self):
         self.assertNotEqual(0, self.exercise_cli(expected="match", extra_certificate_line=
-                            "Unknown signer certificate SHA-256 digest: " + "0" * 64))
+                            "Unknown signer certificate SHA-256 digest: " + "0" * 64,
+                            expected_stage="apk-certificate-format"))
 
     def test_source_stamp_is_distinct_from_application_signer(self):
         self.assertEqual(0, self.exercise_cli(expected="match", extra_certificate_line=
@@ -163,19 +194,50 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
         self.assertEqual(0, self.exercise_cli(expected="colon-match"))
 
     def test_matching_apk_and_bundle_from_unapproved_key_are_rejected(self):
-        self.assertNotEqual(0, self.exercise_cli(expected="0" * 64))
+        self.assertNotEqual(0, self.exercise_cli(expected="0" * 64, expected_stage="approved-pin-mismatch"))
 
     def test_malformed_expected_certificate_fails_closed(self):
-        self.assertNotEqual(0, self.exercise_cli(expected="synthetic-invalid-certificate"))
+        self.assertNotEqual(0, self.exercise_cli(expected="synthetic-invalid-certificate",
+                            expected_stage="approved-pin-format"))
 
     def test_other_apk_certificate_is_rejected(self):
-        self.assertNotEqual(0, self.exercise_cli(matching=False))
+        self.assertNotEqual(0, self.exercise_cli(matching=False, expected_stage="aab-signer-mismatch"))
 
     def test_apk_verification_failure_is_private_and_fails_closed(self):
-        self.assertNotEqual(0, self.exercise_cli(signer_failure=True))
+        self.assertNotEqual(0, self.exercise_cli(signer_failure=True, expected_stage="apk-tool-verification"))
 
     def test_missing_bundle_fails_closed(self):
-        self.assertNotEqual(0, self.exercise_cli(bundle_present=False))
+        self.assertNotEqual(0, self.exercise_cli(bundle_present=False, expected_stage="artifact-discovery"))
+
+    def test_distinct_apk_signer_sets_have_a_fixed_stage(self):
+        self.assertNotEqual(0, self.exercise_cli(multiple_apks=True, expected_stage="multiple-apk-signers"))
+
+    def test_malformed_aab_signer_output_has_a_fixed_stage(self):
+        with mock.patch.object(VERIFY, "run_tool", return_value="synthetic-diagnostic-canary"):
+            with self.assertRaises(VERIFY.SignatureVerificationError) as failure:
+                VERIFY.bundle_signers(self.signed)
+        self.assertIs(VERIFY.FailureStage.AAB_SIGNER_FORMAT, failure.exception.stage)
+
+    def test_failure_stage_rejects_arbitrary_error_text(self):
+        with self.assertRaises(ValueError) as failure:
+            VERIFY.SignatureVerificationError("synthetic-diagnostic-canary")
+        self.assertEqual("", str(failure.exception))
+
+    def test_tool_exception_details_are_not_emitted_by_cli(self):
+        with tempfile.TemporaryDirectory(prefix="synthetic-private-stage-") as directory:
+            root = Path(directory)
+            stdout, stderr = io.StringIO(), io.StringIO()
+            arguments = [str(HELPER), "--apk-dir", str(root), "--bundle-dir", str(root),
+                         "--apksigner", str(root / "private-tool-path")]
+            with mock.patch.object(sys, "argv", arguments), \
+                 mock.patch.object(VERIFY, "release_files", return_value=[self.signed]), \
+                 mock.patch.object(VERIFY.subprocess, "run", side_effect=OSError("synthetic-diagnostic-canary")), \
+                 redirect_stdout(stdout), redirect_stderr(stderr):
+                self.assertEqual(1, VERIFY.main())
+            self.assertEqual("", stdout.getvalue())
+            self.assertEqual("::error::Android release signature verification failed.\n"
+                             "::error::Android release signature failure stage: apk-tool-verification.\n",
+                             stderr.getvalue())
 
 
 if __name__ == "__main__":

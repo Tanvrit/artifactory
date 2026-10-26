@@ -1,5 +1,5 @@
 name: Verify Android release signatures
-description: Cryptographically verify all APKs and every AAB payload, requiring the same signer set.
+description: Cryptographically verify APK/AAB signer agreement and optional approved identity; failures emit fixed stage labels only.
 inputs:
   apk-dir:
     description: Caller workspace directory containing release APKs.
