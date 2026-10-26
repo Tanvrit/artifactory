@@ -27,6 +27,7 @@ import zipfile
 
 from provision import (AppStoreClient, ProvisioningError, application_profile,
                        authentication_token, install_profile)
+from diagnostics import CleanupStage, Diagnostics, Stage
 
 
 SECRET_NAMES = (
@@ -149,7 +150,9 @@ def verify_ipa(ipa, private, team, bundle, certificate, execute, child_env):
         raise SigningError("IPA signing entitlements do not match expected App Store identity")
 
 
-def perform(env, private, execute=run, client_factory=AppStoreClient):
+def perform(env, private, execute=run, client_factory=AppStoreClient, diagnostics=None):
+    diagnostics = diagnostics or Diagnostics()
+    diagnostics.begin(Stage.CONFIGURATION)
     team, bundle = configuration(env)
     child_env = {key: value for key, value in env.items() if key not in SECRET_NAMES}
     cert = private / "distribution.p12"
@@ -158,16 +161,19 @@ def perform(env, private, execute=run, client_factory=AppStoreClient):
     archive = private / "application.xcarchive"
     export = private / "export"
     options = private / "exportOptions.plist"
+    diagnostics.begin(Stage.PRIVATE_INPUTS)
     try:
         cert_bytes = base64.b64decode("".join(env[SECRET_NAMES[0]].split()), validate=True)
     except ValueError:
         raise SigningError("Distribution certificate is not valid base64") from None
     write_private(cert, cert_bytes)
     write_private(key, env["APPSTORE_CONNECT_PRIVATE_KEY"].encode())
+    diagnostics.begin(Stage.API_KEY)
     execute("Validate App Store key", ["openssl", "pkey", "-in", str(key), "-check", "-noout"], child_env)
     # Inspect the PUBLIC certificate to prevent accidental use of another team or
     # Developer ID certificate. The private key remains in its encrypted P12.
     public_cert = private / "distribution.pem"
+    diagnostics.begin(Stage.CERTIFICATE)
     cert_env = dict(child_env, IOS_P12_PASSWORD=env["IOS_P12_PASSWORD"])
     certificate_args = ["openssl", "pkcs12", "-in", str(cert), "-clcerts", "-nokeys",
                         "-passin", "env:IOS_P12_PASSWORD", "-out", str(public_cert)]
@@ -187,6 +193,7 @@ def perform(env, private, execute=run, client_factory=AppStoreClient):
             "-checkend", "0", "-noout"], child_env)
     certificate = execute("Read distribution certificate DER", ["openssl", "x509", "-in", str(public_cert),
                           "-outform", "DER"], child_env)
+    diagnostics.begin(Stage.XCODE_IDENTITY)
     project = required(env, "PORTABLE_IOS_PROJECT")
     common = ["xcodebuild", "-project", project, "-scheme", required(env, "PORTABLE_IOS_SCHEME"),
               "-configuration", required(env, "PORTABLE_IOS_CONFIGURATION"), f"DEVELOPMENT_TEAM={team}"]
@@ -195,15 +202,18 @@ def perform(env, private, execute=run, client_factory=AppStoreClient):
     if settings.get("CODE_SIGN_ENTITLEMENTS"):
         path = Path(settings.get("SRCROOT", str(Path(project).parent))) / settings["CODE_SIGN_ENTITLEMENTS"]
         declared = plistlib.loads(path.read_bytes())
+    diagnostics.begin(Stage.API_AUTHENTICATION)
     token = authentication_token(private, key, env["APPSTORE_CONNECT_KEY_ID"], env["APPSTORE_CONNECT_ISSUER_ID"], execute, child_env)
     profile, profile_path = application_profile(client_factory(token), certificate, team, bundle,
-                                               private, execute, child_env, declared)
+                                               private, execute, child_env, declared, diagnostics)
     password = secrets.token_urlsafe(32)
     created = False
     added = False
     installed = []
     try:
-        installed = install_profile(profile, profile_path, Path(env.get("HOME", str(Path.home()))))
+        diagnostics.begin(Stage.PROFILE_INSTALL)
+        installed = install_profile(profile, profile_path, Path(env.get("HOME", str(Path.home()))), diagnostics)
+        diagnostics.begin(Stage.KEYCHAIN)
         execute("Create temporary keychain", ["security", "create-keychain", "-p", password, str(keychain)], child_env)
         created = True
         execute("Set keychain timeout", ["security", "set-keychain-settings", "-lut", "7200", str(keychain)], child_env)
@@ -219,10 +229,12 @@ def perform(env, private, execute=run, client_factory=AppStoreClient):
         auth = ["-authenticationKeyPath", str(key),
                 "-authenticationKeyID", env["APPSTORE_CONNECT_KEY_ID"],
                 "-authenticationKeyIssuerID", env["APPSTORE_CONNECT_ISSUER_ID"]]
+        diagnostics.begin(Stage.ARCHIVE)
         execute("Archive application", [*common, "-destination", "generic/platform=iOS", "-archivePath", str(archive),
                 "CODE_SIGN_STYLE=Manual", f"CODE_SIGN_IDENTITY={hashlib.sha1(certificate).hexdigest()}",
                 f"PROVISIONING_PROFILE_SPECIFIER={profile['Name']}", f"PROVISIONING_PROFILE={profile['UUID']}",
                 f"OTHER_CODE_SIGN_FLAGS=--keychain {shlex.quote(str(keychain))}", "archive"], child_env, timeout=5400)
+        diagnostics.begin(Stage.ARCHIVE_VALIDATION)
         info = plistlib.loads((archive / "Info.plist").read_bytes())["ApplicationProperties"]
         if info.get("CFBundleIdentifier") != bundle or info.get("Team") != team:
             raise SigningError("Archived application bundle/team does not match expected identity")
@@ -233,55 +245,85 @@ def perform(env, private, execute=run, client_factory=AppStoreClient):
         options.write_bytes(plistlib.dumps(export_options))
         export_args = ["xcodebuild", "-exportArchive", "-archivePath", str(archive),
                        "-exportOptionsPlist", str(options)]
+        diagnostics.begin(Stage.EXPORT)
         execute("Export signed IPA", [*export_args, "-exportPath", str(export)], child_env, timeout=1800)
+        diagnostics.begin(Stage.IPA_VALIDATION)
         ipas = list(export.glob("*.ipa"))
         if len(ipas) != 1:
             raise SigningError("Export did not produce exactly one IPA")
         verify_ipa(ipas[0], private, team, bundle, certificate, execute, child_env)
+        diagnostics.begin(Stage.IPA_OUTPUT)
         destination = Path(required(env, "RUNNER_TEMP")) / "export"
         destination.mkdir(exist_ok=True)
         if any(destination.iterdir()):
             raise SigningError("Refusing to reuse a nonempty IPA output directory")
         shutil.copy2(ipas[0], destination / ipas[0].name)
         if env.get("PORTABLE_IOS_UPLOAD_TESTFLIGHT") == "true":
+            diagnostics.begin(Stage.TESTFLIGHT)
             export_options.update(destination="upload", testFlightInternalTestingOnly=True)
             options.write_bytes(plistlib.dumps(export_options))
             execute("Upload internal-only TestFlight build", [*export_args, *auth], child_env, timeout=1800)
+    except BaseException:
+        diagnostics.failed()
+        raise
     finally:
         # Remove only OUR keychain; preserve keychains added by other runner jobs.
         # The lock serializes this action, while legacy signing jobs may still
         # share the same login user and must not lose their search-list entries.
         try:
             if added:
-                current = shlex.split(execute("Read cleanup search list", ["security", "list-keychains", "-d", "user"], child_env).decode())
-                execute("Remove temporary keychain", ["security", "list-keychains", "-d", "user", "-s",
-                        *[item for item in current if item != str(keychain)]], child_env)
+                with diagnostics.cleaning(CleanupStage.SEARCH_LIST):
+                    current = shlex.split(execute("Read cleanup search list", ["security", "list-keychains", "-d", "user"], child_env).decode())
+                    execute("Remove temporary keychain", ["security", "list-keychains", "-d", "user", "-s",
+                            *[item for item in current if item != str(keychain)]], child_env)
         finally:
             try:
                 if created:
-                    execute("Delete temporary keychain", ["security", "delete-keychain", str(keychain)], child_env)
+                    with diagnostics.cleaning(CleanupStage.KEYCHAIN):
+                        execute("Delete temporary keychain", ["security", "delete-keychain", str(keychain)], child_env)
             finally:
-                for path in installed:
-                    path.unlink(missing_ok=True)
+                with diagnostics.cleaning(CleanupStage.PROFILES):
+                    for path in installed:
+                        path.unlink(missing_ok=True)
+
+
+@contextlib.contextmanager
+def private_directory(diagnostics, runner_temp):
+    directory = tempfile.TemporaryDirectory(prefix="portable-ios-", dir=runner_temp)
+    try:
+        yield directory.name
+    except BaseException:
+        diagnostics.failed()
+        raise
+    finally:
+        with diagnostics.cleaning(CleanupStage.PRIVATE_DIRECTORY):
+            directory.cleanup()
+        diagnostics.cleaned()
 
 
 def main():
+    diagnostics = Diagnostics()
     def interrupted(_signal, _frame):
         raise SigningError("Portable signing interrupted; cleaning temporary credentials")
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
     try:
+        diagnostics.begin(Stage.CONFIGURATION)
         configuration(os.environ)
+        diagnostics.begin(Stage.SIGNING_LOCK)
         with signing_lock(Path.home()):
-            with tempfile.TemporaryDirectory(prefix="portable-ios-", dir=required(os.environ, "RUNNER_TEMP")) as directory:
-                perform(os.environ, Path(directory))
+            diagnostics.begin(Stage.PRIVATE_INPUTS)
+            with private_directory(diagnostics, required(os.environ, "RUNNER_TEMP")) as directory:
+                perform(os.environ, Path(directory), diagnostics=diagnostics)
+        diagnostics.cleaned()
+        diagnostics.begin(Stage.COMPLETED)
         print("Portable iOS signing/export completed; temporary credentials removed.")
-    except Exception as error:
-        # Only our fixed messages are safe. Never print subprocess argv, plist
-        # content, a decoding error's input, or secret-bearing environment data.
-        message = str(error) if isinstance(error, (SigningError, ProvisioningError)) else type(error).__name__
-        print(f"::error::{message}")
+    except Exception:
+        diagnostics.failed()
+        print("::error::Portable iOS signing failed; diagnostics withheld.")
         return 1
+    finally:
+        diagnostics.publish(os.environ)
     return 0
 
 

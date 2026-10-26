@@ -8,6 +8,7 @@ from pathlib import Path
 import plistlib
 import time
 import uuid
+from diagnostics import CleanupStage, Diagnostics, Stage
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -126,21 +127,26 @@ def profile_matches(profile, certificate, team, bundle, required_entitlements):
     return True
 
 
-def application_profile(client, certificate, team, bundle, private, execute, env, entitlements):
+def application_profile(client, certificate, team, bundle, private, execute, env, entitlements, diagnostics=None):
+    diagnostics = diagnostics or Diagnostics()
     # Validate declared capabilities before making any Apple-side changes.
+    diagnostics.begin(Stage.CAPABILITIES)
     supported = {"aps-environment": "PUSH_NOTIFICATIONS",
                  "com.apple.developer.associated-domains": "ASSOCIATED_DOMAINS"}
     ignored = {"application-identifier", "com.apple.developer.team-identifier", "get-task-allow", "keychain-access-groups"}
     if set(entitlements) - set(supported) - ignored:
         raise ProvisioningError("Portable provisioning does not support one of this target's declared capabilities")
+    diagnostics.begin(Stage.REGISTERED_CERTIFICATE)
     certificates = client.collection("certificates", **{"filter[certificateType]": "DISTRIBUTION,IOS_DISTRIBUTION"})
     matching = [row for row in certificates if base64.b64decode(row["attributes"]["certificateContent"], validate=True) == certificate]
     if len(matching) != 1:
         raise ProvisioningError("Imported distribution certificate is not uniquely registered with this API account")
     certificate_id = matching[0]["id"]
+    diagnostics.begin(Stage.BUNDLE_LOOKUP)
     bundles = client.collection("bundleIds", **{"filter[identifier]": bundle})
     bundles = [row for row in bundles if row["attributes"].get("identifier") == bundle]
     if not bundles:
+        diagnostics.begin(Stage.BUNDLE_CREATE)
         bundles = [client.request("bundleIds", body={"data": {"type": "bundleIds", "attributes": {
             "identifier": bundle, "name": "Tanvrit " + bundle, "platform": "IOS"}}})["data"]]
     if len(bundles) != 1:
@@ -148,21 +154,25 @@ def application_profile(client, certificate, team, bundle, private, execute, env
     bundle_id = bundles[0]["id"]
     # Only capabilities already declared by this target are configured. Fail
     # closed on other capability types rather than silently broaden the App ID.
+    diagnostics.begin(Stage.CAPABILITY_LOOKUP)
     capabilities = client.collection(f"bundleIds/{bundle_id}/bundleIdCapabilities")
     enabled = {row["attributes"]["capabilityType"] for row in capabilities}
     for name in entitlements:
         capability = supported.get(name)
         if capability and capability not in enabled:
+            diagnostics.begin(Stage.CAPABILITY_ENABLE)
             client.request("bundleIdCapabilities", body={"data": {"type": "bundleIdCapabilities",
                 "attributes": {"capabilityType": capability}, "relationships": {
                     "bundleId": {"data": {"type": "bundleIds", "id": bundle_id}}}}})
 
     def decode(row):
+        diagnostics.begin(Stage.PROFILE_VALIDATION)
         path = private / "application.mobileprovision"
         path.write_bytes(base64.b64decode(row["attributes"]["profileContent"], validate=True))
         profile = plistlib.loads(execute("Validate app-specific provisioning profile", ["security", "cms", "-D", "-i", str(path)], env))
         return profile, path
 
+    diagnostics.begin(Stage.PROFILE_LOOKUP)
     for row in client.collection(f"bundleIds/{bundle_id}/profiles"):
         attributes = row["attributes"]
         if attributes.get("profileType") != "IOS_APP_STORE" or attributes.get("profileState") != "ACTIVE":
@@ -173,6 +183,7 @@ def application_profile(client, certificate, team, bundle, private, execute, env
     # Existing invalid/expired profiles may retain their names. A new profile
     # gets a unique bounded name, while future builds still reuse its contents.
     name = "Tanvrit " + bundle[:50] + " " + hashlib.sha256(certificate).hexdigest()[:8] + " " + uuid.uuid4().hex[:8]
+    diagnostics.begin(Stage.PROFILE_CREATE)
     row = client.request("profiles", body={"data": {"type": "profiles",
         "attributes": {"name": name, "profileType": "IOS_APP_STORE"}, "relationships": {
             "bundleId": {"data": {"type": "bundleIds", "id": bundle_id}},
@@ -183,8 +194,9 @@ def application_profile(client, certificate, team, bundle, private, execute, env
     return profile, path
 
 
-def install_profile(profile, path, home):
+def install_profile(profile, path, home, diagnostics=None):
     """Both current and legacy Xcode profile locations; never overwrite existing files."""
+    diagnostics = diagnostics or Diagnostics()
     identifier = str(uuid.UUID(profile["UUID"]))
     created = []
     try:
@@ -204,7 +216,9 @@ def install_profile(profile, path, home):
                 destination.chmod(0o600)
                 descriptor.write(path.read_bytes())
     except BaseException:
-        for destination in created:
-            destination.unlink(missing_ok=True)
+        diagnostics.failed()
+        with diagnostics.cleaning(CleanupStage.PROFILES):
+            for destination in created:
+                destination.unlink(missing_ok=True)
         raise
     return created

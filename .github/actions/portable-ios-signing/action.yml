@@ -22,10 +22,18 @@ inputs:
   upload-testflight:
     default: 'false'
     description: Explicitly upload an internal-only TestFlight build after export.
+outputs:
+  stage:
+    description: Fixed source lifecycle stage; create/enable/upload stages mean attempted, not confirmed external writes.
+    value: ${{ steps.sign.outputs.stage }}
+  cleanup-stage:
+    description: Fixed cleanup failure stage or completed when applicable cleanup code returned; absent output never proves cleanup.
+    value: ${{ steps.sign.outputs.cleanup-stage }}
 runs:
   using: composite
   steps:
     - name: Sign, export and clean temporary credentials
+      id: sign
       shell: bash
       env:
         PORTABLE_IOS_PROJECT: ${{ inputs.project }}

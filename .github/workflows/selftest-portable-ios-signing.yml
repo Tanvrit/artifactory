@@ -23,3 +23,36 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Verify synthetic provisioning, signing and cleanup contracts
         run: python3 -B -m unittest discover -s .github/actions/portable-ios-signing -p 'test_*.py' -v
+      # Negative fixture only: configuration fails before HOME/lock/files/tools/API.
+      - name: Reject empty synthetic signing inputs
+        id: diagnostic-fixture
+        continue-on-error: true
+        uses: ./.github/actions/portable-ios-signing
+        with:
+          project: synthetic.xcodeproj
+          scheme: Synthetic
+          bundle-id: com.example.syntheticfixture
+          team-id: ABCDEFGHIJ
+          upload-testflight: 'false'
+        env:
+          IOS_DISTRIBUTION_CERTIFICATE_BASE64: ''
+          IOS_P12_PASSWORD: ''
+          APPSTORE_CONNECT_PRIVATE_KEY: ''
+          APPSTORE_CONNECT_KEY_ID: ''
+          APPSTORE_CONNECT_ISSUER_ID: ''
+          APPLE_TEAM_ID: ''
+      - name: "Portable iOS diagnostic fixture: configuration; cleanup not-started"
+        env:
+          FIXTURE_OUTCOME: ${{ steps.diagnostic-fixture.outcome }}
+          FIXTURE_STAGE: ${{ steps.diagnostic-fixture.outputs.stage }}
+          FIXTURE_CLEANUP_STAGE: ${{ steps.diagnostic-fixture.outputs.cleanup-stage }}
+        run: |
+          python3 - <<'PY'
+          import os
+          actual = tuple(os.environ.get(key) for key in (
+              "FIXTURE_OUTCOME", "FIXTURE_STAGE", "FIXTURE_CLEANUP_STAGE"))
+          if actual != ("failure", "configuration", "not-started"):
+              print("Portable iOS diagnostic fixture failed.")
+              raise SystemExit(1)
+          print("Portable iOS diagnostic fixture passed.")
+          PY
