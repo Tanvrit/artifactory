@@ -2,6 +2,7 @@
 
 import ast
 import base64
+import hashlib
 import os
 import re
 from pathlib import Path
@@ -22,7 +23,7 @@ PUBLIC = {
 }
 PLAY = "Upload to Google Play"
 PLAY_PREFLIGHT = "Validate explicit Play upload prerequisites"
-CORE = {"Build APK + AAB", "Verify APK is release-signed", "Rename + checksum artifacts"}
+CORE = {"Build APK + AAB", "Verify APK + AAB release signatures", "Rename + checksum artifacts"}
 
 
 def enabled(condition, *, publication, play=False, supported=True, credentials=True):
@@ -74,7 +75,26 @@ class AndroidPublicationTest(unittest.TestCase):
             self.assertTrue(enabled(self.steps[name]["if"], publication=False), name)
         self.assertIn("assembleRelease", self.steps["Build APK + AAB"]["run"])
         self.assertIn("bundleRelease", self.steps["Build APK + AAB"]["run"])
-        self.assertIn("apksigner", self.steps["Verify APK is release-signed"]["run"])
+        self.assertRegex(self.steps["Verify APK + AAB release signatures"]["uses"],
+                         r"^Tanvrit/artifactory/\.github/actions/verify-android-signatures@[0-9a-f]{40}$")
+
+    def test_signature_action_is_immutable_available_outside_caller_checkout_and_before_publication(self):
+        step = self.steps["Verify APK + AAB release signatures"]
+        self.assertNotIn("run", step)
+        self.assertEqual("${{ steps.guard.outputs.module_dir }}/build/outputs/apk/release", step["with"]["apk-dir"])
+        self.assertEqual("${{ steps.guard.outputs.module_dir }}/build/outputs/bundle/release", step["with"]["bundle-dir"])
+        action_commit = step["uses"].rsplit("@", 1)[1]
+        self.assertRegex(action_commit, r"^[0-9a-f]{40}$")
+        self.assertEqual("e1065305ec9b02c9de35bc83a83314de2b0e9bf8", action_commit)
+        helper = ROOT / ".github/actions/verify-android-signatures/verify-android-bundle.py"
+        self.assertEqual("a10ac8274ef34fbefa7723ead56079a19098df33f79bd05a3c1becbef89ba10e",
+                         hashlib.sha256(helper.read_bytes()).hexdigest())
+        names = list(self.steps)
+        self.assertLess(names.index("Verify APK + AAB release signatures"), names.index("Rename + checksum artifacts"))
+        for name in PUBLIC | {PLAY}:
+            self.assertLess(names.index("Verify APK + AAB release signatures"), names.index(name))
+        self.assertNotIn("APK Sig Block 42", ANDROID.read_text())
+        self.assertNotIn("signature-block scan", ANDROID.read_text())
 
     def test_explicit_play_only_upload_never_enables_public_release_or_manifest(self):
         self.assertTrue(enabled(self.steps[PLAY]["if"], publication=False, play=True))
@@ -85,6 +105,26 @@ class AndroidPublicationTest(unittest.TestCase):
         self.assertEqual(self.steps[PLAY]["continue-on-error"], "${{ !inputs.upload_play_store }}")
         for name in PUBLIC:
             self.assertFalse(enabled(self.steps[name]["if"], publication=False, play=True), name)
+
+    def test_real_signature_fixtures_are_required_in_existing_selftest_job(self):
+        workflow = yaml.load((ROOT / ".github/workflows/selftest-release-publication.yml").read_text(),
+                             Loader=yaml.BaseLoader)
+        self.assertEqual("read", workflow["permissions"]["contents"])
+        self.assertEqual({"publication-guards"}, set(workflow["jobs"]))
+        steps = workflow["jobs"]["publication-guards"]["steps"]
+        java = next(step for step in steps if step.get("uses", "").startswith("actions/setup-java@"))
+        self.assertEqual("21", java["with"]["java-version"])
+        fixture_step = next(step for step in steps if "scripts/test-android-bundle-signatures.py" in step.get("run", ""))
+        self.assertNotIn("continue-on-error", fixture_step)
+        self.assertNotIn("if", fixture_step)
+        self.assertIn("set -euo pipefail", fixture_step["run"])
+        for script in ("test-release-publication.py", "test-android-verification-action.py",
+                       "test-android-bundle-signatures.py"):
+            self.assertEqual(1, fixture_step["run"].count("scripts/" + script))
+            for event in ("pull_request", "push"):
+                self.assertIn("scripts/" + script, workflow["on"][event]["paths"])
+        for event in ("pull_request", "push"):
+            self.assertIn(".github/actions/verify-android-signatures/**", workflow["on"][event]["paths"])
 
     def test_unsupported_target_never_builds_or_publishes(self):
         for name in CORE | PUBLIC | {PLAY, PLAY_PREFLIGHT}:
