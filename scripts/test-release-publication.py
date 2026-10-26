@@ -86,7 +86,7 @@ class AndroidPublicationTest(unittest.TestCase):
         self.assertEqual("${{ steps.guard.outputs.module_dir }}/build/outputs/bundle/release", step["with"]["bundle-dir"])
         action_commit = step["uses"].rsplit("@", 1)[1]
         self.assertRegex(action_commit, r"^[0-9a-f]{40}$")
-        self.assertEqual("9bf4b76ba7bb34b5ab2d8b190000f8ffc3762eb1", action_commit)
+        self.assertEqual("9afa44a926d352f2f6684082aee25a822d9505ee", action_commit)
         helper = ROOT / ".github/actions/verify-android-signatures/verify-android-bundle.py"
         self.assertEqual("d52e43da83d00148a53714cc2c0e10d1e184fbd4bc5cc89494e55cdd80ba1119",
                          hashlib.sha256(helper.read_bytes()).hexdigest())
