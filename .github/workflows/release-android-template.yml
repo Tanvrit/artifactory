@@ -313,7 +313,7 @@ jobs:
       # verification and complete AAB payload signatures before any rename/upload.
       - name: Verify APK + AAB release signatures
         if: steps.guard.outputs.supported == 'true'
-        uses: Tanvrit/artifactory/.github/actions/verify-android-signatures@44d0c9afc30c6f592f6dad3eaa4c23b8b2456259
+        uses: Tanvrit/artifactory/.github/actions/verify-android-signatures@50e81f1467e98b0465294ede84df11a45d1414cb
         with:
           apk-dir: ${{ steps.guard.outputs.module_dir }}/build/outputs/apk/release
           bundle-dir: ${{ steps.guard.outputs.module_dir }}/build/outputs/bundle/release
