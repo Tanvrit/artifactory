@@ -3,6 +3,7 @@
 
 Only fixed status text is emitted. Certificate metadata and tool diagnostics stay
 in memory; no signing key, password, trust-store change or network is required.
+An optional public certificate pin also enforces the approved release identity.
 """
 import argparse
 import os
@@ -106,6 +107,15 @@ def apk_signers(apk, signer):
     return frozenset(digest.lower() for digest in digests)
 
 
+def expected_certificate(value):
+    if not value:
+        return None
+    value = value.strip()
+    if not re.fullmatch(r"(?:[0-9a-fA-F]{64}|(?:[0-9a-fA-F]{2}:){31}[0-9a-fA-F]{2})", value):
+        raise SignatureVerificationError()
+    return frozenset([value.replace(":", "").lower()])
+
+
 def release_files(directory, suffix):
     root = Path.cwd().resolve()
     path = Path(directory)
@@ -128,6 +138,7 @@ def main():
     parser.add_argument("--bundle-dir", required=True)
     parser.add_argument("--apk-dir", required=True)
     parser.add_argument("--apksigner", required=True)
+    parser.add_argument("--expected-certificate-sha256", default="")
     arguments = parser.parse_args()
     try:
         apks = release_files(arguments.apk_dir, ".apk")
@@ -135,13 +146,19 @@ def main():
         signers = {apk_signers(apk, Path(arguments.apksigner)) for apk in apks}
         if len(signers) != 1:
             raise SignatureVerificationError()
-        expected = next(iter(signers))
-        if any(bundle_signers(bundle) != expected for bundle in bundles):
+        actual = next(iter(signers))
+        approved = expected_certificate(arguments.expected_certificate_sha256)
+        if approved is not None and actual != approved:
+            raise SignatureVerificationError()
+        if any(bundle_signers(bundle) != actual for bundle in bundles):
             raise SignatureVerificationError()
     except (SignatureVerificationError, OSError, ValueError):
         print("::error::Android release signature verification failed.", file=sys.stderr)
         return 1
-    print("Android bundle payload signatures match the verified release APK signer.")
+    if approved is not None:
+        print("Android release APK and bundle signatures match the approved certificate.")
+    else:
+        print("Android bundle payload signatures match the verified release APK signer.")
     return 0
 
 

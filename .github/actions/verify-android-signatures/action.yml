@@ -7,6 +7,10 @@ inputs:
   bundle-dir:
     description: Caller workspace directory containing release Android App Bundles.
     required: true
+  expected_certificate_sha256:
+    description: Optional public approved signing certificate SHA-256; empty preserves signer-agreement checks.
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -15,6 +19,7 @@ runs:
       env:
         APK_DIR: ${{ inputs.apk-dir }}
         BUNDLE_DIR: ${{ inputs.bundle-dir }}
+        EXPECTED_CERTIFICATE_SHA256: ${{ inputs.expected_certificate_sha256 }}
         VERIFY_ACTION_PATH: ${{ github.action_path }}
       run: |
         set +x
@@ -25,4 +30,5 @@ runs:
           exit 1
         fi
         python3 "$VERIFY_ACTION_PATH/verify-android-bundle.py" \
-          --bundle-dir "$BUNDLE_DIR" --apk-dir "$APK_DIR" --apksigner "$APKSIGNER"
+          --bundle-dir "$BUNDLE_DIR" --apk-dir "$APK_DIR" --apksigner "$APKSIGNER" \
+          --expected-certificate-sha256 "$EXPECTED_CERTIFICATE_SHA256"

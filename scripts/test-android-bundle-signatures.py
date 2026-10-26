@@ -94,7 +94,7 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
         with self.assertRaises(VERIFY.SignatureVerificationError):
             VERIFY.bundle_signers(duplicate)
 
-    def exercise_cli(self, *, matching=True, signer_failure=False, bundle_present=True):
+    def exercise_cli(self, *, matching=True, signer_failure=False, bundle_present=True, expected=None):
         with tempfile.TemporaryDirectory(prefix="synthetic-signature-cli-") as directory:
             root = Path(directory)
             apk_dir, bundle_dir = root / "apks", root / "bundles"
@@ -110,9 +110,15 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
                               "print('synthetic-diagnostic-canary', file=sys.stderr)\n"
                               f"sys.exit({1 if signer_failure else 0})\n")
             signer.chmod(0o700)
-            result = subprocess.run([sys.executable, str(HELPER),
-                                     "--bundle-dir", str(bundle_dir), "--apk-dir", str(apk_dir),
-                                     "--apksigner", str(signer)], cwd=root, env=VERIFY.tool_environment(),
+            arguments = [sys.executable, str(HELPER),
+                         "--bundle-dir", str(bundle_dir), "--apk-dir", str(apk_dir),
+                         "--apksigner", str(signer)]
+            if expected is not None:
+                value = next(iter(self.signers)) if expected in ("match", "colon-match") else expected
+                if expected == "colon-match":
+                    value = ":".join(value[index:index + 2] for index in range(0, len(value), 2)).upper()
+                arguments += ["--expected-certificate-sha256", value]
+            result = subprocess.run(arguments, cwd=root, env=VERIFY.tool_environment(),
                                     capture_output=True, text=True, timeout=120, check=False)
             self.assertNotIn(digest, result.stdout + result.stderr)
             self.assertNotIn(PASSWORD, result.stdout + result.stderr)
@@ -121,6 +127,18 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
 
     def test_bundle_matches_verified_apk_signer(self):
         self.assertEqual(0, self.exercise_cli())
+
+    def test_approved_certificate_is_enforced(self):
+        self.assertEqual(0, self.exercise_cli(expected="match"))
+
+    def test_public_colon_separated_certificate_is_normalized(self):
+        self.assertEqual(0, self.exercise_cli(expected="colon-match"))
+
+    def test_matching_apk_and_bundle_from_unapproved_key_are_rejected(self):
+        self.assertNotEqual(0, self.exercise_cli(expected="0" * 64))
+
+    def test_malformed_expected_certificate_fails_closed(self):
+        self.assertNotEqual(0, self.exercise_cli(expected="synthetic-invalid-certificate"))
 
     def test_other_apk_certificate_is_rejected(self):
         self.assertNotEqual(0, self.exercise_cli(matching=False))
