@@ -1,0 +1,28 @@
+name: Verify Android release signatures
+description: Cryptographically verify all APKs and every AAB payload, requiring the same signer set.
+inputs:
+  apk-dir:
+    description: Caller workspace directory containing release APKs.
+    required: true
+  bundle-dir:
+    description: Caller workspace directory containing release Android App Bundles.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Require apksigner and verify release artifacts
+      shell: bash
+      env:
+        APK_DIR: ${{ inputs.apk-dir }}
+        BUNDLE_DIR: ${{ inputs.bundle-dir }}
+        VERIFY_ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set +x
+        set -euo pipefail
+        APKSIGNER="$(find "${ANDROID_HOME:-/nonexistent}/build-tools" -type f -name apksigner 2>/dev/null | sort -V | tail -1 || true)"
+        if [ -z "$APKSIGNER" ] || [ ! -x "$APKSIGNER" ]; then
+          echo "::error::Android SDK apksigner is required for release signature verification."
+          exit 1
+        fi
+        python3 "$VERIFY_ACTION_PATH/verify-android-bundle.py" \
+          --bundle-dir "$BUNDLE_DIR" --apk-dir "$APK_DIR" --apksigner "$APKSIGNER"
