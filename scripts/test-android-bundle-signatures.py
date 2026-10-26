@@ -106,7 +106,7 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
 
     def exercise_cli(self, *, matching=True, signer_failure=False, bundle_present=True, expected=None,
                      signer_label="Signer #1", extra_certificate_line=None, expected_stage=None,
-                     multiple_apks=False, bundle_fixture=None):
+                     multiple_apks=False, bundle_fixture=None, metadata_unwritable=False):
         with tempfile.TemporaryDirectory(prefix="synthetic-signature-cli-") as directory:
             root = Path(directory)
             apk_dir, bundle_dir = root / "apks", root / "bundles"
@@ -134,7 +134,13 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
                 if expected == "colon-match":
                     value = ":".join(value[index:index + 2] for index in range(0, len(value), 2)).upper()
                 arguments += ["--expected-certificate-sha256", value]
-            result = subprocess.run(arguments, cwd=root, env=VERIFY.tool_environment(),
+            metadata = root / "runner-output"
+            if metadata_unwritable:
+                metadata.mkdir()
+            else:
+                metadata.touch(mode=0o600)
+            result = subprocess.run(arguments, cwd=root,
+                                    env=VERIFY.tool_environment() | {"GITHUB_OUTPUT": str(metadata)},
                                     capture_output=True, text=True, timeout=120, check=False)
             output = result.stdout + result.stderr
             for private in (digest, PASSWORD, "synthetic-diagnostic-canary", str(root), str(self.store)):
@@ -154,6 +160,9 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
             else:
                 self.assertIsNone(expected_stage)
                 self.assertEqual("", result.stderr)
+            if not metadata_unwritable:
+                stage = expected_stage or "success"
+                self.assertEqual(f"verification_stage={stage}\n", metadata.read_text())
             return result.returncode
 
     def test_bundle_matches_verified_apk_signer(self):
@@ -229,7 +238,8 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
             stdout, stderr = io.StringIO(), io.StringIO()
             arguments = [str(HELPER), "--apk-dir", str(root), "--bundle-dir", str(root),
                          "--apksigner", str(root / "private-tool-path")]
-            with mock.patch.object(sys, "argv", arguments), \
+            with mock.patch.dict(os.environ, {}, clear=True), \
+                 mock.patch.object(sys, "argv", arguments), \
                  mock.patch.object(VERIFY, "release_files", return_value=[self.signed]), \
                  mock.patch.object(VERIFY.subprocess, "run", side_effect=OSError("synthetic-diagnostic-canary")), \
                  redirect_stdout(stdout), redirect_stderr(stderr):
@@ -238,6 +248,58 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
             self.assertEqual("::error::Android release signature verification failed.\n"
                              "::error::Android release signature failure stage: apk-tool-verification.\n",
                              stderr.getvalue())
+
+    def test_unavailable_metadata_preserves_failed_verifier_exit(self):
+        self.assertEqual(1, self.exercise_cli(signer_failure=True, metadata_unwritable=True,
+                                            expected_stage="apk-tool-verification"))
+
+    def test_unavailable_metadata_preserves_successful_verifier_exit(self):
+        self.assertEqual(0, self.exercise_cli(metadata_unwritable=True))
+
+    def test_metadata_rejects_arbitrary_diagnostic_payload(self):
+        with tempfile.TemporaryDirectory(prefix="synthetic-stage-metadata-") as directory:
+            output = Path(directory) / "runner-output"
+            output.touch(mode=0o600)
+            with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}, clear=True):
+                VERIFY.write_stage_metadata("synthetic-private-canary\nverification_stage=success")
+                self.assertEqual("", output.read_text())
+                VERIFY.write_stage_metadata(VERIFY.FailureStage.APK_TOOL_VERIFICATION)
+            self.assertEqual("verification_stage=apk-tool-verification\n", output.read_text())
+
+    def test_child_tools_never_receive_metadata_transport_or_private_environment(self):
+        with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": "synthetic-private-output-path",
+                                         "RELEASE_STORE_PASSWORD": "synthetic-private-canary",
+                                         "PATH": "/usr/bin:/bin"}, clear=True):
+            self.assertEqual({"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+                             VERIFY.tool_environment())
+
+    def test_malformed_metadata_path_preserves_success_and_failure_without_payload(self):
+        for failure in (False, True):
+            with self.subTest(failure=failure):
+                stdout, stderr = io.StringIO(), io.StringIO()
+                arguments = [str(HELPER), "--apk-dir", "synthetic-apks", "--bundle-dir", "synthetic-bundles",
+                             "--apksigner", "synthetic-tool"]
+                error = VERIFY.SignatureVerificationError(VERIFY.FailureStage.APK_TOOL_VERIFICATION) if failure else None
+                # os.environ cannot normally transport NUL; a malformed mapping
+                # still must not let diagnostic I/O mask a cryptographic outcome.
+                with mock.patch.object(VERIFY.os, "environ", {"GITHUB_OUTPUT": "synthetic-private-canary\0output"}), \
+                     mock.patch.object(sys, "argv", arguments), \
+                     mock.patch.object(VERIFY, "release_files", return_value=[self.signed]), \
+                     mock.patch.object(VERIFY, "apk_signers", return_value=self.signers, side_effect=error), \
+                     mock.patch.object(VERIFY, "bundle_signers", return_value=self.signers), \
+                     redirect_stdout(stdout), redirect_stderr(stderr):
+                    self.assertEqual(1 if failure else 0, VERIFY.main())
+                output = stdout.getvalue() + stderr.getvalue()
+                self.assertNotIn("synthetic-private-canary", output)
+                self.assertNotIn("Traceback", output)
+                self.assertNotIn(next(iter(self.signers)), output)
+                if failure:
+                    self.assertEqual("::error::Android release signature verification failed.\n"
+                                     "::error::Android release signature failure stage: apk-tool-verification.\n",
+                                     stderr.getvalue())
+                else:
+                    self.assertEqual("Android bundle payload signatures match the verified release APK signer.\n",
+                                     stdout.getvalue())
 
 
 if __name__ == "__main__":

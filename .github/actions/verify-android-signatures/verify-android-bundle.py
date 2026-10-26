@@ -83,6 +83,25 @@ class SignatureVerificationError(Exception):
         super().__init__()
 
 
+def write_stage_metadata(stage):
+    """Publish only a source-owned enum; diagnostics never change verification."""
+    if isinstance(stage, FailureStage):
+        value = stage.value
+    elif stage is None:
+        value = "success"
+    else:
+        return
+    output = os.environ.get("GITHUB_OUTPUT")
+    if not output:
+        return
+    try:
+        with open(output, "a", encoding="utf-8") as stream:
+            stream.write(f"verification_stage={value}\n")
+    except (OSError, ValueError):
+        # An unavailable diagnostic must not mask the verifier's real result.
+        return
+
+
 def tool_environment():
     allowed = ("PATH", "JAVA_HOME", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT")
     return {**{key: os.environ[key] for key in allowed if key in os.environ},
@@ -193,9 +212,11 @@ def main():
     except (SignatureVerificationError, OSError, ValueError) as failure:
         if isinstance(failure, SignatureVerificationError):
             stage = failure.stage
+        write_stage_metadata(stage)
         print("::error::Android release signature verification failed.", file=sys.stderr)
         print(f"::error::Android release signature failure stage: {stage.value}.", file=sys.stderr)
         return 1
+    write_stage_metadata(None)
     if approved is not None:
         print("Android release APK and bundle signatures match the approved certificate.")
     else:

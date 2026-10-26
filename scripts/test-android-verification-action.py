@@ -22,7 +22,7 @@ class AndroidVerificationActionTest(unittest.TestCase):
         cls.step = cls.action["runs"]["steps"][0]
 
     def invoke(self, *, signer=True, executable=True, helper_status=0, literal_paths=False, expected="",
-               failure_stage=None):
+               failure_stage=None, metadata_stage=None):
         with tempfile.TemporaryDirectory(prefix="synthetic-android-action-") as directory:
             root = Path(directory)
             caller = root / "caller checkout"
@@ -30,12 +30,16 @@ class AndroidVerificationActionTest(unittest.TestCase):
             action = root / "downloaded action"
             action.mkdir()
             capture = root / "arguments.json"
+            metadata = root / "runner-output"
+            metadata.touch(mode=0o600)
             helper = action / "verify-android-bundle.py"
             fixed_failure = ("print('::error::Android release signature verification failed.', file=sys.stderr)\n"
                              f"print({'::error::Android release signature failure stage: ' + failure_stage + '.'!r}, file=sys.stderr)\n"
                              if failure_stage else "")
             helper.write_text("import json,os,sys\nfrom pathlib import Path\n"
                               "Path(os.environ['SYNTHETIC_ARGUMENTS']).write_text(json.dumps(sys.argv[1:]))\n"
+                              + (f"Path(os.environ['GITHUB_OUTPUT']).write_text({'verification_stage=' + metadata_stage + chr(10)!r})\n"
+                                 if metadata_stage is not None else "")
                               + fixed_failure +
                               f"sys.exit({helper_status})\n")
             sdk = root / "public sdk"
@@ -51,6 +55,7 @@ class AndroidVerificationActionTest(unittest.TestCase):
                            "ANDROID_HOME": str(sdk), "APK_DIR": apk, "BUNDLE_DIR": bundle,
                            "VERIFY_ACTION_PATH": str(action), "SYNTHETIC_ARGUMENTS": str(capture),
                            "EXPECTED_CERTIFICATE_SHA256": expected,
+                           "GITHUB_OUTPUT": str(metadata),
                            "RELEASE_STORE_PASSWORD": "synthetic-private-canary"}
             result = subprocess.run(["bash", "-x", "-c", self.step["run"]], cwd=caller,
                                     env=environment, capture_output=True, text=True, timeout=30)
@@ -59,6 +64,7 @@ class AndroidVerificationActionTest(unittest.TestCase):
                 self.assertNotIn(expected, result.stdout + result.stderr)
             self.assertFalse((caller / "injected").exists())
             arguments = json.loads(capture.read_text()) if capture.exists() else None
+            result.verification_metadata = metadata.read_text()
             return result, arguments, str(sdk / "build-tools/35.0.0/apksigner"), apk, bundle
 
     def test_missing_apksigner_fails_before_helper(self):
@@ -66,6 +72,7 @@ class AndroidVerificationActionTest(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIsNone(arguments)
         self.assertIn("apksigner is required", result.stdout)
+        self.assertEqual("verification_stage=apksigner-missing\n", result.verification_metadata)
 
     def test_nonexecutable_apksigner_fails_before_helper(self):
         result, arguments, *_ = self.invoke(executable=False)
@@ -104,6 +111,20 @@ class AndroidVerificationActionTest(unittest.TestCase):
         self.assertEqual(0, result.returncode)
         self.assertEqual(apk, arguments[3])
         self.assertNotIn("${{ inputs.", self.step["run"])
+
+    def test_failed_helper_keeps_nonzero_exit_and_fixed_output_for_composite_mapping(self):
+        result, *_ = self.invoke(helper_status=19, metadata_stage="approved-pin-mismatch")
+        self.assertEqual(19, result.returncode)
+        self.assertEqual("verification_stage=approved-pin-mismatch\n", result.verification_metadata)
+        self.assertEqual("verify", self.step["id"])
+        self.assertEqual("${{ steps.verify.outputs.verification_stage }}",
+                         self.action["outputs"]["verification_stage"]["value"])
+        self.assertNotIn("continue-on-error", self.step)
+
+    def test_abnormal_failure_with_no_output_is_not_reported_as_success(self):
+        result, *_ = self.invoke(helper_status=23)
+        self.assertEqual(23, result.returncode)
+        self.assertEqual("", result.verification_metadata)
 
 
 if __name__ == "__main__":

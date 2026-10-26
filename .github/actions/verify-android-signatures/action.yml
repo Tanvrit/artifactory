@@ -11,10 +11,15 @@ inputs:
     description: Optional public approved signing certificate SHA-256; empty preserves signer-agreement checks.
     required: false
     default: ''
+outputs:
+  verification_stage:
+    description: Fixed verification result enum only; unavailable diagnostics never permit a failed verification.
+    value: ${{ steps.verify.outputs.verification_stage }}
 runs:
   using: composite
   steps:
     - name: Require apksigner and verify release artifacts
+      id: verify
       shell: bash
       env:
         APK_DIR: ${{ inputs.apk-dir }}
@@ -26,6 +31,9 @@ runs:
         set -euo pipefail
         APKSIGNER="$(find "${ANDROID_HOME:-/nonexistent}/build-tools" -type f -name apksigner 2>/dev/null | sort -V | tail -1 || true)"
         if [ -z "$APKSIGNER" ] || [ ! -x "$APKSIGNER" ]; then
+          if [ -n "${GITHUB_OUTPUT:-}" ]; then
+            { printf '%s\n' 'verification_stage=apksigner-missing' >> "$GITHUB_OUTPUT"; } 2>/dev/null || true
+          fi
           echo "::error::Android SDK apksigner is required for release signature verification."
           exit 1
         fi
