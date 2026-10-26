@@ -94,7 +94,8 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
         with self.assertRaises(VERIFY.SignatureVerificationError):
             VERIFY.bundle_signers(duplicate)
 
-    def exercise_cli(self, *, matching=True, signer_failure=False, bundle_present=True, expected=None):
+    def exercise_cli(self, *, matching=True, signer_failure=False, bundle_present=True, expected=None,
+                     signer_label="Signer #1", extra_certificate_line=None):
         with tempfile.TemporaryDirectory(prefix="synthetic-signature-cli-") as directory:
             root = Path(directory)
             apk_dir, bundle_dir = root / "apks", root / "bundles"
@@ -106,7 +107,8 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
             signer = root / "apksigner"
             digest = next(iter(self.signers)) if matching else "0" * 64
             signer.write_text(f"#!{sys.executable}\nimport sys\n"
-                              f"print('Signer #1 certificate SHA-256 digest: {digest}')\n"
+                              f"print({signer_label + ' certificate SHA-256 digest: ' + digest!r})\n"
+                              + (f"print({extra_certificate_line!r})\n" if extra_certificate_line else "") +
                               "print('synthetic-diagnostic-canary', file=sys.stderr)\n"
                               f"sys.exit({1 if signer_failure else 0})\n")
             signer.chmod(0o700)
@@ -130,6 +132,32 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
 
     def test_approved_certificate_is_enforced(self):
         self.assertEqual(0, self.exercise_cli(expected="match"))
+
+    def test_current_build_tools_v30_signer_label(self):
+        self.assertEqual(0, self.exercise_cli(expected="match", signer_label="V3.0 Signer:"))
+
+    def test_current_build_tools_v31_signer_sdk_range(self):
+        self.assertEqual(0, self.exercise_cli(expected="match", signer_label=
+                         "V3.1 Signer: (minSdkVersion=33, maxSdkVersion=2147483647)"))
+
+    def test_legacy_v31_signer_sdk_range(self):
+        self.assertEqual(0, self.exercise_cli(expected="match", signer_label=
+                         "Signer (minSdkVersion=33 (dev release=true), maxSdkVersion=2147483647)"))
+
+    def test_current_build_tools_single_legacy_signer_label(self):
+        self.assertEqual(0, self.exercise_cli(expected="match", signer_label="Signer:"))
+
+    def test_other_sdk_range_signer_is_not_ignored(self):
+        self.assertNotEqual(0, self.exercise_cli(expected="match", extra_certificate_line=
+                            "V3.1 Signer: (minSdkVersion=33, maxSdkVersion=2147483647) certificate SHA-256 digest: " + "0" * 64))
+
+    def test_unknown_certificate_label_fails_closed_instead_of_being_ignored(self):
+        self.assertNotEqual(0, self.exercise_cli(expected="match", extra_certificate_line=
+                            "Unknown signer certificate SHA-256 digest: " + "0" * 64))
+
+    def test_source_stamp_is_distinct_from_application_signer(self):
+        self.assertEqual(0, self.exercise_cli(expected="match", extra_certificate_line=
+                         "Source Stamp Signer: certificate SHA-256 digest: " + "0" * 64))
 
     def test_public_colon_separated_certificate_is_normalized(self):
         self.assertEqual(0, self.exercise_cli(expected="colon-match"))

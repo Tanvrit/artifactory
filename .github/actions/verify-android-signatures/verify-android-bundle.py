@@ -101,7 +101,22 @@ def bundle_signers(bundle):
 
 def apk_signers(apk, signer):
     output = run_tool([str(signer), "verify", "--print-certs", str(apk)])
-    digests = re.findall(r"^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]{64})\s*$", output, re.MULTILINE)
+    # apksigner uses scheme/range labels for v3 signers in newer build tools.
+    # Inspect every certificate line so an unknown/rotated signer cannot be
+    # silently omitted while another recognized signer satisfies the pin.
+    sdk_range = r"\(minSdkVersion=\d+(?: \(dev release=true\))?, maxSdkVersion=\d+\)"
+    label = rf"(?:Signer #[1-9]\d*|Signer:|Signer {sdk_range}|V3\.[01] Signer:(?: {sdk_range})?)"
+    pattern = re.compile(rf"{label} certificate SHA-256 digest: ([0-9a-fA-F]{{64}})[ \t]*")
+    digests = []
+    for line in output.splitlines():
+        if " certificate SHA-256 digest:" not in line:
+            continue
+        if re.fullmatch(r"Source Stamp Signer:? certificate SHA-256 digest: [0-9a-fA-F]{64}[ \t]*", line):
+            continue  # A source stamp is not the APK's signing identity.
+        match = pattern.fullmatch(line)
+        if match is None:
+            raise SignatureVerificationError()
+        digests.append(match.group(1))
     if not digests:
         raise SignatureVerificationError()
     return frozenset(digest.lower() for digest in digests)
