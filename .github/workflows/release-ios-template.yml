@@ -436,19 +436,51 @@ jobs:
       # Try both, then fall through (xcodebuild also runs
       # embedAndSignAppleFrameworkForXcode via the pbxproj shellScript).
       - name: Build KMP framework
+        id: kmp-framework
         if: steps.guard.outputs.supported == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          echo 'stage=task-discovery' >> "$GITHUB_OUTPUT"
           MODULE="${{ inputs.gradle_module }}"
           if ./gradlew ":${MODULE}:tasks" --quiet 2>/dev/null | grep -q "linkPodReleaseFrameworkIosArm64"; then
+            echo 'stage=pod-framework-link' >> "$GITHUB_OUTPUT"
             ./gradlew ":${MODULE}:linkPodReleaseFrameworkIosArm64" --no-daemon
+            echo 'stage=completed' >> "$GITHUB_OUTPUT"
           elif ./gradlew ":${MODULE}:tasks" --quiet 2>/dev/null | grep -q "linkReleaseFrameworkIosArm64"; then
+            echo 'stage=plain-framework-link' >> "$GITHUB_OUTPUT"
             ./gradlew ":${MODULE}:linkReleaseFrameworkIosArm64" --no-daemon
+            echo 'stage=completed' >> "$GITHUB_OUTPUT"
           else
+            echo 'stage=deferred-to-xcode' >> "$GITHUB_OUTPUT"
             echo "::notice::No linkPod*/link* iOS framework task found in :${MODULE}; xcodebuild's pbxproj shellScript will invoke embedAndSignAppleFrameworkForXcode directly."
           fi
+
+      # Fixed labels expose only source boundaries in step metadata, never compiler output.
+      - name: "KMP framework stage: task-discovery"
+        if: always() && (steps.kmp-framework.outcome == 'success' || steps.kmp-framework.outcome == 'failure') && steps.kmp-framework.outputs.stage == 'task-discovery'
+        run: ':'
+
+      - name: "KMP framework stage: pod-framework-link"
+        if: always() && (steps.kmp-framework.outcome == 'success' || steps.kmp-framework.outcome == 'failure') && steps.kmp-framework.outputs.stage == 'pod-framework-link'
+        run: ':'
+
+      - name: "KMP framework stage: plain-framework-link"
+        if: always() && (steps.kmp-framework.outcome == 'success' || steps.kmp-framework.outcome == 'failure') && steps.kmp-framework.outputs.stage == 'plain-framework-link'
+        run: ':'
+
+      - name: "KMP framework stage: deferred-to-xcode"
+        if: always() && (steps.kmp-framework.outcome == 'success' || steps.kmp-framework.outcome == 'failure') && steps.kmp-framework.outputs.stage == 'deferred-to-xcode'
+        run: ':'
+
+      - name: "KMP framework stage: completed"
+        if: always() && (steps.kmp-framework.outcome == 'success' || steps.kmp-framework.outcome == 'failure') && steps.kmp-framework.outputs.stage == 'completed'
+        run: ':'
+
+      - name: "KMP framework stage: unknown or unreported"
+        if: always() && (steps.kmp-framework.outcome == 'success' || steps.kmp-framework.outcome == 'failure') && !contains(fromJSON('["task-discovery","pod-framework-link","plain-framework-link","deferred-to-xcode","completed"]'), steps.kmp-framework.outputs.stage)
+        run: ':'
 
       # ── Portable Fastlane-Match signing (only when MATCH_* secrets set) ─────
       # Installs fastlane if absent, creates a temporary keychain, and runs
@@ -612,8 +644,9 @@ jobs:
       # A single action keeps keychain changes and credential cleanup scoped to
       # archive/export. No P8 is written into the shared runner HOME.
       - name: Portable certificate/API-key signing
+        id: portable-signing
         if: steps.guard.outputs.supported == 'true' && inputs.portable_signing
-        uses: tanvrit/artifactory/.github/actions/portable-ios-signing@0bc52ef28a8cb75d6e6a30ce89cb9805e32fb941
+        uses: tanvrit/artifactory/.github/actions/portable-ios-signing@144f6fd09e2c7db42d22fdc26bd98b0e4252ba23
         with:
           project: ${{ inputs.xcodeproj_path }}
           scheme: ${{ inputs.scheme }}
@@ -629,6 +662,151 @@ jobs:
           APPSTORE_CONNECT_KEY_ID: ${{ secrets.APPSTORE_CONNECT_KEY_ID }}
           APPSTORE_CONNECT_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_ISSUER_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      # Static labels only; attempted Apple writes do not prove remote mutation.
+      - name: "Portable signing stage: unknown"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'unknown'
+        run: ':'
+
+      - name: "Portable signing stage: configuration"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'configuration'
+        run: ':'
+
+      - name: "Portable signing stage: signing-lock"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'signing-lock'
+        run: ':'
+
+      - name: "Portable signing stage: private-inputs"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'private-inputs'
+        run: ':'
+
+      - name: "Portable signing stage: api-key-validation"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'api-key-validation'
+        run: ':'
+
+      - name: "Portable signing stage: certificate-validation"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'certificate-validation'
+        run: ':'
+
+      - name: "Portable signing stage: xcode-identity"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'xcode-identity'
+        run: ':'
+
+      - name: "Portable signing stage: api-authentication"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'api-authentication'
+        run: ':'
+
+      - name: "Portable signing stage: declared-capabilities"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'declared-capabilities'
+        run: ':'
+
+      - name: "Portable signing stage: registered-certificate-lookup"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'registered-certificate-lookup'
+        run: ':'
+
+      - name: "Portable signing stage: bundle-lookup"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'bundle-lookup'
+        run: ':'
+
+      - name: "Portable signing stage: bundle-create-attempt"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'bundle-create-attempt'
+        run: ':'
+
+      - name: "Portable signing stage: capability-lookup"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'capability-lookup'
+        run: ':'
+
+      - name: "Portable signing stage: capability-enable-attempt"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'capability-enable-attempt'
+        run: ':'
+
+      - name: "Portable signing stage: profile-lookup"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'profile-lookup'
+        run: ':'
+
+      - name: "Portable signing stage: profile-create-attempt"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'profile-create-attempt'
+        run: ':'
+
+      - name: "Portable signing stage: profile-validation"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'profile-validation'
+        run: ':'
+
+      - name: "Portable signing stage: profile-installation"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'profile-installation'
+        run: ':'
+
+      - name: "Portable signing stage: keychain-setup"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'keychain-setup'
+        run: ':'
+
+      - name: "Portable signing stage: archive"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'archive'
+        run: ':'
+
+      - name: "Portable signing stage: archive-validation"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'archive-validation'
+        run: ':'
+
+      - name: "Portable signing stage: export"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'export'
+        run: ':'
+
+      - name: "Portable signing stage: ipa-validation"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'ipa-validation'
+        run: ':'
+
+      - name: "Portable signing stage: ipa-output"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'ipa-output'
+        run: ':'
+
+      - name: "Portable signing stage: testflight-upload-attempt"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'testflight-upload-attempt'
+        run: ':'
+
+      - name: "Portable signing stage: cleanup"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'cleanup'
+        run: ':'
+
+      - name: "Portable signing stage: completed"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.stage == 'completed'
+        run: ':'
+
+      - name: "Portable signing stage: unknown or unreported"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && !contains(fromJSON('["unknown","configuration","signing-lock","private-inputs","api-key-validation","certificate-validation","xcode-identity","api-authentication","declared-capabilities","registered-certificate-lookup","bundle-lookup","bundle-create-attempt","capability-lookup","capability-enable-attempt","profile-lookup","profile-create-attempt","profile-validation","profile-installation","keychain-setup","archive","archive-validation","export","ipa-validation","ipa-output","testflight-upload-attempt","cleanup","completed"]'), steps.portable-signing.outputs.stage)
+        run: ':'
+
+      - name: "Portable cleanup stage: unknown"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.cleanup-stage == 'unknown'
+        run: ':'
+
+      - name: "Portable cleanup stage: not-started"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.cleanup-stage == 'not-started'
+        run: ':'
+
+      - name: "Portable cleanup stage: search-list"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.cleanup-stage == 'search-list'
+        run: ':'
+
+      - name: "Portable cleanup stage: keychain"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.cleanup-stage == 'keychain'
+        run: ':'
+
+      - name: "Portable cleanup stage: profiles"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.cleanup-stage == 'profiles'
+        run: ':'
+
+      - name: "Portable cleanup stage: private-directory"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.cleanup-stage == 'private-directory'
+        run: ':'
+
+      - name: "Portable cleanup stage: completed"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && steps.portable-signing.outputs.cleanup-stage == 'completed'
+        run: ':'
+
+      - name: "Portable cleanup stage: unknown or unreported"
+        if: always() && (steps.portable-signing.outcome == 'success' || steps.portable-signing.outcome == 'failure') && !contains(fromJSON('["unknown","not-started","search-list","keychain","profiles","private-directory","completed"]'), steps.portable-signing.outputs.cleanup-stage)
+        run: ':'
 
       - name: Rename + checksum artifact
         if: steps.guard.outputs.supported == 'true'
