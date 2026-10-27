@@ -139,11 +139,12 @@ def bundle_signers(bundle):
 def apk_signers(apk, signer):
     output = run_tool([str(signer), "verify", "--print-certs", str(apk)],
                       FailureStage.APK_TOOL_VERIFICATION)
-    # apksigner uses scheme/range labels for v3 signers in newer build tools.
+    # Newer apksigner versions prefix signer labels with their verified scheme.
     # Inspect every certificate line so an unknown/rotated signer cannot be
     # silently omitted while another recognized signer satisfies the pin.
     sdk_range = r"\(minSdkVersion=\d+(?: \(dev release=true\))?, maxSdkVersion=\d+\)"
-    label = rf"(?:Signer #[1-9]\d*|Signer:|Signer {sdk_range}|V3\.[01] Signer:(?: {sdk_range})?)"
+    scheme_signer = r"(?:V[12]|V3\.0) Signer(?: #[1-9]\d*)?:"
+    label = rf"(?:Signer #[1-9]\d*|Signer:|Signer {sdk_range}|{scheme_signer}|V3\.[01] Signer:(?: {sdk_range})?)"
     pattern = re.compile(rf"{label} certificate SHA-256 digest: ([0-9a-fA-F]{{64}})[ \t]*")
     digests = []
     for line in output.splitlines():

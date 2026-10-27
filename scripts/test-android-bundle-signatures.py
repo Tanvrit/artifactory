@@ -185,6 +185,42 @@ class AndroidBundleSignaturesTest(unittest.TestCase):
     def test_current_build_tools_single_legacy_signer_label(self):
         self.assertEqual(0, self.exercise_cli(expected="match", signer_label="Signer:"))
 
+    def test_current_build_tools_v1_single_signer_label(self):
+        self.assertEqual(0, self.exercise_cli(expected="match", signer_label="V1 Signer:"))
+
+    def test_current_build_tools_v2_single_signer_label(self):
+        self.assertEqual(0, self.exercise_cli(expected="match", signer_label="V2 Signer:"))
+
+    def test_current_build_tools_scheme_numbered_signer_labels(self):
+        for scheme in ("V1", "V2", "V3.0"):
+            with self.subTest(scheme=scheme):
+                self.assertEqual(0, self.exercise_cli(expected="match", signer_label=f"{scheme} Signer #1:"))
+
+    def test_prefixed_second_signer_cannot_be_omitted_from_approved_identity(self):
+        self.assertNotEqual(0, self.exercise_cli(expected="match", signer_label="V2 Signer #1:",
+                            extra_certificate_line="V2 Signer #2: certificate SHA-256 digest: " + "0" * 64,
+                            expected_stage="approved-pin-mismatch"))
+
+    def test_prefixed_second_signer_cannot_be_omitted_from_bundle_match(self):
+        self.assertNotEqual(0, self.exercise_cli(signer_label="V2 Signer #1:",
+                            extra_certificate_line="V2 Signer #2: certificate SHA-256 digest: " + "0" * 64,
+                            expected_stage="aab-signer-mismatch"))
+
+    def test_malformed_prefixed_certificate_fails_closed(self):
+        self.assertNotEqual(0, self.exercise_cli(expected="match", signer_label="V2 Signer:",
+                            extra_certificate_line="V1 Signer: certificate SHA-256 digest: " + "0" * 63,
+                            expected_stage="apk-certificate-format"))
+
+    def test_unknown_scheme_and_invalid_index_remain_fail_closed(self):
+        for label in ("V4 Signer:", "V2 Signer #0:", "V2 Signer #-1:", "V3.2 Hybrid Classical Signer:"):
+            with self.subTest(label=label):
+                self.assertNotEqual(0, self.exercise_cli(expected="match", signer_label=label,
+                                    expected_stage="apk-certificate-format"))
+
+    def test_prefixed_certificate_crlf_and_horizontal_whitespace(self):
+        self.assertEqual(0, self.exercise_cli(expected="match", signer_label="V2 Signer:",
+                         extra_certificate_line="V2 Signer: certificate SHA-256 digest: " + next(iter(self.signers)) + "\t\r"))
+
     def test_other_sdk_range_signer_is_not_ignored(self):
         self.assertNotEqual(0, self.exercise_cli(expected="match", extra_certificate_line=
                             "V3.1 Signer: (minSdkVersion=33, maxSdkVersion=2147483647) certificate SHA-256 digest: " + "0" * 64,
