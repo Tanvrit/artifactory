@@ -314,7 +314,7 @@ jobs:
       - name: Verify APK + AAB release signatures
         id: signature_verify
         if: steps.guard.outputs.supported == 'true'
-        uses: Tanvrit/artifactory/.github/actions/verify-android-signatures@9afa44a926d352f2f6684082aee25a822d9505ee
+        uses: Tanvrit/artifactory/.github/actions/verify-android-signatures@55f27a77c0b12e3fe1ea25d0492fa75aece09fdd
         with:
           apk-dir: ${{ steps.guard.outputs.module_dir }}/build/outputs/apk/release
           bundle-dir: ${{ steps.guard.outputs.module_dir }}/build/outputs/bundle/release
