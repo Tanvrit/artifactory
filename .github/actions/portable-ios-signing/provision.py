@@ -2,6 +2,7 @@
 
 import base64
 from datetime import datetime, timezone
+from enum import Enum
 import hashlib
 import json
 from pathlib import Path
@@ -16,6 +17,25 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 class ProvisioningError(Exception):
     pass
+
+
+class ApiFailure(Enum):
+    BAD_REQUEST = "api-http-400"
+    UNAUTHENTICATED = "api-http-401"
+    FORBIDDEN = "api-http-403"
+    NOT_FOUND = "api-http-404"
+    CONFLICT = "api-http-409"
+    RATE_LIMITED = "api-http-429"
+    UPSTREAM = "api-http-5xx"
+    OTHER_HTTP = "api-http-other"
+    TRANSPORT = "api-transport"
+    SCHEMA = "api-response-schema"
+
+
+class ProvisioningApiError(ProvisioningError):
+    def __init__(self, message, category):
+        super().__init__(message)
+        self.category = category if type(category) is ApiFailure else ApiFailure.SCHEMA
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -82,17 +102,26 @@ class AppStoreClient:
         except HTTPError as error:
             status = error.code
             error.close()
-            raise ProvisioningError(f"Provisioning API request failed (HTTP {status}); response withheld") from None
+            categories = {400: ApiFailure.BAD_REQUEST, 401: ApiFailure.UNAUTHENTICATED,
+                          403: ApiFailure.FORBIDDEN, 404: ApiFailure.NOT_FOUND,
+                          409: ApiFailure.CONFLICT, 429: ApiFailure.RATE_LIMITED}
+            category = categories.get(status, ApiFailure.UPSTREAM if 500 <= status <= 599 else ApiFailure.OTHER_HTTP)
+            raise ProvisioningApiError(f"Provisioning API request failed (HTTP {status}); response withheld", category) from None
         except URLError:
-            raise ProvisioningError("Provisioning API connection failed; diagnostics withheld") from None
+            raise ProvisioningApiError("Provisioning API connection failed; diagnostics withheld", ApiFailure.TRANSPORT) from None
         if len(raw) > 4_000_000:
             raise ProvisioningError("Provisioning API response exceeded its bound")
-        return json.loads(raw)
+        try:
+            return json.loads(raw)
+        except (ValueError, UnicodeError):
+            raise ProvisioningApiError("Provisioning API response could not be decoded", ApiFailure.SCHEMA) from None
 
     def collection(self, path, **query):
         page = self.request(path + "?" + urlencode(dict(limit=200, **query)))
         rows = []
         for _ in range(5):
+            if not isinstance(page, dict) or not isinstance(page.get("data"), list):
+                raise ProvisioningApiError("Provisioning API collection has invalid shape", ApiFailure.SCHEMA)
             rows.extend(page["data"])
             next_page = page.get("links", {}).get("next")
             if not next_page:
@@ -156,6 +185,9 @@ def application_profile(client, certificate, team, bundle, private, execute, env
     # closed on other capability types rather than silently broaden the App ID.
     diagnostics.begin(Stage.CAPABILITY_LOOKUP)
     capabilities = client.collection(f"bundleIds/{bundle_id}/bundleIdCapabilities")
+    if any(not isinstance(row, dict) or not isinstance(row.get("attributes"), dict) or
+           not isinstance(row["attributes"].get("capabilityType"), str) for row in capabilities):
+        raise ProvisioningApiError("Provisioning API capabilities have invalid shape", ApiFailure.SCHEMA)
     enabled = {row["attributes"]["capabilityType"] for row in capabilities}
     for name in entitlements:
         capability = supported.get(name)

@@ -25,7 +25,7 @@ import time
 import uuid
 import zipfile
 
-from provision import (AppStoreClient, ProvisioningError, application_profile,
+from provision import (ApiFailure, AppStoreClient, ProvisioningApiError, ProvisioningError, application_profile,
                        authentication_token, install_profile)
 from diagnostics import CleanupStage, Diagnostics, Stage
 
@@ -318,9 +318,11 @@ def main():
         diagnostics.cleaned()
         diagnostics.begin(Stage.COMPLETED)
         print("Portable iOS signing/export completed; temporary credentials removed.")
-    except Exception:
+    except Exception as error:
         diagnostics.failed()
         print("::error::Portable iOS signing failed; diagnostics withheld.")
+        if type(error) is ProvisioningApiError and type(error.category) is ApiFailure:
+            print("::error title=Portable signing API diagnostic::" + error.category.value)
         return 1
     finally:
         diagnostics.publish(os.environ)
