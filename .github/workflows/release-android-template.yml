@@ -27,9 +27,10 @@
 # attached to a release tag, the "Verify APK is release-signed" step below
 # refuses to let the job reach the upload steps when it is unsigned.
 #
-# Play Store upload: gated on PLAY_STORE_SERVICE_ACCOUNT_JSON. Without
-# it, the APK + AAB land in GitHub Releases + R2 and an engineer
-# manually uploads via Play Console.
+# Publication defaults preserve existing release callers. Set publish_artifacts=false
+# for a build/signature validation run with no GitHub Release, R2 or manifest writes.
+# Play upload also stays off in validation unless upload_play_store=true is explicitly
+# requested. Release publication still uploads to Play when its existing secret is set.
 #
 # Graceful-skip guard: no androidTarget() in composeApp/build.gradle.kts
 # → exit 0 with skip notice.
@@ -62,6 +63,21 @@ on:
         type: string
         required: false
         default: 'internal'
+      firebase_messaging:
+        description: 'Opt-in to per-app GOOGLE_SERVICES_JSON validation and temporary build injection.'
+        type: boolean
+        required: false
+        default: false
+      publish_artifacts:
+        description: 'Publish APK/AAB to the Artifactory release, R2 and manifest. Set false for signing validation builds.'
+        type: boolean
+        required: false
+        default: true
+      upload_play_store:
+        description: 'Explicitly permit Play Store upload when publish_artifacts is false; track upload is an external publication.'
+        type: boolean
+        required: false
+        default: false
       release_notes:
         type: string
         required: false
@@ -79,6 +95,9 @@ on:
         required: false
         default: '["self-hosted","macOS","ARM64"]'
     secrets:
+      GOOGLE_SERVICES_JSON:
+        description: 'Raw Firebase Android client JSON for opted-in Messaging builds; never logged or retained.'
+        required: false
       ANDROID_SIGNING_KEYSTORE:
         description: 'Base64-encoded .jks keystore'
         required: false
@@ -179,34 +198,109 @@ jobs:
       - name: Prepare Android SDK
         if: steps.guard.outputs.supported == 'true'
         uses: tanvrit/artifactory/.github/actions/android-sdk@main
+
+      - name: Validate explicit Play upload prerequisites
+        if: steps.guard.outputs.supported == 'true' && inputs.upload_play_store
+        shell: bash
+        env:
+          PLAY_SA_PRESENT: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON != '' && 'true' || 'false' }}
+        run: |
+          if [ "$PLAY_SA_PRESENT" != 'true' ]; then
+            echo "::error::Explicit Play upload requires PLAY_STORE_SERVICE_ACCOUNT_JSON."
+            exit 1
+          fi
+
+      - name: Prepare private Android project cache
+        id: android-project-cache
+        if: steps.guard.outputs.supported == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          CACHE_DIR="$(mktemp -d "$RUNNER_TEMP/release-project-cache.XXXXXX")"
+          printf 'path=%s\n' "$CACHE_DIR" >> "$GITHUB_OUTPUT"
+
       # Decode the keystore into a temp file. Android Gradle plugin reads
       # signing config from env vars our build.gradle.kts blocks reference
       # (RELEASE_STORE_FILE, RELEASE_STORE_PASSWORD, etc.).
       - name: Decode signing keystore
+        id: android-keystore
         if: steps.guard.outputs.supported == 'true' && env.KEYSTORE_PRESENT == 'true'
         env:
           KEYSTORE_PRESENT: ${{ secrets.ANDROID_SIGNING_KEYSTORE != '' && 'true' || 'false' }}
           ANDROID_SIGNING_KEYSTORE: ${{ secrets.ANDROID_SIGNING_KEYSTORE }}
         run: |
+          set +x
           set -euo pipefail
-          KS="$RUNNER_TEMP/release.keystore"
-          echo "$ANDROID_SIGNING_KEYSTORE" | base64 --decode > "$KS"
-          echo "RELEASE_STORE_FILE=$KS" >> "$GITHUB_ENV"
-          echo "RELEASE_STORE_PASSWORD=${{ secrets.ANDROID_SIGNING_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
-          echo "RELEASE_KEY_ALIAS=${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}" >> "$GITHUB_ENV"
-          echo "RELEASE_KEY_PASSWORD=${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          umask 077
+          KS="$(mktemp "$RUNNER_TEMP/release-signing.XXXXXX")"
+          echo "path=$KS" >> "$GITHUB_OUTPUT"
+          if ! printf '%s' "$ANDROID_SIGNING_KEYSTORE" | base64 --decode > "$KS" 2>/dev/null; then
+            echo "::error::Signing keystore decoding failed; values were withheld."
+            exit 1
+          fi
+
+      - name: Prepare app-specific Firebase Messaging configuration
+        id: firebase-config
+        if: steps.guard.outputs.supported == 'true' && inputs.firebase_messaging
+        shell: bash
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          FIREBASE_EXPECTED_BUNDLE_ID: ${{ inputs.application_id }}
+          FIREBASE_ANDROID_MODULE: ${{ steps.guard.outputs.module_dir }}
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          path = Path(os.environ['FIREBASE_ANDROID_MODULE']) / 'google-services.json'
+          try:
+              path.resolve().relative_to(Path.cwd().resolve())
+          except ValueError:
+              sys.exit('::error::Firebase configuration path must be inside the application checkout.')
+          validator = Path('scripts/validate-firebase-config.py')
+          config = os.environ.get('GOOGLE_SERVICES_JSON', '')
+          if not config.strip() or not validator.is_file():
+              sys.exit('::error::Firebase Messaging requires GOOGLE_SERVICES_JSON and the caller configuration validator.')
+          try:
+              descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+          except FileExistsError:
+              sys.exit('::error::Refusing to overwrite an existing Firebase Android configuration.')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print('created=true', file=output)
+              print('path=' + str(path), file=output)
+          with os.fdopen(descriptor, 'w') as output:
+              output.write(config)
+          child_env = {key: value for key, value in os.environ.items() if key != 'GOOGLE_SERVICES_JSON'}
+          result = subprocess.run([sys.executable, str(validator), '--android', str(path), '--bundle-id',
+                                   os.environ['FIREBASE_EXPECTED_BUNDLE_ID']], env=child_env,
+                                  capture_output=True, timeout=30, check=False)
+          if result.returncode:
+              sys.exit('::error::Firebase Android configuration validation failed; configuration values were withheld.')
+          print('Firebase Android configuration validated for this application.')
+          PYTHON
 
       - name: Build APK + AAB
         if: steps.guard.outputs.supported == 'true'
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE_STORE_FILE: ${{ steps.android-keystore.outputs.path }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
+          ANDROID_PROJECT_CACHE: ${{ steps.android-project-cache.outputs.path }}
         run: |
+          set +x
           # --no-configuration-cache: AGP 9.x + Gradle 9.x trips a serialization
           # error in ProcessNavigationXmlTask when config cache is on.
+          # Keep signing values out of command files and reusable compiler daemons.
           ./gradlew :${{ inputs.gradle_module }}:assembleRelease \
                     :${{ inputs.gradle_module }}:bundleRelease \
                     -PappVersion=${{ inputs.version }} \
+                    -Pkotlin.compiler.execution.strategy=in-process \
+                    --project-cache-dir "$ANDROID_PROJECT_CACHE" \
                     --no-daemon --no-configuration-cache
 
       # ── Signature gate (2026-08-22) ───────────────────────────────────────
@@ -326,7 +420,7 @@ jobs:
       # A report may be best-effort. A DELIVERABLE may not: a release with no
       # installer attached is a failed release and must say so.
       - name: Verify release upload preconditions
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && inputs.publish_artifacts
         shell: bash
         env:
           ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
@@ -351,7 +445,7 @@ jobs:
           echo "Release upload preconditions OK for ${PRODUCT} ${VERSION} (android)."
 
       - name: Upload to GitHub Release
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && inputs.publish_artifacts
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           repository: Tanvrit/artifactory
@@ -391,7 +485,7 @@ jobs:
       # self-hosted nodes — a missing `aws` binary was one more failure the old
       # continue-on-error swallowed.
       - name: Mirror to Cloudflare R2
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && inputs.publish_artifacts
         shell: bash
         env:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -480,12 +574,11 @@ jobs:
           fi
           echo "Mirrored and verified ${mirrored} object(s) under r2://tanvrit-artifacts/${prefix}/"
 
-      # Play Store upload — activates only when both keystore + Play SA
-      # are set. Internal track by default; promotion to higher tracks
-      # is an out-of-band Play Console action.
+      # Existing release publication keeps its Play behavior. A validation run
+      # needs the separate explicit upload_play_store opt-in, even with credentials.
       - name: Upload to Google Play
-        if: steps.guard.outputs.supported == 'true' && env.PLAY_SA_PRESENT == 'true'
-        continue-on-error: true
+        if: steps.guard.outputs.supported == 'true' && (inputs.publish_artifacts || inputs.upload_play_store) && env.PLAY_SA_PRESENT == 'true'
+        continue-on-error: ${{ !inputs.upload_play_store }}
         env:
           PLAY_SA_PRESENT: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON != '' && 'true' || 'false' }}
         uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1.1.5
@@ -498,7 +591,7 @@ jobs:
           changesNotSentForReview: false
 
       - name: Dispatch manifest update
-        if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
+        if: steps.guard.outputs.supported == 'true' && inputs.publish_artifacts && env.ARTIFACTS_TOKEN_PRESENT == 'true'
         continue-on-error: true
         env:
           ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
@@ -517,3 +610,61 @@ jobs:
               "release_notes": "${{ inputs.release_notes }}",
               "release_notes_hi": "${{ inputs.release_notes_hi }}"
             }
+
+      # AGP can serialize signing passwords for feature/test signing. Delete only
+      # that generated artifact directory without opening its credential files.
+      - name: Remove generated Android signing configuration
+        if: always() && steps.guard.outputs.supported == 'true'
+        shell: bash
+        env:
+          MODULE_DIR: ${{ steps.guard.outputs.module_dir }}
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          import shutil
+          import sys
+          path = Path(os.environ['MODULE_DIR']) / 'build/intermediates/signing_config_data'
+          try:
+              path.resolve().relative_to(Path.cwd().resolve())
+          except ValueError:
+              sys.exit('::error::Refusing signing-configuration cleanup outside the application checkout.')
+          if path.is_symlink():
+              path.unlink()
+          elif path.exists():
+              shutil.rmtree(path)
+          PYTHON
+
+      - name: Remove temporary Android signing keystore
+        if: always() && steps.android-keystore.outputs.path != ''
+        shell: bash
+        env:
+          KEYSTORE_PATH: ${{ steps.android-keystore.outputs.path }}
+        run: rm -f -- "$KEYSTORE_PATH"
+
+      - name: Remove private Android project cache
+        if: always() && steps.android-project-cache.outputs.path != ''
+        shell: bash
+        env:
+          ANDROID_PROJECT_CACHE: ${{ steps.android-project-cache.outputs.path }}
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          import shutil
+          import sys
+          path = Path(os.environ['ANDROID_PROJECT_CACHE'])
+          if path.parent.resolve() != Path(os.environ['RUNNER_TEMP']).resolve() or not path.name.startswith('release-project-cache.'):
+              sys.exit('::error::Refusing to remove a project cache outside this job temporary-directory contract.')
+          if path.is_symlink():
+              path.unlink()
+          elif path.exists():
+              shutil.rmtree(path)
+          PYTHON
+
+      - name: Remove temporary Firebase configuration
+        if: always() && steps.firebase-config.outputs.created == 'true'
+        shell: bash
+        env:
+          FIREBASE_CONFIG_PATH: ${{ steps.firebase-config.outputs.path }}
+        run: python3 -c 'import os; from pathlib import Path; Path(os.environ["FIREBASE_CONFIG_PATH"]).unlink(missing_ok=True)'
