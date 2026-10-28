@@ -116,8 +116,12 @@ class AppStoreClient:
         except (ValueError, UnicodeError):
             raise ProvisioningApiError("Provisioning API response could not be decoded", ApiFailure.SCHEMA) from None
 
-    def collection(self, path, **query):
-        page = self.request(path + "?" + urlencode(dict(limit=200, **query)))
+    def collection(self, path, *, limit=200, **query):
+        parameters = dict(query)
+        if limit is not None:
+            parameters["limit"] = limit
+        suffix = "?" + urlencode(parameters) if parameters else ""
+        page = self.request(path + suffix)
         rows = []
         for _ in range(5):
             if not isinstance(page, dict) or not isinstance(page.get("data"), list):
@@ -184,7 +188,9 @@ def application_profile(client, certificate, team, bundle, private, execute, env
     # Only capabilities already declared by this target are configured. Fail
     # closed on other capability types rather than silently broaden the App ID.
     diagnostics.begin(Stage.CAPABILITY_LOOKUP)
-    capabilities = client.collection(f"bundleIds/{bundle_id}/bundleIdCapabilities")
+    # The related-capability endpoint permits an omitted limit. Use its
+    # server default while retaining the same bounded next-page traversal.
+    capabilities = client.collection(f"bundleIds/{bundle_id}/bundleIdCapabilities", limit=None)
     if any(not isinstance(row, dict) or not isinstance(row.get("attributes"), dict) or
            not isinstance(row["attributes"].get("capabilityType"), str) for row in capabilities):
         raise ProvisioningApiError("Provisioning API capabilities have invalid shape", ApiFailure.SCHEMA)
