@@ -258,6 +258,12 @@ jobs:
         uses: tanvrit/artifactory/.github/actions/gradle-home@main
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Reused runners can retain sparse configuration from an earlier job.
+      - name: Restore full source checkout
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: git sparse-checkout disable
+
       - name: Resolve module directory
         id: resolve
         uses: tanvrit/artifactory/.github/actions/resolve-module-dir@main

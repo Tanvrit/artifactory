@@ -161,6 +161,12 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 1
 
+      # Reused runners can retain sparse configuration from an earlier job.
+      - name: Restore full source checkout
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: git sparse-checkout disable
+
       - name: Verify target supported
         id: guard
         shell: bash
