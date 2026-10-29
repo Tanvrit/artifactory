@@ -123,6 +123,17 @@ def write_private(path, data):
         handle.write(data)
 
 
+def application_profile_settings(profile):
+    # Xcode expands nested settings per target. Resource bundles/frameworks
+    # resolve an unset suffix to empty instead of receiving an app-only profile.
+    return [
+        "PROVISIONING_PROFILE_SPECIFIER=$(PORTABLE_PROFILE_$(WRAPPER_EXTENSION))",
+        "PROVISIONING_PROFILE=$(PORTABLE_PROFILE_UUID_$(WRAPPER_EXTENSION))",
+        f"PORTABLE_PROFILE_app={profile['Name']}",
+        f"PORTABLE_PROFILE_UUID_app={profile['UUID']}",
+    ]
+
+
 def verify_settings(raw, expected):
     rows = json.loads(raw)
     applications = [row["buildSettings"] for row in rows
@@ -241,7 +252,7 @@ def perform(env, private, execute=run, client_factory=AppStoreClient, diagnostic
         diagnostics.begin(Stage.ARCHIVE)
         execute("Archive application", [*common, "-destination", "generic/platform=iOS", "-archivePath", str(archive),
                 "CODE_SIGN_STYLE=Manual", f"CODE_SIGN_IDENTITY={hashlib.sha1(certificate).hexdigest()}",
-                f"PROVISIONING_PROFILE_SPECIFIER={profile['Name']}", f"PROVISIONING_PROFILE={profile['UUID']}",
+                *application_profile_settings(profile),
                 f"OTHER_CODE_SIGN_FLAGS=--keychain {shlex.quote(str(keychain))}", "archive"], child_env, timeout=5400)
         diagnostics.begin(Stage.ARCHIVE_VALIDATION)
         info = plistlib.loads((archive / "Info.plist").read_bytes())["ApplicationProperties"]
