@@ -8,6 +8,7 @@ All subprocess diagnostics are captured: failures report a fixed stage + status.
 
 import base64
 import contextlib
+from enum import Enum
 import fcntl
 import hashlib
 import json
@@ -41,6 +42,32 @@ SECRET_NAMES = (
 
 class SigningError(Exception):
     pass
+
+
+class IpaFailureKind(Enum):
+    UNPACK = "ipa-unpack"
+    APPLICATION = "ipa-main-application"
+    BUNDLE = "ipa-bundle-identity"
+    SIGNATURE = "ipa-strict-signature"
+    CERTIFICATE = "ipa-distribution-certificate"
+    ENTITLEMENTS = "ipa-entitlements-read"
+    APP_IDENTIFIER = "ipa-application-identifier"
+    TEAM = "ipa-team-identifier"
+    DEBUG = "ipa-get-task-allow"
+
+
+class IpaFailure(SigningError):
+    def __init__(self, kind):
+        super().__init__("IPA verification failed; private details withheld")
+        self.kind = kind
+
+
+@contextlib.contextmanager
+def ipa_check(kind):
+    try:
+        yield
+    except Exception:
+        raise IpaFailure(kind) from None
 
 
 class XcodeFailure(SigningError):
@@ -173,26 +200,34 @@ def unpack_ipa(ipa, unpacked, execute, child_env):
 
 def verify_ipa(ipa, private, team, bundle, certificate, execute, child_env):
     unpacked = private / "verified-ipa"
-    unpack_ipa(ipa, unpacked, execute, child_env)
-    apps = list((unpacked / "Payload").glob("*.app"))
-    if len(apps) != 1:
-        raise SigningError("Exported IPA must contain exactly one main application")
-    info = plistlib.loads((apps[0] / "Info.plist").read_bytes())
-    if info.get("CFBundleIdentifier") != bundle:
-        raise SigningError("Exported IPA bundle does not match expected identity")
-    execute("Verify exported code signature", ["codesign", "--verify", "--deep", "--strict", str(apps[0])], child_env)
-    prefix = private / "exported-certificate-"
-    execute("Inspect exported certificate", ["codesign", "-d", "--extract-certificates", str(prefix), str(apps[0])], child_env)
-    if hashlib.sha256(Path(str(prefix) + "0").read_bytes()).digest() != hashlib.sha256(certificate).digest():
-        raise SigningError("Exported IPA did not use the imported distribution certificate")
-    entitlements = plistlib.loads(execute("Inspect exported signing identity",
-                                        ["codesign", "-d", "--entitlements", ":-", str(apps[0])], child_env))
+    with ipa_check(IpaFailureKind.UNPACK):
+        unpack_ipa(ipa, unpacked, execute, child_env)
+    with ipa_check(IpaFailureKind.APPLICATION):
+        apps = list((unpacked / "Payload").glob("*.app"))
+        if len(apps) != 1:
+            raise SigningError()
+    with ipa_check(IpaFailureKind.BUNDLE):
+        info = plistlib.loads((apps[0] / "Info.plist").read_bytes())
+        if info.get("CFBundleIdentifier") != bundle:
+            raise SigningError()
+    with ipa_check(IpaFailureKind.SIGNATURE):
+        execute("Verify exported code signature", ["codesign", "--verify", "--deep", "--strict", str(apps[0])], child_env)
+    with ipa_check(IpaFailureKind.CERTIFICATE):
+        prefix = private / "exported-certificate-"
+        execute("Inspect exported certificate", ["codesign", "-d", "--extract-certificates", str(prefix), str(apps[0])], child_env)
+        if hashlib.sha256(Path(str(prefix) + "0").read_bytes()).digest() != hashlib.sha256(certificate).digest():
+            raise SigningError()
+    with ipa_check(IpaFailureKind.ENTITLEMENTS):
+        entitlements = plistlib.loads(execute("Inspect exported signing identity",
+                                            ["codesign", "-d", "--entitlements", ":-", str(apps[0])], child_env))
     # Legacy/transferred apps can retain an App ID prefix different to Team ID.
     app_identifier = entitlements.get("application-identifier", "")
-    if (not re.fullmatch(rf"[A-Z0-9]{{10}}\.{re.escape(bundle)}", app_identifier)
-            or entitlements.get("com.apple.developer.team-identifier") != team
-            or entitlements.get("get-task-allow") is not False):
-        raise SigningError("IPA signing entitlements do not match expected App Store identity")
+    if not re.fullmatch(rf"[A-Z0-9]{{10}}\.{re.escape(bundle)}", app_identifier):
+        raise IpaFailure(IpaFailureKind.APP_IDENTIFIER)
+    if entitlements.get("com.apple.developer.team-identifier") != team:
+        raise IpaFailure(IpaFailureKind.TEAM)
+    if entitlements.get("get-task-allow") is not False:
+        raise IpaFailure(IpaFailureKind.DEBUG)
 
 
 def perform(env, private, execute=run, client_factory=AppStoreClient, diagnostics=None):
@@ -370,6 +405,8 @@ def main():
             print("::error title=Portable signing API diagnostic::" + error.category.value)
         if type(error) is XcodeFailure and type(error.kind) is XcodeFailureKind:
             print("::error title=Portable signing Xcode diagnostic::" + error.kind.value)
+        if type(error) is IpaFailure and type(error.kind) is IpaFailureKind:
+            print("::error title=Portable signing IPA diagnostic::" + error.kind.value)
         return 1
     finally:
         diagnostics.publish(os.environ)

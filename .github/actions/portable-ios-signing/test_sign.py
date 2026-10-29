@@ -199,8 +199,9 @@ class PortableSigningTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d); private = root / "private"; private.mkdir()
             tools = Tools(private); tools.exported_certificate = b"DIFFERENT-CERT"
-            with self.assertRaisesRegex(sign.SigningError, "imported distribution certificate"):
+            with self.assertRaises(sign.IpaFailure) as caught:
                 sign.perform(environment(root), private, tools, Client)
+            self.assertIs(caught.exception.kind, sign.IpaFailureKind.CERTIFICATE)
             self.assertFalse((root / "export/application.ipa").exists())
             self.assertFalse(list((root / "home").rglob("*.mobileprovision")))
 
