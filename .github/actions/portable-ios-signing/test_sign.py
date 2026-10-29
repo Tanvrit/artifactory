@@ -82,6 +82,9 @@ class Tools:
         if stage == "Inspect exported signing identity":
             return plistlib.dumps({"application-identifier": f"OLDPREFIX1.{self.bundle}",
                                    "com.apple.developer.team-identifier": self.team, "get-task-allow": False})
+        if stage == "Unpack exported IPA":
+            with zipfile.ZipFile(args[-2]) as ipa:
+                ipa.extractall(args[-1])
         if stage == "Inspect exported certificate":
             Path(args[args.index("--extract-certificates") + 1] + "0").write_bytes(self.exported_certificate)
         return b""
@@ -133,7 +136,7 @@ class PortableSigningTest(unittest.TestCase):
             self.assertTrue((root / "export/application.ipa").exists())
             self.assertFalse(any("Upload" in s for s, _, _ in tools.calls))
             for stage, args, env in tools.calls:
-                if stage.startswith(("Archive", "Export", "Resolve", "Verify")):
+                if stage.startswith(("Archive", "Export", "Resolve", "Verify", "Unpack")):
                     self.assertFalse(set(sign.SECRET_NAMES) & set(env))
                 self.assertFalse(any(a.startswith("PRODUCT_BUNDLE_IDENTIFIER=") for a in args))
             self.assertEqual(tools.search_list, ["/Users/CI User/Library/Keychains/login.keychain-db",

@@ -12,13 +12,14 @@ import fcntl
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import plistlib
 import re
 import secrets
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
 import time
@@ -145,10 +146,34 @@ def verify_settings(raw, expected):
     return applications[0]
 
 
+def unpack_ipa(ipa, unpacked, execute, child_env):
+    # ditto preserves executable modes and framework links needed by codesign.
+    # Reject traversal and link-parent writes before invoking native extraction.
+    with zipfile.ZipFile(ipa) as archive:
+        links = set()
+        paths = []
+        for info in archive.infolist():
+            path = PurePosixPath(info.filename)
+            if not path.parts or path.is_absolute() or ".." in path.parts or "\\" in info.filename:
+                raise SigningError("IPA archive contains an unsafe entry path")
+            paths.append(path)
+            if stat.S_ISLNK(info.external_attr >> 16):
+                if not 0 < info.file_size <= 4096:
+                    raise SigningError("IPA archive contains an unsafe link")
+                target = archive.read(info).decode("utf-8", errors="strict")
+                value = PurePosixPath(target)
+                if not value.parts or value.is_absolute() or ".." in value.parts or "\\" in target:
+                    raise SigningError("IPA archive contains an unsafe link")
+                links.add(path)
+        if any(parent in links for path in paths for parent in path.parents):
+            raise SigningError("IPA archive writes through a link")
+    unpacked.mkdir()
+    execute("Unpack exported IPA", ["ditto", "-x", "-k", str(ipa), str(unpacked)], child_env)
+
+
 def verify_ipa(ipa, private, team, bundle, certificate, execute, child_env):
     unpacked = private / "verified-ipa"
-    with zipfile.ZipFile(ipa) as archive:
-        archive.extractall(unpacked)
+    unpack_ipa(ipa, unpacked, execute, child_env)
     apps = list((unpacked / "Payload").glob("*.app"))
     if len(apps) != 1:
         raise SigningError("Exported IPA must contain exactly one main application")
