@@ -66,7 +66,10 @@ class IpaExtractionTest(unittest.TestCase):
             python_extract = root / "python"
             with zipfile.ZipFile(ipa) as archive:
                 archive.extractall(python_extract)
-            self.assertNotEqual(invoke(["codesign", "--verify", "--deep", "--strict", str(python_extract / "Payload/Synthetic.app")]), 0)
+            # Python extraction loses Unix executable permissions. Whether codesign
+            # rejects this synthetic macOS bundle varies between OS versions; the
+            # metadata loss itself is the portable regression assertion.
+            self.assertEqual((python_extract / "Payload/Synthetic.app/Contents/MacOS/Synthetic").stat().st_mode & 0o111, 0)
             unpacked = root / "native"
             sign.unpack_ipa(ipa, unpacked, sign.run, env)
             self.assertEqual((unpacked / "Payload/Synthetic.app/Contents/MacOS/Synthetic").stat().st_mode & 0o777, 0o755)
