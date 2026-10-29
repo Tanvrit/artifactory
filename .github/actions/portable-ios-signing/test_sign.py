@@ -72,7 +72,7 @@ class Tools:
             archive.mkdir()
             (archive / "Info.plist").write_bytes(plistlib.dumps({"ApplicationProperties": {
                 "CFBundleIdentifier": self.bundle, "Team": self.team}}))
-        if stage in ("Export signed IPA", "Upload internal-only TestFlight build"):
+        if stage in ("Export signed IPA", "Upload internal-only TestFlight build", "Upload App Store-eligible build"):
             self.options.append(plistlib.loads((self.private / "exportOptions.plist").read_bytes()))
         if stage == "Export signed IPA":
             export = Path(args[args.index("-exportPath") + 1])
@@ -167,14 +167,34 @@ class PortableSigningTest(unittest.TestCase):
             self.assertTrue(tools.options[1]["testFlightInternalTestingOnly"])
             self.assertFalse(tools.options[1]["manageAppVersionAndBuildNumber"])
 
+    def test_appstore_upload_requires_explicit_scope_and_keeps_version(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); private = root / "private"; private.mkdir()
+            tools = Tools(private); env = environment(root)
+            env["PORTABLE_IOS_UPLOAD_APPSTORE"] = "true"
+            sign.perform(env, private, tools, Client)
+            self.assertEqual([o["destination"] for o in tools.options], ["export", "upload"])
+            self.assertFalse(tools.options[1]["testFlightInternalTestingOnly"])
+            self.assertFalse(tools.options[1]["manageAppVersionAndBuildNumber"])
+            self.assertIn("Upload App Store-eligible build", [c[0] for c in tools.calls])
+
+    def test_conflicting_upload_scopes_are_rejected_before_signing(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = environment(Path(d))
+            env.update(PORTABLE_IOS_UPLOAD_APPSTORE="true", PORTABLE_IOS_UPLOAD_TESTFLIGHT="true")
+            with self.assertRaises(sign.SigningError):
+                sign.configuration(env)
+
     def test_cleanup_on_each_failure_after_keychain_creation(self):
         for stage in ["Set keychain timeout", "Unlock temporary keychain", "Import distribution identity",
                       "Allow codesign access", "Read keychain search list", "Add temporary keychain", "Archive application",
-                      "Export signed IPA", "Verify exported code signature", "Upload internal-only TestFlight build"]:
+                      "Export signed IPA", "Verify exported code signature", "Upload internal-only TestFlight build",
+                      "Upload App Store-eligible build"]:
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
                 root = Path(d); private = root / "private"; private.mkdir()
                 tools = Tools(private, fail=stage); env = environment(root)
-                env["PORTABLE_IOS_UPLOAD_TESTFLIGHT"] = "true"
+                upload_flag = "PORTABLE_IOS_UPLOAD_APPSTORE" if stage == "Upload App Store-eligible build" else "PORTABLE_IOS_UPLOAD_TESTFLIGHT"
+                env[upload_flag] = "true"
                 with self.assertRaises(sign.SigningError):
                     sign.perform(env, private, tools, Client)
                 self.assertEqual(tools.calls[-1][0], "Delete temporary keychain")

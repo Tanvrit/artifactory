@@ -502,3 +502,7 @@ The bounded planner's fixtures run without signing credentials:
 `python3 -m unittest discover -s .github/actions/ios-signing-plan -p test_plan.py -v`.
 This optional template change is shared by the fleet; unrelated callers keep the
 empty extension list and automatic signing is unchanged.
+
+## Explicit portable iOS upload scope
+
+Portable signing exports locally by default. `portable_upload_testflight: true` keeps the existing internal-only TestFlight behavior. A caller may instead explicitly set `portable_upload_appstore: true` to upload an App Store-eligible build; it does not submit the app for review or publish it. The two flags are mutually exclusive, both default false, and require portable signing. Existing callers retain their upload scope. Neither path changes version or build numbers; the caller must provide a new approved build number after an earlier upload. Public artifact/CDN publication remains controlled independently by `publish_artifacts`.
