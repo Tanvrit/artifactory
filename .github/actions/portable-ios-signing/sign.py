@@ -28,6 +28,7 @@ import zipfile
 from provision import (ApiFailure, AppStoreClient, ProvisioningApiError, ProvisioningError, application_profile,
                        authentication_token, install_profile)
 from diagnostics import CleanupStage, Diagnostics, Stage
+from xcode_diagnostics import XcodeFailureKind, classify
 
 
 SECRET_NAMES = (
@@ -41,12 +42,18 @@ class SigningError(Exception):
     pass
 
 
+class XcodeFailure(SigningError):
+    def __init__(self, kind):
+        super().__init__("Xcode failed; captured output withheld")
+        self.kind = kind
+
+
 def run(stage, args, env, timeout=180):
     """Never let a CalledProcessError render secret-bearing argv or output."""
     process = subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, start_new_session=True)
     try:
-        stdout, _ = process.communicate(timeout=timeout)
+        stdout, stderr = process.communicate(timeout=timeout)
     except BaseException:
         os.killpg(process.pid, signal.SIGTERM)
         try:
@@ -56,6 +63,8 @@ def run(stage, args, env, timeout=180):
             process.communicate()
         raise
     if process.returncode:
+        if args[0] == "xcodebuild" and stage in ("Archive application", "Export signed IPA"):
+            raise XcodeFailure(classify(stdout, stderr))
         raise SigningError(f"{stage} failed (exit {process.returncode}); no signing diagnostics emitted")
     return stdout
 
@@ -323,6 +332,8 @@ def main():
         print("::error::Portable iOS signing failed; diagnostics withheld.")
         if type(error) is ProvisioningApiError and type(error.category) is ApiFailure:
             print("::error title=Portable signing API diagnostic::" + error.category.value)
+        if type(error) is XcodeFailure and type(error.kind) is XcodeFailureKind:
+            print("::error title=Portable signing Xcode diagnostic::" + error.kind.value)
         return 1
     finally:
         diagnostics.publish(os.environ)
