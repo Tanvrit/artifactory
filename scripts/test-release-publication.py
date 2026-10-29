@@ -2,6 +2,8 @@
 
 import ast
 import base64
+import hashlib
+import json
 import os
 import re
 from pathlib import Path
@@ -22,7 +24,7 @@ PUBLIC = {
 }
 PLAY = "Upload to Google Play"
 PLAY_PREFLIGHT = "Validate explicit Play upload prerequisites"
-CORE = {"Build APK + AAB", "Verify APK is release-signed", "Rename + checksum artifacts"}
+CORE = {"Build APK + AAB", "Verify APK + AAB release signatures", "Rename + checksum artifacts"}
 
 
 def enabled(condition, *, publication, play=False, supported=True, credentials=True):
@@ -74,7 +76,80 @@ class AndroidPublicationTest(unittest.TestCase):
             self.assertTrue(enabled(self.steps[name]["if"], publication=False), name)
         self.assertIn("assembleRelease", self.steps["Build APK + AAB"]["run"])
         self.assertIn("bundleRelease", self.steps["Build APK + AAB"]["run"])
-        self.assertIn("apksigner", self.steps["Verify APK is release-signed"]["run"])
+        self.assertRegex(self.steps["Verify APK + AAB release signatures"]["uses"],
+                         r"^Tanvrit/artifactory/\.github/actions/verify-android-signatures@[0-9a-f]{40}$")
+
+    def test_signature_action_is_immutable_available_outside_caller_checkout_and_before_publication(self):
+        step = self.steps["Verify APK + AAB release signatures"]
+        self.assertNotIn("run", step)
+        self.assertEqual("${{ steps.guard.outputs.module_dir }}/build/outputs/apk/release", step["with"]["apk-dir"])
+        self.assertEqual("${{ steps.guard.outputs.module_dir }}/build/outputs/bundle/release", step["with"]["bundle-dir"])
+        action_commit = step["uses"].rsplit("@", 1)[1]
+        self.assertRegex(action_commit, r"^[0-9a-f]{40}$")
+        self.assertEqual("55f27a77c0b12e3fe1ea25d0492fa75aece09fdd", action_commit)
+        helper = ROOT / ".github/actions/verify-android-signatures/verify-android-bundle.py"
+        self.assertEqual("9fc38c566461d29b0767680f6c766870722da3735a18c39c99a2094aa1dd6ead",
+                         hashlib.sha256(helper.read_bytes()).hexdigest())
+        names = list(self.steps)
+        self.assertLess(names.index("Verify APK + AAB release signatures"), names.index("Rename + checksum artifacts"))
+        for name in PUBLIC | {PLAY}:
+            self.assertLess(names.index("Verify APK + AAB release signatures"), names.index(name))
+        self.assertNotIn("APK Sig Block 42", ANDROID.read_text())
+        self.assertNotIn("signature-block scan", ANDROID.read_text())
+
+    def test_optional_expected_certificate_preserves_empty_default_and_reaches_signature_gate(self):
+        value = self.workflow["on"]["workflow_call"]["inputs"]["expected_certificate_sha256"]
+        self.assertEqual("string", value["type"])
+        self.assertEqual("false", value["required"])
+        self.assertEqual("", value["default"])
+        gate = self.steps["Verify APK + AAB release signatures"]
+        self.assertEqual("${{ inputs.expected_certificate_sha256 }}", gate["with"]["expected_certificate_sha256"])
+        self.assertTrue(enabled(gate["if"], publication=False))
+        self.assertNotIn("expected_certificate_sha256", self.steps["Build APK + AAB"]["env"])
+
+    def test_signature_stage_reporter_cannot_override_verifier_failure_or_publish(self):
+        gate = self.steps["Verify APK + AAB release signatures"]
+        self.assertEqual("signature_verify", gate["id"])
+        self.assertNotIn("continue-on-error", gate)
+        reporters = [step for name, step in self.steps.items()
+                     if name.startswith("Signature verification status — ")]
+        self.assertEqual(1, len(reporters))
+        reporter = reporters[0]
+        self.assertEqual("always() && steps.guard.outputs.supported == 'true' && "
+                         "steps.signature_verify.outcome != 'skipped' && steps.signature_verify.outcome != ''",
+                         reporter["if"])
+        self.assertEqual(":", reporter["run"])
+        self.assertNotIn("continue-on-error", reporter)
+        self.assertNotIn("env", reporter)
+        names = list(self.steps)
+        self.assertEqual(names.index("Verify APK + AAB release signatures") + 1,
+                         names.index(reporter["name"]))
+        self.assertLess(names.index(reporter["name"]), names.index("Rename + checksum artifacts"))
+
+    def test_signature_metadata_name_accepts_only_source_owned_enums(self):
+        name = next(name for name in self.steps if name.startswith("Signature verification status — "))
+        match = re.fullmatch(r"Signature verification status — \$\{\{ (.+) \}\}", name)
+        self.assertIsNotNone(match)
+        source = "steps.signature_verify.outputs.verification_stage"
+        branches = re.findall(re.escape(source) + r" == '([a-z-]+)' && '([a-z-]+)'", match.group(1))
+        self.assertTrue(branches)
+        self.assertEqual(" || ".join([f"{source} == '{key}' && '{literal}'" for key, literal in branches] +
+                                    ["'diagnostic_unavailable'"]), match.group(1))
+        helper = ROOT / ".github/actions/verify-android-signatures/verify-android-bundle.py"
+        tree = ast.parse(helper.read_text())
+        enum = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "FailureStage")
+        known = {node.value.value for node in enum.body if isinstance(node, ast.Assign)}
+        allowed = [key for key, literal in branches]
+        self.assertTrue(all(key == literal for key, literal in branches))
+        self.assertEqual(known | {"success", "apksigner-missing"}, set(allowed))
+        self.assertEqual(len(allowed), len(set(allowed)))
+        # Actions comparisons ignore case; each matched value must still render
+        # a canonical literal, never the source output's original spelling.
+        for candidate in allowed + [value.upper() for value in allowed] + ["", "synthetic-private-canary"]:
+            label = next((literal for key, literal in branches if candidate.casefold() == key.casefold()),
+                         "diagnostic_unavailable")
+            self.assertIn(label, set(allowed) | {"diagnostic_unavailable"})
+            self.assertNotIn("synthetic-private-canary", label)
 
     def test_explicit_play_only_upload_never_enables_public_release_or_manifest(self):
         self.assertTrue(enabled(self.steps[PLAY]["if"], publication=False, play=True))
@@ -85,6 +160,97 @@ class AndroidPublicationTest(unittest.TestCase):
         self.assertEqual(self.steps[PLAY]["continue-on-error"], "${{ !inputs.upload_play_store }}")
         for name in PUBLIC:
             self.assertFalse(enabled(self.steps[name]["if"], publication=False, play=True), name)
+
+    def test_real_signature_fixtures_are_required_in_existing_selftest_job(self):
+        workflow = yaml.load((ROOT / ".github/workflows/selftest-release-publication.yml").read_text(),
+                             Loader=yaml.BaseLoader)
+        self.assertEqual("read", workflow["permissions"]["contents"])
+        self.assertEqual({"publication-guards"}, set(workflow["jobs"]))
+        steps = workflow["jobs"]["publication-guards"]["steps"]
+        java = next(step for step in steps if step.get("uses", "").startswith("actions/setup-java@"))
+        self.assertEqual("21", java["with"]["java-version"])
+        fixture_step = next(step for step in steps if "scripts/test-android-bundle-signatures.py" in step.get("run", ""))
+        self.assertNotIn("continue-on-error", fixture_step)
+        self.assertNotIn("if", fixture_step)
+        self.assertIn("set -euo pipefail", fixture_step["run"])
+        for script in ("test-release-publication.py", "test-android-verification-action.py",
+                       "test-android-bundle-signatures.py"):
+            self.assertEqual(1, fixture_step["run"].count("scripts/" + script))
+            for event in ("pull_request", "push"):
+                self.assertIn("scripts/" + script, workflow["on"][event]["paths"])
+        for event in ("pull_request", "push"):
+            self.assertIn(".github/actions/verify-android-signatures/**", workflow["on"][event]["paths"])
+
+    def test_normal_pr_smoke_proves_failed_composite_output_and_preserves_original_outcome(self):
+        workflow = yaml.load((ROOT / ".github/workflows/selftest-release-publication.yml").read_text(),
+                             Loader=yaml.BaseLoader)
+        self.assertIn("pull_request", workflow["on"])
+        job = workflow["jobs"]["publication-guards"]
+        self.assertEqual({"group": "tanvrit", "labels": ["self-hosted", "macOS", "ARM64"]}, job["runs-on"])
+        steps = job["steps"]
+        fixture = next(step for step in steps if step.get("id") == "signature_metadata_fixture")
+        self.assertEqual("true", fixture["continue-on-error"])
+        self.assertEqual("./.github/actions/verify-android-signatures", fixture["uses"])
+        self.assertNotIn("secrets.", json.dumps(fixture))
+        assertion = next(step for step in steps if step.get("name", "").startswith("Signature metadata smoke — "))
+        self.assertNotIn("continue-on-error", assertion)
+        self.assertEqual("always()", assertion["if"])
+        self.assertEqual("${{ steps.signature_metadata_fixture.outcome }}", assertion["env"]["FIXTURE_OUTCOME"])
+        self.assertEqual("${{ steps.signature_metadata_fixture.outputs.verification_stage }}",
+                         assertion["env"]["FIXTURE_STAGE"])
+        self.assertEqual("Signature metadata smoke — ${{ steps.signature_metadata_fixture.outputs.verification_stage "
+                         "== 'artifact-discovery' && 'artifact-discovery' || 'diagnostic_unavailable' }}",
+                         assertion["name"])
+        self.assertIn('"$FIXTURE_OUTCOME" != \'failure\'', assertion["run"])
+        self.assertIn('"$FIXTURE_STAGE" != \'artifact-discovery\'', assertion["run"])
+        self.assertIn("exit 1", assertion["run"])
+
+    def test_synthetic_metadata_fixture_lifecycle_and_assertions_execute_without_private_tools(self):
+        workflow = yaml.load((ROOT / ".github/workflows/selftest-release-publication.yml").read_text(),
+                             Loader=yaml.BaseLoader)
+        steps = workflow["jobs"]["publication-guards"]["steps"]
+        prepare = next(step for step in steps if step.get("id") == "metadata_fixture")
+        assertion = next(step for step in steps if step.get("name", "").startswith("Signature metadata smoke — "))
+        cleanup = next(step for step in steps if step.get("name") == "Remove job-owned signature metadata fixture")
+        self.assertEqual("always()", cleanup["if"])
+        action = yaml.load((ROOT / ".github/actions/verify-android-signatures/action.yml").read_text(),
+                           Loader=yaml.BaseLoader)
+        with tempfile.TemporaryDirectory(prefix="synthetic-metadata-workflow-") as directory:
+            temp = Path(directory)
+            adjacent = temp / "unrelated-file"
+            adjacent.write_text("synthetic-neighbor")
+            transport = temp / "prepare-output"
+            transport.touch(mode=0o600)
+            env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "RUNNER_TEMP": str(temp),
+                   "GITHUB_OUTPUT": str(transport)}
+            result = subprocess.run(["bash", "-c", prepare["run"]], env=env,
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(0, result.returncode)
+            smoke = Path(transport.read_text().removeprefix("root=").strip())
+            self.assertEqual(0o700, smoke.stat().st_mode & 0o777)
+            transport.write_text("")
+            result = subprocess.run(["bash", "-c", action["runs"]["steps"][0]["run"]], cwd=ROOT,
+                                    env=env | {"ANDROID_HOME": str(smoke / "sdk"),
+                                               "APK_DIR": str(smoke / "apks"), "BUNDLE_DIR": str(smoke / "bundles"),
+                                               "EXPECTED_CERTIFICATE_SHA256": "",
+                                               "VERIFY_ACTION_PATH": str(ROOT / ".github/actions/verify-android-signatures")},
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(1, result.returncode)
+            self.assertEqual("verification_stage=artifact-discovery\n", transport.read_text())
+            for outcome, stage, expected in [("failure", "artifact-discovery", 0),
+                                             ("success", "artifact-discovery", 1),
+                                             ("failure", "", 1),
+                                             ("failure", "synthetic-private-canary", 1)]:
+                result = subprocess.run(["bash", "-c", assertion["run"]], env=env | {
+                    "FIXTURE_OUTCOME": outcome, "FIXTURE_STAGE": stage},
+                    capture_output=True, text=True, timeout=30)
+                self.assertEqual(expected, result.returncode)
+                self.assertNotIn("synthetic-private-canary", result.stdout + result.stderr)
+            result = subprocess.run(["bash", "-c", cleanup["run"]], env=env | {"SMOKE_ROOT": str(smoke)},
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(0, result.returncode)
+            self.assertFalse(smoke.exists())
+            self.assertTrue(adjacent.exists())
 
     def test_unsupported_target_never_builds_or_publishes(self):
         for name in CORE | PUBLIC | {PLAY, PLAY_PREFLIGHT}:

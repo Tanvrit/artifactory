@@ -3,13 +3,19 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - '.github/actions/verify-android-signatures/**'
       - '.github/workflows/release-android-template.yml'
       - '.github/workflows/selftest-release-publication.yml'
+      - 'scripts/test-android-bundle-signatures.py'
+      - 'scripts/test-android-verification-action.py'
       - 'scripts/test-release-publication.py'
   push:
     paths:
+      - '.github/actions/verify-android-signatures/**'
       - '.github/workflows/release-android-template.yml'
       - '.github/workflows/selftest-release-publication.yml'
+      - 'scripts/test-android-bundle-signatures.py'
+      - 'scripts/test-android-verification-action.py'
       - 'scripts/test-release-publication.py'
 permissions:
   contents: read
@@ -23,13 +29,66 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Prepare macOS CI tools
         uses: tanvrit/artifactory/.github/actions/macos-ci-tools@main
-      - name: Check publication guards with synthetic inputs
+      - name: Set up JDK for disposable signature fixtures
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with: { distribution: temurin, java-version: '21' }
+      - name: Prepare credential-free signature metadata fixture
+        id: metadata_fixture
+        shell: bash
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          SMOKE_ROOT="$(mktemp -d "$RUNNER_TEMP/signature-metadata-smoke.XXXXXX")"
+          echo "root=$SMOKE_ROOT" >> "$GITHUB_OUTPUT"
+          mkdir -p "$SMOKE_ROOT/sdk/build-tools/0.0.0" "$SMOKE_ROOT/apks" "$SMOKE_ROOT/bundles"
+          printf '%s\n' '#!/bin/sh' 'exit 0' > "$SMOKE_ROOT/sdk/build-tools/0.0.0/apksigner"
+          chmod 700 "$SMOKE_ROOT/sdk/build-tools/0.0.0/apksigner"
+      # Only this deliberately failing, empty synthetic fixture may continue.
+      # Real release verification retains its nonzero exit and job failure.
+      - name: Exercise failed composite metadata with empty synthetic artifacts
+        id: signature_metadata_fixture
+        continue-on-error: true
+        uses: ./.github/actions/verify-android-signatures
+        env:
+          ANDROID_HOME: ${{ steps.metadata_fixture.outputs.root }}/sdk
+        with:
+          apk-dir: ${{ steps.metadata_fixture.outputs.root }}/apks
+          bundle-dir: ${{ steps.metadata_fixture.outputs.root }}/bundles
+      - name: "Signature metadata smoke — ${{ steps.signature_metadata_fixture.outputs.verification_stage == 'artifact-discovery' && 'artifact-discovery' || 'diagnostic_unavailable' }}"
+        if: always()
+        shell: bash
+        env:
+          FIXTURE_OUTCOME: ${{ steps.signature_metadata_fixture.outcome }}
+          FIXTURE_STAGE: ${{ steps.signature_metadata_fixture.outputs.verification_stage }}
+        run: |
+          set +x
+          set -euo pipefail
+          if [ "$FIXTURE_OUTCOME" != 'failure' ] || [ "$FIXTURE_STAGE" != 'artifact-discovery' ]; then
+            echo '::error::Synthetic failed-composite metadata transport was not verified.'
+            exit 1
+          fi
+      - name: Remove job-owned signature metadata fixture
+        if: always()
+        shell: bash
+        env:
+          SMOKE_ROOT: ${{ steps.metadata_fixture.outputs.root }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SMOKE_ROOT" ]; then exit 0; fi
+          case "$SMOKE_ROOT" in
+            "$RUNNER_TEMP"/signature-metadata-smoke.*) rm -rf -- "$SMOKE_ROOT" ;;
+            *) echo '::error::Refusing unrelated synthetic metadata fixture path.'; exit 1 ;;
+          esac
+      - name: Check publication guards and signatures with synthetic inputs
         shell: bash
         run: |
           set -euo pipefail
           python3 -m venv "$RUNNER_TEMP/publication-guard-tests"
           "$RUNNER_TEMP/publication-guard-tests/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.3
           "$RUNNER_TEMP/publication-guard-tests/bin/python" -B scripts/test-release-publication.py -v
+          "$RUNNER_TEMP/publication-guard-tests/bin/python" -B scripts/test-android-verification-action.py -v
+          "$RUNNER_TEMP/publication-guard-tests/bin/python" -B scripts/test-android-bundle-signatures.py -v
       - name: Remove isolated test dependencies
         if: always()
         shell: bash
