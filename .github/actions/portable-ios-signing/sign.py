@@ -214,7 +214,7 @@ def verify_ipa(ipa, private, team, bundle, certificate, execute, child_env):
         execute("Verify exported code signature", ["codesign", "--verify", "--deep", "--strict", str(apps[0])], child_env)
     with ipa_check(IpaFailureKind.CERTIFICATE):
         prefix = private / "exported-certificate-"
-        execute("Inspect exported certificate", ["codesign", "-d", "--extract-certificates", str(prefix), str(apps[0])], child_env)
+        execute("Inspect exported certificate", ["codesign", "-d", f"--extract-certificates={prefix}", str(apps[0])], child_env)
         if hashlib.sha256(Path(str(prefix) + "0").read_bytes()).digest() != hashlib.sha256(certificate).digest():
             raise SigningError()
     with ipa_check(IpaFailureKind.ENTITLEMENTS):

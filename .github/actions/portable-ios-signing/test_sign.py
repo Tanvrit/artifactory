@@ -86,7 +86,10 @@ class Tools:
             with zipfile.ZipFile(args[-2]) as ipa:
                 ipa.extractall(args[-1])
         if stage == "Inspect exported certificate":
-            Path(args[args.index("--extract-certificates") + 1] + "0").write_bytes(self.exported_certificate)
+            certificate_args = [arg for arg in args if arg.startswith("--extract-certificates=")]
+            if len(certificate_args) != 1:
+                raise AssertionError("Certificate prefix must be attached to the optional codesign argument")
+            Path(certificate_args[0].split("=", 1)[1] + "0").write_bytes(self.exported_certificate)
         return b""
 
 
