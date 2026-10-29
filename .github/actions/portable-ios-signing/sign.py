@@ -105,6 +105,8 @@ def required(env, name):
 
 
 def configuration(env):
+    if env.get("PORTABLE_IOS_UPLOAD_APPSTORE") == "true" and env.get("PORTABLE_IOS_UPLOAD_TESTFLIGHT") == "true":
+        raise SigningError("Choose exactly one Apple upload distribution scope")
     for name in SECRET_NAMES[:-1]:
         required(env, name)
     team = required(env, "PORTABLE_IOS_TEAM_ID")
@@ -338,11 +340,13 @@ def perform(env, private, execute=run, client_factory=AppStoreClient, diagnostic
         if any(destination.iterdir()):
             raise SigningError("Refusing to reuse a nonempty IPA output directory")
         shutil.copy2(ipas[0], destination / ipas[0].name)
-        if env.get("PORTABLE_IOS_UPLOAD_TESTFLIGHT") == "true":
+        if env.get("PORTABLE_IOS_UPLOAD_TESTFLIGHT") == "true" or env.get("PORTABLE_IOS_UPLOAD_APPSTORE") == "true":
             diagnostics.begin(Stage.TESTFLIGHT)
-            export_options.update(destination="upload", testFlightInternalTestingOnly=True)
+            internal_only = env.get("PORTABLE_IOS_UPLOAD_APPSTORE") != "true"
+            export_options.update(destination="upload", testFlightInternalTestingOnly=internal_only)
             options.write_bytes(plistlib.dumps(export_options))
-            execute("Upload internal-only TestFlight build", [*export_args, *auth], child_env, timeout=1800)
+            upload_stage = "Upload internal-only TestFlight build" if internal_only else "Upload App Store-eligible build"
+            execute(upload_stage, [*export_args, *auth], child_env, timeout=1800)
     except BaseException:
         diagnostics.failed()
         raise
