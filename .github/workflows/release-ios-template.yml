@@ -134,6 +134,11 @@ on:
         type: boolean
         required: false
         default: false
+      portable_upload_appstore:
+        description: 'With portable_signing, explicitly upload an App Store-eligible build without submitting or publishing; mutually exclusive with portable_upload_testflight.'
+        type: boolean
+        required: false
+        default: false
       firebase_messaging:
         description: 'Opt-in to a validated per-app Firebase plist supplied by GOOGLE_SERVICE_INFO_PLIST; removed after the build.'
         type: boolean
@@ -317,10 +322,15 @@ jobs:
           MATCH_PRESENT: ${{ !inputs.portable_signing && secrets.MATCH_GIT_URL != '' && secrets.MATCH_PASSWORD != '' && 'true' || 'false' }}
           PORTABLE_SIGNING: ${{ inputs.portable_signing }}
           PORTABLE_UPLOAD: ${{ inputs.portable_upload_testflight }}
+          PORTABLE_APPSTORE_UPLOAD: ${{ inputs.portable_upload_appstore }}
           PORTABLE_SECRETS_PRESENT: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 != '' && secrets.IOS_P12_PASSWORD != '' && secrets.APPSTORE_CONNECT_PRIVATE_KEY != '' && secrets.APPSTORE_CONNECT_KEY_ID != '' && secrets.APPSTORE_CONNECT_ISSUER_ID != '' && 'true' || 'false' }}
           ADDITIONAL_BUNDLE_IDS: ${{ inputs.additional_bundle_ids }}
         run: |
-          if [ "$PORTABLE_UPLOAD" = "true" ] && [ "$PORTABLE_SIGNING" != "true" ]; then
+          if [ "$PORTABLE_UPLOAD" = "true" ] && [ "$PORTABLE_APPSTORE_UPLOAD" = "true" ]; then
+            echo "::error::Choose exactly one Apple upload distribution scope."
+            exit 1
+          fi
+          if { [ "$PORTABLE_UPLOAD" = "true" ] || [ "$PORTABLE_APPSTORE_UPLOAD" = "true" ]; } && [ "$PORTABLE_SIGNING" != "true" ]; then
             echo "::error::portable_upload_testflight requires portable_signing=true."
             exit 1
           fi
@@ -652,7 +662,7 @@ jobs:
       - name: Portable certificate/API-key signing
         id: portable-signing
         if: steps.guard.outputs.supported == 'true' && inputs.portable_signing
-        uses: tanvrit/artifactory/.github/actions/portable-ios-signing@80ebdb6024c6d387934a6d0e7a615d909de04839
+        uses: tanvrit/artifactory/.github/actions/portable-ios-signing@7a1abc133d2742e508f9e29f8675b0abbbec2c38
         with:
           project: ${{ inputs.xcodeproj_path }}
           scheme: ${{ inputs.scheme }}
@@ -661,6 +671,7 @@ jobs:
           team-id: ${{ inputs.apple_team_id }}
           export-method: ${{ inputs.export_method }}
           upload-testflight: ${{ inputs.portable_upload_testflight }}
+          upload-appstore: ${{ inputs.portable_upload_appstore }}
         env:
           IOS_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 }}
           IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
