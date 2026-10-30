@@ -316,7 +316,7 @@ jobs:
           GH_TOKEN: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
           BRANDING_SHA: ${{ steps.commit.outputs.commit_hash }}
         run: |
-          for repo in Tanvrit/app-main Tanvrit/app-mandee-biz Tanvrit/app-school Tanvrit/app-swyft Tanvrit/app-desipops Tanvrit/app-wedding Tanvrit/control; do
+          for repo in Tanvrit/app-main Tanvrit/app-mandee-biz Tanvrit/app-school Tanvrit/app-swyft Tanvrit/app-desipops Tanvrit/app-jashva Tanvrit/control; do
             if gh api "repos/$repo/dispatches" --method POST \
                 --field event_type=branding-updated \
                 --field "client_payload[branding_sha]=$BRANDING_SHA" >/dev/null; then
