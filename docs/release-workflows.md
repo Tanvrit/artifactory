@@ -293,7 +293,7 @@ fallback.
 | `Tanvrit/app-desipops` | no | `CF_ACCOUNT_ID` |
 | `Tanvrit/app-school` | no | `CF_ACCOUNT_ID` |
 | `Tanvrit/app-swyft` | no | `CF_ACCOUNT_ID` |
-| `Tanvrit/app-wedding` | no | `CF_ACCOUNT_ID` |
+| `Tanvrit/app-jashva` | no | `CF_ACCOUNT_ID` |
 | `tanvrit/control` | no | `CF_ACCOUNT_ID` |
 | `Tanvrit/app-bharat-online` | no | `CLOUDFLARE_ACCOUNT_ID` |
 | `Tanvrit/app-auditor` | no | `CLOUDFLARE_ACCOUNT_ID` |
