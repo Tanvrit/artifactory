@@ -432,6 +432,7 @@ jobs:
         shell: bash
         env:
           ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
+          ARTIFACTS_REPO_TOKEN: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
           CALLER_REPO: ${{ github.repository }}
           PRODUCT: ${{ inputs.product }}
           VERSION: ${{ inputs.version }}
@@ -448,6 +449,22 @@ jobs:
               fail=1
             fi
           done
+          # Presence is not validity: an expired or revoked PAT is non-empty, so
+          # the check above passes and the upload then dies with a bare 401/403
+          # after the whole build. Probe the token against the target repo now,
+          # with a message that names the owner action. The value is never echoed.
+          if [ "${ARTIFACTS_TOKEN_PRESENT}" = "true" ]; then
+            probe=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 --retry 3 --retry-all-errors \
+                         -H "Authorization: Bearer ${ARTIFACTS_REPO_TOKEN}" \
+                         -H "Accept: application/vnd.github+json" \
+                         https://api.github.com/repos/Tanvrit/artifactory || true)
+            case "$probe" in
+              200) echo "ARTIFACTS_REPO_TOKEN authenticates and can read Tanvrit/artifactory." ;;
+              401) echo "::error::ARTIFACTS_REPO_TOKEN in ${CALLER_REPO} is expired or revoked (HTTP 401 from the GitHub API). Mint a new PAT with contents:write on Tanvrit/artifactory and run: gh secret set ARTIFACTS_REPO_TOKEN --repo ${CALLER_REPO}"; fail=1 ;;
+              403|404) echo "::error::ARTIFACTS_REPO_TOKEN in ${CALLER_REPO} cannot see Tanvrit/artifactory (HTTP ${probe}). The PAT must grant contents:write on Tanvrit/artifactory (fine-grained: add that repository; classic: repo scope + org SSO authorisation). Re-set it with: gh secret set ARTIFACTS_REPO_TOKEN --repo ${CALLER_REPO}"; fail=1 ;;
+              *) echo "::error::Could not verify ARTIFACTS_REPO_TOKEN against Tanvrit/artifactory (HTTP ${probe:-000}); refusing to start an upload whose credentials are unproven."; fail=1 ;;
+            esac
+          fi
           if [ "$fail" -ne 0 ]; then exit 1; fi
           echo "Release upload preconditions OK for ${PRODUCT} ${VERSION} (macos-arm64)."
 
@@ -455,6 +472,11 @@ jobs:
         if: steps.guard.outputs.supported == 'true'
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
+          # The token goes in the `token` INPUT, never env.GITHUB_TOKEN: v3's
+          # input defaults to github.token and wins over the env var, so the
+          # env form silently used the CALLER's job token, which cannot write to
+          # Tanvrit/artifactory (403 "Resource not accessible by integration").
+          token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
           repository: Tanvrit/artifactory
           tag_name: ${{ inputs.product }}-v${{ inputs.version }}
           name: "${{ inputs.product }} v${{ inputs.version }}"
@@ -464,8 +486,6 @@ jobs:
           files: |
             ${{ inputs.product }}-${{ inputs.version }}-macos-arm64.dmg
             ${{ inputs.product }}-${{ inputs.version }}-macos-arm64.dmg.sha256
-        env:
-          GITHUB_TOKEN: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
 
       # Mirror the release binaries into the R2 bucket that
       # artifacts.tanvrit.com serves from.
