@@ -22,20 +22,27 @@ class PrepareMacTest(unittest.TestCase):
             scripts = {
                 "uname": '#!/bin/sh\nif [ "$1" = -s ]; then echo "${TEST_OS:-Darwin}"; else echo arm64; fi\n',
                 "brew": '#!/bin/sh\ncase "$1" in list) [ "$3" != "${TEST_MISSING:-}" ] || [ -f "$FIXTURE/installed-$3" ] ;; install) if [ "${TEST_BUSY:-}" = true ] && [ ! -f "$FIXTURE/busy-seen" ]; then touch "$FIXTURE/busy-seen"; echo "A brew process has already locked this package"; exit 1; fi; if [ "${TEST_INSTALL_FAIL:-}" = true ]; then echo "Permission denied"; exit 1; fi; touch "$FIXTURE/installed-$2"; echo "$2" >> "$FIXTURE/installed" ;; --prefix) echo "$FIXTURE/prefix/$2" ;; *) exit 2 ;; esac\n',
-                "docker": '#!/bin/sh\n[ "${TEST_DOCKER_FAIL:-}" != true ] || exit 1\nif [ "$2" = --format ]; then echo "${TEST_DOCKER_OS:-linux}"; fi\n',
+                "docker": '#!/bin/sh\nif [ "$1" = context ]; then echo "${TEST_DOCKER_CONTEXT:-desktop-linux}"; exit 0; fi\nif [ "${TEST_DOCKER_FAIL:-}" = true ] && [ ! -f "$FIXTURE/engine-started" ]; then exit 1; fi\nif [ "$2" = --format ]; then echo "${TEST_DOCKER_OS:-linux}"; fi\n',
+                "open": '#!/bin/sh\necho "$@" >> "$FIXTURE/started"\n[ "${TEST_ENGINE_NEVER_STARTS:-}" = true ] || touch "$FIXTURE/engine-started"\n',
                 "sleep": "#!/bin/sh\nexit 0\n",
                 "launchctl": '#!/bin/sh\nexit 1\n',
             }
             for tool in ["sha256sum", "timeout", "jq", "openssl"]:
                 scripts[tool] = "#!/bin/sh\nexit 0\n"
+            if overrides.pop("TEST_COLIMA", "") == "true":
+                scripts["colima"] = '#!/bin/sh\necho "colima $*" >> "$FIXTURE/started"\n[ "${TEST_ENGINE_NEVER_STARTS:-}" = true ] || touch "$FIXTURE/engine-started"\n'
+            applications = root / "Applications"
+            applications.mkdir()
+            if overrides.pop("TEST_DOCKER_DESKTOP", "") == "true":
+                (applications / "Docker.app").mkdir()
             for name, text in scripts.items():
                 path = binary / name
                 path.write_text(text)
                 path.chmod(0o755)
-            env = dict(os.environ, RUNNER_TEMP=directory, FIXTURE=directory, ANDROID_HOME=str(fixture_sdk), ANDROID_SDK_ROOT=str(fixture_sdk), PATH=str(binary) + os.pathsep + os.environ["PATH"], GITHUB_PATH=str(root / "paths"), GITHUB_ENV=str(root / "environment"))
+            env = dict(os.environ, RUNNER_TEMP=directory, FIXTURE=directory, ANDROID_HOME=str(fixture_sdk), ANDROID_SDK_ROOT=str(fixture_sdk), PATH=os.pathsep.join([str(binary), "/usr/bin", "/bin"]), MACOS_CI_APPLICATION_DIRS=str(applications), GITHUB_PATH=str(root / "paths"), GITHUB_ENV=str(root / "environment"))
             env.update(overrides)
             result = subprocess.run(["/bin/bash", str(SCRIPT)], env=env, capture_output=True, text=True)
-            files = {name: (root / name).read_text() if (root / name).exists() else "" for name in ["paths", "environment", "installed"]}
+            files = {name: (root / name).read_text() if (root / name).exists() else "" for name in ["paths", "environment", "installed", "started"]}
             return result, files
 
     def test_prepares_gnu_paths_and_reuses_the_existing_mac_sdk(self):
@@ -72,6 +79,33 @@ class PrepareMacTest(unittest.TestCase):
         result, _ = self.run_fixture(CI_REQUIRE_DOCKER="true", TEST_DOCKER_FAIL="true")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Docker CLI alone is insufficient", result.stdout)
+
+    def test_starts_an_installed_docker_desktop_and_waits_for_it(self):
+        result, files = self.run_fixture(CI_REQUIRE_DOCKER="true", TEST_DOCKER_FAIL="true", TEST_DOCKER_DESKTOP="true")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("-g -a", files["started"])
+        self.assertIn("Docker.app", files["started"])
+
+    def test_starts_the_colima_profile_behind_the_active_context(self):
+        result, files = self.run_fixture(CI_REQUIRE_DOCKER="true", TEST_DOCKER_FAIL="true", TEST_COLIMA="true", TEST_DOCKER_CONTEXT="colima-ci")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(files["started"].strip(), "colima start --profile ci")
+
+    def test_starts_the_default_colima_profile(self):
+        result, files = self.run_fixture(CI_REQUIRE_DOCKER="true", TEST_DOCKER_FAIL="true", TEST_COLIMA="true", TEST_DOCKER_CONTEXT="colima")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(files["started"].strip(), "colima start")
+
+    def test_fails_when_a_started_engine_never_becomes_ready(self):
+        result, files = self.run_fixture(CI_REQUIRE_DOCKER="true", TEST_DOCKER_FAIL="true", TEST_DOCKER_DESKTOP="true", TEST_ENGINE_NEVER_STARTS="true", CI_DOCKER_START_TIMEOUT="0")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Docker.app", files["started"])
+        self.assertIn("Docker CLI alone is insufficient", result.stdout)
+
+    def test_does_not_start_an_engine_when_one_is_running(self):
+        result, files = self.run_fixture(CI_REQUIRE_DOCKER="true", TEST_DOCKER_DESKTOP="true")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(files["started"], "")
 
     def test_requires_linux_containers(self):
         result, _ = self.run_fixture(CI_REQUIRE_DOCKER="true", TEST_DOCKER_OS="windows")
