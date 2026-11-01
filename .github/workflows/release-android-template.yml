@@ -89,11 +89,12 @@ on:
       runner_labels:
         description: >-
           JSON labels within the tanvrit runner group. Defaults to
-          ["self-hosted","macOS","ARM64"]. Override only for a provisioned
-          self-hosted host with the required OS and architecture toolchain.
+          ["self-hosted","Linux","X64"] (the ovh-x64 pool; Android build-tools are
+          x86_64-only on Linux). Override only for a provisioned self-hosted host
+          with the required OS and architecture toolchain.
         type: string
         required: false
-        default: '["self-hosted","macOS","ARM64"]'
+        default: '["self-hosted","Linux","X64"]'
     secrets:
       GOOGLE_SERVICES_JSON:
         description: 'Raw Firebase Android client JSON for opted-in Messaging builds; never logged or retained.'

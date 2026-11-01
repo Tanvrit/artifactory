@@ -46,7 +46,7 @@ jobs:
     name: Generate Platform Icons
     runs-on:
       group: tanvrit
-      labels: [self-hosted, macOS, ARM64]
+      labels: [self-hosted, Linux, X64]
     # The last mac run (35875810338, 2026-09-23) generated every icon in about a
     # minute and was then cancelled by this timeout 44 minutes into the R2
     # upload. The upload step below explains the fix.
@@ -59,9 +59,6 @@ jobs:
       INKSCAPE_APPIMAGE_SHA256: 'd217fe05c92faaed5c3af46856b6299c98933dc722819cb5bc2ca052c5522166'
 
     steps:
-      - name: Prepare macOS CI tools
-        if: runner.os == 'macOS'
-        uses: tanvrit/artifactory/.github/actions/macos-ci-tools@main
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
