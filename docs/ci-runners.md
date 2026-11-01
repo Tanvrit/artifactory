@@ -19,7 +19,12 @@ A workflow change cannot make an offline or inaccessible runner accept jobs.
   Concurrent registrations retry explicit Homebrew busy-lock errors; other install
   failures stop the job immediately.
 - Docker jobs require Docker Desktop, Colima, or a configured Docker context with a
-  running Linux-container engine. The action fails before a build if only the CLI exists.
+  Linux-container engine. When the engine is installed but stopped (logout, reboot,
+  update, idle quit), the action starts the engine behind the active context —
+  `colima start [--profile P]` for a `colima[-P]` context, otherwise Docker Desktop
+  via `open -g -a Docker.app` (Colima as the fallback) — and waits up to
+  `CI_DOCKER_START_TIMEOUT` seconds (default 240). It still fails before a build if
+  only the CLI exists or the engine never accepts connections.
 - Compose UI tests require the runner user to own an active console login. Start
   the runner as that user's LaunchAgent and keep the login session active. A system
   LaunchDaemon does not supply a native window server. These tests run directly on

@@ -70,8 +70,50 @@ ANDROID_SDK_ROOT=%s
   fi
 done
 
+# Docker Desktop and Colima stop with a logout, reboot, update or idle quit, so
+# a runner whose engine is installed but stopped would fail every Docker job
+# until someone noticed. Start the engine behind the active context and wait
+# for it; a host with no engine still fails with the provisioning error.
+docker_ready() { docker info >/dev/null 2>&1; }
+start_docker_engine() {
+  local context colima_bin profile app="" dir deadline
+  context=$(docker context show 2>/dev/null || true)
+  colima_bin=$(command -v colima || true)
+  case "$context" in
+    colima|colima-*)
+      [ -n "$colima_bin" ] || return 1
+      profile=${context#colima}; profile=${profile#-}
+      echo "Starting Colima${profile:+ profile $profile} for the Docker context $context"
+      if [ -n "$profile" ]; then
+        "$colima_bin" start --profile "$profile" || true
+      else
+        "$colima_bin" start || true
+      fi
+      ;;
+    *)
+      for dir in ${MACOS_CI_APPLICATION_DIRS:-/Applications $HOME/Applications}; do
+        if [ -d "$dir/Docker.app" ]; then app="$dir/Docker.app"; break; fi
+      done
+      if [ -n "$app" ]; then
+        echo "Starting Docker Desktop ($app) for the Docker context ${context:-default}"
+        open -g -a "$app" || return 1
+      elif [ -n "$colima_bin" ]; then
+        echo "Starting Colima for the Docker context ${context:-default}"
+        "$colima_bin" start || true
+      else
+        return 1
+      fi
+      ;;
+  esac
+  deadline=$(( $(date +%s) + ${CI_DOCKER_START_TIMEOUT:-240} ))
+  until docker_ready; do
+    [ "$(date +%s)" -lt "$deadline" ] || return 1
+    echo "Waiting for the Docker engine to accept connections"
+    sleep 5
+  done
+}
 if [ "${CI_REQUIRE_DOCKER:-false}" = true ]; then
-  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+  if ! command -v docker >/dev/null 2>&1 || { ! docker_ready && ! start_docker_engine; }; then
     echo "::error::This job needs a running Linux Docker engine. Start Docker Desktop or Colima for the runner user, or configure its Docker context. A Docker CLI alone is insufficient."
     exit 1
   fi
