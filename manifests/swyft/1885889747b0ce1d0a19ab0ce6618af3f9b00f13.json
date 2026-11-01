@@ -1,0 +1,93 @@
+{
+  "product": "swyft",
+  "display_name": "Swyft",
+  "tagline": "Logistics for Bharat",
+  "version": "1885889747b0ce1d0a19ab0ce6618af3f9b00f13",
+  "build": 96,
+  "released_at": "2026-11-01T08:12:44+05:30",
+  "release_notes": "See https://github.com/tanvrit/artifactory/releases/tag/swyft-v1885889747b0ce1d0a19ab0ce6618af3f9b00f13",
+  "release_notes_hi": "",
+  "min_required_version": "NaN.undefined.0",
+  "platforms": {
+    "android": {
+      "url": "https://artifacts.tanvrit.com/swyft/1885889747b0ce1d0a19ab0ce6618af3f9b00f13/android",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/swyft-v1885889747b0ce1d0a19ab0ce6618af3f9b00f13/swyft-1885889747b0ce1d0a19ab0ce6618af3f9b00f13-android.apk",
+      "r2_url": "https://dl.tanvrit.com/releases/swyft/1885889747b0ce1d0a19ab0ce6618af3f9b00f13/swyft-1885889747b0ce1d0a19ab0ce6618af3f9b00f13-android.apk",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "apk",
+      "available": false
+    },
+    "ios": {
+      "url": "https://artifacts.tanvrit.com/swyft/1885889747b0ce1d0a19ab0ce6618af3f9b00f13/ios",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/swyft-v1885889747b0ce1d0a19ab0ce6618af3f9b00f13/swyft-1885889747b0ce1d0a19ab0ce6618af3f9b00f13-ios.ipa",
+      "r2_url": "https://dl.tanvrit.com/releases/swyft/1885889747b0ce1d0a19ab0ce6618af3f9b00f13/swyft-1885889747b0ce1d0a19ab0ce6618af3f9b00f13-ios.ipa",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "ipa",
+      "available": false
+    },
+    "macos-arm64": {
+      "url": "https://artifacts.tanvrit.com/swyft/1885889747b0ce1d0a19ab0ce6618af3f9b00f13/macos-arm64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/swyft-v1885889747b0ce1d0a19ab0ce6618af3f9b00f13/swyft-1885889747b0ce1d0a19ab0ce6618af3f9b00f13-macos-arm64.dmg",
+      "r2_url": "https://dl.tanvrit.com/releases/swyft/1885889747b0ce1d0a19ab0ce6618af3f9b00f13/swyft-1885889747b0ce1d0a19ab0ce6618af3f9b00f13-macos-arm64.dmg",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "dmg",
+      "available": false
+    },
+    "macos-x64": {
+      "url": "https://artifacts.tanvrit.com/swyft/1885889747b0ce1d0a19ab0ce6618af3f9b00f13/macos-x64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/swyft-v1885889747b0ce1d0a19ab0ce6618af3f9b00f13/swyft-1885889747b0ce1d0a19ab0ce6618af3f9b00f13-macos-x64.dmg",
+      "r2_url": "https://dl.tanvrit.com/releases/swyft/1885889747b0ce1d0a19ab0ce6618af3f9b00f13/swyft-1885889747b0ce1d0a19ab0ce6618af3f9b00f13-macos-x64.dmg",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "dmg",
+      "available": false
+    },
+    "macos-universal": {
+      "url": "https://artifacts.tanvrit.com/swyft/1885889747b0ce1d0a19ab0ce6618af3f9b00f13/macos-universal",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/swyft-v1885889747b0ce1d0a19ab0ce6618af3f9b00f13/swyft-1885889747b0ce1d0a19ab0ce6618af3f9b00f13-macos-universal.dmg",
+      "r2_url": "https://dl.tanvrit.com/releases/swyft/1885889747b0ce1d0a19ab0ce6618af3f9b00f13/swyft-1885889747b0ce1d0a19ab0ce6618af3f9b00f13-macos-universal.dmg",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "dmg",
+      "available": false
+    },
+    "windows-x64": {
+      "url": "https://artifacts.tanvrit.com/swyft/1885889747b0ce1d0a19ab0ce6618af3f9b00f13/windows-x64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/swyft-v1885889747b0ce1d0a19ab0ce6618af3f9b00f13/swyft-1885889747b0ce1d0a19ab0ce6618af3f9b00f13-windows-x64.msi",
+      "r2_url": "https://dl.tanvrit.com/releases/swyft/1885889747b0ce1d0a19ab0ce6618af3f9b00f13/swyft-1885889747b0ce1d0a19ab0ce6618af3f9b00f13-windows-x64.msi",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "msi",
+      "available": false
+    },
+    "linux-x64": {
+      "url": "https://artifacts.tanvrit.com/swyft/1885889747b0ce1d0a19ab0ce6618af3f9b00f13/linux-x64",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/swyft-v1885889747b0ce1d0a19ab0ce6618af3f9b00f13/swyft-1885889747b0ce1d0a19ab0ce6618af3f9b00f13-linux-x64.deb",
+      "r2_url": "https://dl.tanvrit.com/releases/swyft/1885889747b0ce1d0a19ab0ce6618af3f9b00f13/swyft-1885889747b0ce1d0a19ab0ce6618af3f9b00f13-linux-x64.deb",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "deb",
+      "available": false
+    },
+    "linux-x64-app": {
+      "url": "https://artifacts.tanvrit.com/swyft/1885889747b0ce1d0a19ab0ce6618af3f9b00f13/linux-x64-app",
+      "direct_url": "https://github.com/tanvrit/artifactory/releases/download/swyft-v1885889747b0ce1d0a19ab0ce6618af3f9b00f13/swyft-1885889747b0ce1d0a19ab0ce6618af3f9b00f13-linux-x64.AppImage",
+      "r2_url": "https://dl.tanvrit.com/releases/swyft/1885889747b0ce1d0a19ab0ce6618af3f9b00f13/swyft-1885889747b0ce1d0a19ab0ce6618af3f9b00f13-linux-x64.AppImage",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "AppImage",
+      "available": false
+    },
+    "web": {
+      "url": "https://artifacts.tanvrit.com/swyft",
+      "direct_url": "https://artifacts.tanvrit.com/swyft",
+      "sha256": "",
+      "size_bytes": 0,
+      "format": "web",
+      "available": true
+    }
+  }
+}
