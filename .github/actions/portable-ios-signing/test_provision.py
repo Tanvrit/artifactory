@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import unittest
+from urllib.parse import parse_qs, urlsplit
 from urllib.request import HTTPSHandler, build_opener
 from urllib.response import addinfourl
 
@@ -17,6 +18,53 @@ from test_sign import Client, Tools, profile
 
 
 class ProvisionTest(unittest.TestCase):
+    def test_capability_request_does_not_force_page_size(self):
+        client = provision.AppStoreClient("SYNTHETIC-TOKEN")
+        calls = []
+
+        def request(path, *, body=None):
+            self.assertIsNone(body, "An existing valid profile requires no mutation")
+            calls.append(path)
+            endpoint = urlsplit(path).path
+            if endpoint == "certificates":
+                self.assertEqual(parse_qs(urlsplit(path).query)["limit"], ["200"])
+                return {"data": [{"id": "CERT1", "attributes": {
+                    "certificateContent": base64.b64encode(b"SYNTHETIC-CERT").decode()}}]}
+            if endpoint == "bundleIds":
+                return {"data": [{"id": "BUNDLE1", "attributes": {"identifier": "com.example.test"}}]}
+            if endpoint.endswith("/bundleIdCapabilities"):
+                if urlsplit(path).query:
+                    raise provision.ProvisioningApiError("Synthetic optional-parameter rejection", provision.ApiFailure.BAD_REQUEST)
+                return {"data": []}
+            if endpoint.endswith("/profiles"):
+                return {"data": [{"attributes": {"profileType": "IOS_APP_STORE", "profileState": "ACTIVE",
+                                  "profileContent": base64.b64encode(b"SYNTHETIC-PROFILE").decode()}}]}
+            self.fail("Unexpected synthetic endpoint")
+
+        client.request = request
+        with tempfile.TemporaryDirectory() as d:
+            result, _ = provision.application_profile(client, b"SYNTHETIC-CERT", "ABCDEFGHIJ",
+                                                       "com.example.test", Path(d), Tools(Path(d)), {}, {})
+        self.assertEqual(result["UUID"], profile()["UUID"])
+        self.assertIn("bundleIds/BUNDLE1/bundleIdCapabilities", calls)
+
+    def test_default_capability_pagination_retains_every_page(self):
+        client = provision.AppStoreClient("SYNTHETIC-TOKEN")
+        endpoint = "bundleIds/BUNDLE1/bundleIdCapabilities"
+        next_page = client.origin + endpoint + "?cursor=synthetic"
+        calls = []
+
+        def request(path, *, body=None):
+            calls.append(path)
+            if path == endpoint:
+                return {"data": [{"id": "FIRST"}], "links": {"next": next_page}}
+            self.assertEqual(path, next_page)
+            return {"data": [{"id": "SECOND"}]}
+
+        client.request = request
+        self.assertEqual(client.collection(endpoint, limit=None), [{"id": "FIRST"}, {"id": "SECOND"}])
+        self.assertEqual(calls, [endpoint, next_page])
+
     def test_redirects_never_forward_the_token_to_another_endpoint(self):
         for code in (301, 302, 303, 307, 308):
             for body in (None, {"synthetic": True}):

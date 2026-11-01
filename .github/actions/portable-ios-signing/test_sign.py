@@ -72,7 +72,7 @@ class Tools:
             archive.mkdir()
             (archive / "Info.plist").write_bytes(plistlib.dumps({"ApplicationProperties": {
                 "CFBundleIdentifier": self.bundle, "Team": self.team}}))
-        if stage in ("Export signed IPA", "Upload internal-only TestFlight build"):
+        if stage in ("Export signed IPA", "Upload internal-only TestFlight build", "Upload App Store-eligible build"):
             self.options.append(plistlib.loads((self.private / "exportOptions.plist").read_bytes()))
         if stage == "Export signed IPA":
             export = Path(args[args.index("-exportPath") + 1])
@@ -82,8 +82,14 @@ class Tools:
         if stage == "Inspect exported signing identity":
             return plistlib.dumps({"application-identifier": f"OLDPREFIX1.{self.bundle}",
                                    "com.apple.developer.team-identifier": self.team, "get-task-allow": False})
+        if stage == "Unpack exported IPA":
+            with zipfile.ZipFile(args[-2]) as ipa:
+                ipa.extractall(args[-1])
         if stage == "Inspect exported certificate":
-            Path(args[args.index("--extract-certificates") + 1] + "0").write_bytes(self.exported_certificate)
+            certificate_args = [arg for arg in args if arg.startswith("--extract-certificates=")]
+            if len(certificate_args) != 1:
+                raise AssertionError("Certificate prefix must be attached to the optional codesign argument")
+            Path(certificate_args[0].split("=", 1)[1] + "0").write_bytes(self.exported_certificate)
         return b""
 
 
@@ -133,7 +139,7 @@ class PortableSigningTest(unittest.TestCase):
             self.assertTrue((root / "export/application.ipa").exists())
             self.assertFalse(any("Upload" in s for s, _, _ in tools.calls))
             for stage, args, env in tools.calls:
-                if stage.startswith(("Archive", "Export", "Resolve", "Verify")):
+                if stage.startswith(("Archive", "Export", "Resolve", "Verify", "Unpack")):
                     self.assertFalse(set(sign.SECRET_NAMES) & set(env))
                 self.assertFalse(any(a.startswith("PRODUCT_BUNDLE_IDENTIFIER=") for a in args))
             self.assertEqual(tools.search_list, ["/Users/CI User/Library/Keychains/login.keychain-db",
@@ -142,6 +148,11 @@ class PortableSigningTest(unittest.TestCase):
             self.assertFalse(tools.options[0]["manageAppVersionAndBuildNumber"])
             archive = next(args for stage, args, _ in tools.calls if stage == "Archive application")
             self.assertIn("CODE_SIGN_STYLE=Manual", archive)
+            self.assertIn("PROVISIONING_PROFILE_SPECIFIER=$(PORTABLE_PROFILE_$(WRAPPER_EXTENSION))", archive)
+            self.assertIn("PROVISIONING_PROFILE=$(PORTABLE_PROFILE_UUID_$(WRAPPER_EXTENSION))", archive)
+            self.assertIn("PORTABLE_PROFILE_app=" + profile()["Name"], archive)
+            self.assertIn("PORTABLE_PROFILE_UUID_app=" + profile()["UUID"], archive)
+            self.assertNotIn("PROVISIONING_PROFILE_SPECIFIER=" + profile()["Name"], archive)
             self.assertNotIn("-allowProvisioningUpdates", archive)
             self.assertEqual(tools.options[0]["provisioningProfiles"], {"com.example.test": profile()["UUID"]})
             self.assertFalse(list((root / "home").rglob("*.mobileprovision")))
@@ -156,14 +167,34 @@ class PortableSigningTest(unittest.TestCase):
             self.assertTrue(tools.options[1]["testFlightInternalTestingOnly"])
             self.assertFalse(tools.options[1]["manageAppVersionAndBuildNumber"])
 
+    def test_appstore_upload_requires_explicit_scope_and_keeps_version(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); private = root / "private"; private.mkdir()
+            tools = Tools(private); env = environment(root)
+            env["PORTABLE_IOS_UPLOAD_APPSTORE"] = "true"
+            sign.perform(env, private, tools, Client)
+            self.assertEqual([o["destination"] for o in tools.options], ["export", "upload"])
+            self.assertFalse(tools.options[1]["testFlightInternalTestingOnly"])
+            self.assertFalse(tools.options[1]["manageAppVersionAndBuildNumber"])
+            self.assertIn("Upload App Store-eligible build", [c[0] for c in tools.calls])
+
+    def test_conflicting_upload_scopes_are_rejected_before_signing(self):
+        with tempfile.TemporaryDirectory() as d:
+            env = environment(Path(d))
+            env.update(PORTABLE_IOS_UPLOAD_APPSTORE="true", PORTABLE_IOS_UPLOAD_TESTFLIGHT="true")
+            with self.assertRaises(sign.SigningError):
+                sign.configuration(env)
+
     def test_cleanup_on_each_failure_after_keychain_creation(self):
         for stage in ["Set keychain timeout", "Unlock temporary keychain", "Import distribution identity",
                       "Allow codesign access", "Read keychain search list", "Add temporary keychain", "Archive application",
-                      "Export signed IPA", "Verify exported code signature", "Upload internal-only TestFlight build"]:
+                      "Export signed IPA", "Verify exported code signature", "Upload internal-only TestFlight build",
+                      "Upload App Store-eligible build"]:
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as d:
                 root = Path(d); private = root / "private"; private.mkdir()
                 tools = Tools(private, fail=stage); env = environment(root)
-                env["PORTABLE_IOS_UPLOAD_TESTFLIGHT"] = "true"
+                upload_flag = "PORTABLE_IOS_UPLOAD_APPSTORE" if stage == "Upload App Store-eligible build" else "PORTABLE_IOS_UPLOAD_TESTFLIGHT"
+                env[upload_flag] = "true"
                 with self.assertRaises(sign.SigningError):
                     sign.perform(env, private, tools, Client)
                 self.assertEqual(tools.calls[-1][0], "Delete temporary keychain")
@@ -191,8 +222,9 @@ class PortableSigningTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d); private = root / "private"; private.mkdir()
             tools = Tools(private); tools.exported_certificate = b"DIFFERENT-CERT"
-            with self.assertRaisesRegex(sign.SigningError, "imported distribution certificate"):
+            with self.assertRaises(sign.IpaFailure) as caught:
                 sign.perform(environment(root), private, tools, Client)
+            self.assertIs(caught.exception.kind, sign.IpaFailureKind.CERTIFICATE)
             self.assertFalse((root / "export/application.ipa").exists())
             self.assertFalse(list((root / "home").rglob("*.mobileprovision")))
 

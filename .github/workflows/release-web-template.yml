@@ -67,11 +67,11 @@ on:
       runner_labels:
         description: >-
           JSON labels within the tanvrit runner group. Defaults to
-          ["self-hosted","macOS","ARM64"]. Override only for a provisioned
+          ["self-hosted","Linux","X64"] (the ovh-x64 pool). Override only for a provisioned
           self-hosted host with the required OS and architecture toolchain.
         type: string
         required: false
-        default: '["self-hosted","macOS","ARM64"]'
+        default: '["self-hosted","Linux","X64"]'
     secrets:
       CLOUDFLARE_API_TOKEN:
         description: 'When absent, the Deploy step is skipped — workflow still builds artifacts.'
@@ -99,6 +99,13 @@ on:
           A caller can fetch the live site and compare: that is the only check
           which tells "the new build is live" apart from "the old one still is".
         value: ${{ jobs.release-web.outputs.bundle }}
+      superseded:
+        description: >-
+          'true' when main moved past this run's commit before the upload, so the
+          stale build was deliberately NOT shipped and the newer commit's own run
+          (queued behind this one) releases instead. deployed is 'false' in that
+          case; a caller's post-deploy verification should skip, not fail.
+        value: ${{ jobs.release-web.outputs.superseded }}
 
 jobs:
   release-web:
@@ -106,6 +113,7 @@ jobs:
     outputs:
       deployed: ${{ steps.cf_result.outputs.deployed }}
       bundle: ${{ steps.bundle_id.outputs.bundle }}
+      superseded: ${{ steps.freshness.outputs.superseded || 'false' }}
     # id-token + attestations are required by actions/attest-build-provenance to
     # mint the SLSA provenance attestation via the GitHub Sigstore instance.
     # contents/packages:read preserve the existing checkout + Gradle package reads.
@@ -160,6 +168,12 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
+
+      # Reused runners can retain sparse configuration from an earlier job.
+      - name: Restore full source checkout
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: git sparse-checkout disable
 
       - name: Verify target supported
         id: guard
@@ -401,21 +415,40 @@ jobs:
           echo "deploy=true" >> "$GITHUB_OUTPUT"
           echo "reason=" >> "$GITHUB_OUTPUT"
 
+      # An older build must never overwrite a newer deployment, so a run whose
+      # commit is no longer main's head does not upload. That is SUPERSESSION,
+      # not failure: the push that moved main started its own run of the
+      # caller's workflow, which the caller's concurrency group queues behind
+      # this one and which releases the newer commit. Failing here turned every
+      # back-to-back merge into a red run and a failed-run email (6 of the 8
+      # Jashva "Release Web" failures 2026-10-29..31 were exactly this) while
+      # nothing was wrong. So skip the upload, say so, and publish
+      # `superseded=true` for callers to gate their post-deploy checks on.
+      # What still fails: HEAD not being the commit this run was started for,
+      # and being unable to read main at all (an unverifiable state, not a
+      # supersession).
       - name: Verify current main immediately before production upload
+        id: freshness
         if: steps.gate.outputs.deploy == 'true' && github.ref == 'refs/heads/main' && inputs.cf_branch == 'main'
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           current_main=$(git ls-remote origin refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')
-          if [ -z "$current_main" ] || [ "$current_main" != "$GITHUB_SHA" ]; then
-            echo "::error::This release is no longer the current main commit; refusing a stale production upload."
+          if [ -z "$current_main" ]; then
+            echo "::error::Could not read the current main commit; refusing an unverified production upload."
             exit 1
           fi
+          if [ "$current_main" != "$GITHUB_SHA" ]; then
+            echo "superseded=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Superseded: main is now ${current_main:0:12}, not this run's ${GITHUB_SHA:0:12}. Skipping the stale production upload; the run for the newer commit releases it."
+            exit 0
+          fi
+          echo "superseded=false" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to Cloudflare Pages
         id: cf_deploy
-        if: steps.gate.outputs.deploy == 'true'
+        if: steps.gate.outputs.deploy == 'true' && steps.freshness.outputs.superseded != 'true'
         # Continue on error so missing Cloudflare project (e.g. tanvrit-shell-app
         # not yet created at the user level) doesn't red the whole pipeline.
         # The Wasm artifact still built successfully; deploy just didn't ship.
@@ -447,6 +480,9 @@ jobs:
           if [ '${{ steps.cf_deploy.outcome }}' = 'success' ]; then
             echo "deployed=true" >> "$GITHUB_OUTPUT"
             echo "::notice::deployed ${{ inputs.product }} to Cloudflare Pages project '${{ inputs.cf_project_name }}'"
+          elif [ '${{ steps.freshness.outputs.superseded }}' = 'true' ]; then
+            echo "deployed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::did not deploy: superseded by a newer main commit, whose own run releases it."
           elif [ '${{ steps.gate.outputs.deploy }}' = 'true' ]; then
             echo "deployed=false" >> "$GITHUB_OUTPUT"
             echo "::error::Cloudflare Pages deploy FAILED for '${{ inputs.cf_project_name }}' — the build is green but NOTHING shipped."

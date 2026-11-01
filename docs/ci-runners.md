@@ -1,9 +1,14 @@
 # CI runner routing
 
-Portable CI uses the `tanvrit` runner group with `[self-hosted, macOS, ARM64]`
-from 2026-10-19. This replaces the older Linux routing notes in product docs.
-The shared Android/web templates and the Jashva version resolver use this default.
-Existing caller overrides remain self-hosted and must match the actual toolchain.
+Portable CI uses the `tanvrit` runner group with `[self-hosted, Linux, X64]`
+(the eight `ovh-x64-*` runners) from 2026-11-01. Between 2026-10-19 and
+2026-11-01 it used `[self-hosted, macOS, ARM64]`, which put the whole org on two
+runners on one laptop; battery, sleep and network drops there turned into flaky
+failures. The shared Android/web/Firebase templates default to Linux X64.
+
+Only jobs that genuinely need macOS stay on `[self-hosted, macOS, ARM64]`:
+Xcode/xcodebuild, iOS/macOS signing and notarization, Kotlin/Native Apple
+targets, and host-specific maintenance. The macOS notes below apply to those.
 
 ## Runner preparation
 
@@ -19,7 +24,12 @@ A workflow change cannot make an offline or inaccessible runner accept jobs.
   Concurrent registrations retry explicit Homebrew busy-lock errors; other install
   failures stop the job immediately.
 - Docker jobs require Docker Desktop, Colima, or a configured Docker context with a
-  running Linux-container engine. The action fails before a build if only the CLI exists.
+  Linux-container engine. When the engine is installed but stopped (logout, reboot,
+  update, idle quit), the action starts the engine behind the active context —
+  `colima start [--profile P]` for a `colima[-P]` context, otherwise Docker Desktop
+  via `open -g -a Docker.app` (Colima as the fallback) — and waits up to
+  `CI_DOCKER_START_TIMEOUT` seconds (default 240). It still fails before a build if
+  only the CLI exists or the engine never accepts connections.
 - Compose UI tests require the runner user to own an active console login. Start
   the runner as that user's LaunchAgent and keep the login session active. A system
   LaunchDaemon does not supply a native window server. These tests run directly on
@@ -63,3 +73,17 @@ with YAML parsing, actionlint and the self-hosted runner guard. Publish Artifact
 first because callers consume its shared actions and reusable workflows at `main`.
 Only then publish the caller workflow changes. Existing queued runs keep the labels
 from their original commit; a new commit creates runs with the new selection.
+
+### macOS display session for Compose tests
+
+The runner LaunchAgent must use `SessionCreate=false`. `SessionCreate=true`
+creates a separate security session even under the logged-in user's GUI domain:
+AWT then fails with `WindowServer is not available`. This was reproduced with
+the same Java 21 display probe under two temporary LaunchAgents on 2026-10-25;
+only `false` could initialize `LWCToolkit` and read the screen dimensions.
+
+Keep the GUI login active. Back up the runner plist before changing this setting,
+and reload each LaunchAgent only after its current `Runner.Worker` has exited.
+Do not interrupt a build or publication to restart the service. Verify an AWT
+display probe from a runner job after reloading, then retry failed UI test jobs.
+Do not set tests headless or skip Compose tests to work around this host issue.

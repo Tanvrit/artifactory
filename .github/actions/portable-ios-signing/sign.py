@@ -8,17 +8,19 @@ All subprocess diagnostics are captured: failures report a fixed stage + status.
 
 import base64
 import contextlib
+from enum import Enum
 import fcntl
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import plistlib
 import re
 import secrets
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
 import time
@@ -28,6 +30,7 @@ import zipfile
 from provision import (ApiFailure, AppStoreClient, ProvisioningApiError, ProvisioningError, application_profile,
                        authentication_token, install_profile)
 from diagnostics import CleanupStage, Diagnostics, Stage
+from xcode_diagnostics import XcodeFailureKind, classify
 
 
 SECRET_NAMES = (
@@ -41,12 +44,44 @@ class SigningError(Exception):
     pass
 
 
+class IpaFailureKind(Enum):
+    UNPACK = "ipa-unpack"
+    APPLICATION = "ipa-main-application"
+    BUNDLE = "ipa-bundle-identity"
+    SIGNATURE = "ipa-strict-signature"
+    CERTIFICATE = "ipa-distribution-certificate"
+    ENTITLEMENTS = "ipa-entitlements-read"
+    APP_IDENTIFIER = "ipa-application-identifier"
+    TEAM = "ipa-team-identifier"
+    DEBUG = "ipa-get-task-allow"
+
+
+class IpaFailure(SigningError):
+    def __init__(self, kind):
+        super().__init__("IPA verification failed; private details withheld")
+        self.kind = kind
+
+
+@contextlib.contextmanager
+def ipa_check(kind):
+    try:
+        yield
+    except Exception:
+        raise IpaFailure(kind) from None
+
+
+class XcodeFailure(SigningError):
+    def __init__(self, kind):
+        super().__init__("Xcode failed; captured output withheld")
+        self.kind = kind
+
+
 def run(stage, args, env, timeout=180):
     """Never let a CalledProcessError render secret-bearing argv or output."""
     process = subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, start_new_session=True)
     try:
-        stdout, _ = process.communicate(timeout=timeout)
+        stdout, stderr = process.communicate(timeout=timeout)
     except BaseException:
         os.killpg(process.pid, signal.SIGTERM)
         try:
@@ -56,6 +91,8 @@ def run(stage, args, env, timeout=180):
             process.communicate()
         raise
     if process.returncode:
+        if args[0] == "xcodebuild" and stage in ("Archive application", "Export signed IPA"):
+            raise XcodeFailure(classify(stdout, stderr))
         raise SigningError(f"{stage} failed (exit {process.returncode}); no signing diagnostics emitted")
     return stdout
 
@@ -68,6 +105,8 @@ def required(env, name):
 
 
 def configuration(env):
+    if env.get("PORTABLE_IOS_UPLOAD_APPSTORE") == "true" and env.get("PORTABLE_IOS_UPLOAD_TESTFLIGHT") == "true":
+        raise SigningError("Choose exactly one Apple upload distribution scope")
     for name in SECRET_NAMES[:-1]:
         required(env, name)
     team = required(env, "PORTABLE_IOS_TEAM_ID")
@@ -114,6 +153,17 @@ def write_private(path, data):
         handle.write(data)
 
 
+def application_profile_settings(profile):
+    # Xcode expands nested settings per target. Resource bundles/frameworks
+    # resolve an unset suffix to empty instead of receiving an app-only profile.
+    return [
+        "PROVISIONING_PROFILE_SPECIFIER=$(PORTABLE_PROFILE_$(WRAPPER_EXTENSION))",
+        "PROVISIONING_PROFILE=$(PORTABLE_PROFILE_UUID_$(WRAPPER_EXTENSION))",
+        f"PORTABLE_PROFILE_app={profile['Name']}",
+        f"PORTABLE_PROFILE_UUID_app={profile['UUID']}",
+    ]
+
+
 def verify_settings(raw, expected):
     rows = json.loads(raw)
     applications = [row["buildSettings"] for row in rows
@@ -125,29 +175,61 @@ def verify_settings(raw, expected):
     return applications[0]
 
 
+def unpack_ipa(ipa, unpacked, execute, child_env):
+    # ditto preserves executable modes and framework links needed by codesign.
+    # Reject traversal and link-parent writes before invoking native extraction.
+    with zipfile.ZipFile(ipa) as archive:
+        links = set()
+        paths = []
+        for info in archive.infolist():
+            path = PurePosixPath(info.filename)
+            if not path.parts or path.is_absolute() or ".." in path.parts or "\\" in info.filename:
+                raise SigningError("IPA archive contains an unsafe entry path")
+            paths.append(path)
+            if stat.S_ISLNK(info.external_attr >> 16):
+                if not 0 < info.file_size <= 4096:
+                    raise SigningError("IPA archive contains an unsafe link")
+                target = archive.read(info).decode("utf-8", errors="strict")
+                value = PurePosixPath(target)
+                if not value.parts or value.is_absolute() or ".." in value.parts or "\\" in target:
+                    raise SigningError("IPA archive contains an unsafe link")
+                links.add(path)
+        if any(parent in links for path in paths for parent in path.parents):
+            raise SigningError("IPA archive writes through a link")
+    unpacked.mkdir()
+    execute("Unpack exported IPA", ["ditto", "-x", "-k", str(ipa), str(unpacked)], child_env)
+
+
 def verify_ipa(ipa, private, team, bundle, certificate, execute, child_env):
     unpacked = private / "verified-ipa"
-    with zipfile.ZipFile(ipa) as archive:
-        archive.extractall(unpacked)
-    apps = list((unpacked / "Payload").glob("*.app"))
-    if len(apps) != 1:
-        raise SigningError("Exported IPA must contain exactly one main application")
-    info = plistlib.loads((apps[0] / "Info.plist").read_bytes())
-    if info.get("CFBundleIdentifier") != bundle:
-        raise SigningError("Exported IPA bundle does not match expected identity")
-    execute("Verify exported code signature", ["codesign", "--verify", "--deep", "--strict", str(apps[0])], child_env)
-    prefix = private / "exported-certificate-"
-    execute("Inspect exported certificate", ["codesign", "-d", "--extract-certificates", str(prefix), str(apps[0])], child_env)
-    if hashlib.sha256(Path(str(prefix) + "0").read_bytes()).digest() != hashlib.sha256(certificate).digest():
-        raise SigningError("Exported IPA did not use the imported distribution certificate")
-    entitlements = plistlib.loads(execute("Inspect exported signing identity",
-                                        ["codesign", "-d", "--entitlements", ":-", str(apps[0])], child_env))
+    with ipa_check(IpaFailureKind.UNPACK):
+        unpack_ipa(ipa, unpacked, execute, child_env)
+    with ipa_check(IpaFailureKind.APPLICATION):
+        apps = list((unpacked / "Payload").glob("*.app"))
+        if len(apps) != 1:
+            raise SigningError()
+    with ipa_check(IpaFailureKind.BUNDLE):
+        info = plistlib.loads((apps[0] / "Info.plist").read_bytes())
+        if info.get("CFBundleIdentifier") != bundle:
+            raise SigningError()
+    with ipa_check(IpaFailureKind.SIGNATURE):
+        execute("Verify exported code signature", ["codesign", "--verify", "--deep", "--strict", str(apps[0])], child_env)
+    with ipa_check(IpaFailureKind.CERTIFICATE):
+        prefix = private / "exported-certificate-"
+        execute("Inspect exported certificate", ["codesign", "-d", f"--extract-certificates={prefix}", str(apps[0])], child_env)
+        if hashlib.sha256(Path(str(prefix) + "0").read_bytes()).digest() != hashlib.sha256(certificate).digest():
+            raise SigningError()
+    with ipa_check(IpaFailureKind.ENTITLEMENTS):
+        entitlements = plistlib.loads(execute("Inspect exported signing identity",
+                                            ["codesign", "-d", "--entitlements", ":-", str(apps[0])], child_env))
     # Legacy/transferred apps can retain an App ID prefix different to Team ID.
     app_identifier = entitlements.get("application-identifier", "")
-    if (not re.fullmatch(rf"[A-Z0-9]{{10}}\.{re.escape(bundle)}", app_identifier)
-            or entitlements.get("com.apple.developer.team-identifier") != team
-            or entitlements.get("get-task-allow") is not False):
-        raise SigningError("IPA signing entitlements do not match expected App Store identity")
+    if not re.fullmatch(rf"[A-Z0-9]{{10}}\.{re.escape(bundle)}", app_identifier):
+        raise IpaFailure(IpaFailureKind.APP_IDENTIFIER)
+    if entitlements.get("com.apple.developer.team-identifier") != team:
+        raise IpaFailure(IpaFailureKind.TEAM)
+    if entitlements.get("get-task-allow") is not False:
+        raise IpaFailure(IpaFailureKind.DEBUG)
 
 
 def perform(env, private, execute=run, client_factory=AppStoreClient, diagnostics=None):
@@ -232,7 +314,7 @@ def perform(env, private, execute=run, client_factory=AppStoreClient, diagnostic
         diagnostics.begin(Stage.ARCHIVE)
         execute("Archive application", [*common, "-destination", "generic/platform=iOS", "-archivePath", str(archive),
                 "CODE_SIGN_STYLE=Manual", f"CODE_SIGN_IDENTITY={hashlib.sha1(certificate).hexdigest()}",
-                f"PROVISIONING_PROFILE_SPECIFIER={profile['Name']}", f"PROVISIONING_PROFILE={profile['UUID']}",
+                *application_profile_settings(profile),
                 f"OTHER_CODE_SIGN_FLAGS=--keychain {shlex.quote(str(keychain))}", "archive"], child_env, timeout=5400)
         diagnostics.begin(Stage.ARCHIVE_VALIDATION)
         info = plistlib.loads((archive / "Info.plist").read_bytes())["ApplicationProperties"]
@@ -258,11 +340,13 @@ def perform(env, private, execute=run, client_factory=AppStoreClient, diagnostic
         if any(destination.iterdir()):
             raise SigningError("Refusing to reuse a nonempty IPA output directory")
         shutil.copy2(ipas[0], destination / ipas[0].name)
-        if env.get("PORTABLE_IOS_UPLOAD_TESTFLIGHT") == "true":
+        if env.get("PORTABLE_IOS_UPLOAD_TESTFLIGHT") == "true" or env.get("PORTABLE_IOS_UPLOAD_APPSTORE") == "true":
             diagnostics.begin(Stage.TESTFLIGHT)
-            export_options.update(destination="upload", testFlightInternalTestingOnly=True)
+            internal_only = env.get("PORTABLE_IOS_UPLOAD_APPSTORE") != "true"
+            export_options.update(destination="upload", testFlightInternalTestingOnly=internal_only)
             options.write_bytes(plistlib.dumps(export_options))
-            execute("Upload internal-only TestFlight build", [*export_args, *auth], child_env, timeout=1800)
+            upload_stage = "Upload internal-only TestFlight build" if internal_only else "Upload App Store-eligible build"
+            execute(upload_stage, [*export_args, *auth], child_env, timeout=1800)
     except BaseException:
         diagnostics.failed()
         raise
@@ -323,6 +407,10 @@ def main():
         print("::error::Portable iOS signing failed; diagnostics withheld.")
         if type(error) is ProvisioningApiError and type(error.category) is ApiFailure:
             print("::error title=Portable signing API diagnostic::" + error.category.value)
+        if type(error) is XcodeFailure and type(error.kind) is XcodeFailureKind:
+            print("::error title=Portable signing Xcode diagnostic::" + error.kind.value)
+        if type(error) is IpaFailure and type(error.kind) is IpaFailureKind:
+            print("::error title=Portable signing IPA diagnostic::" + error.kind.value)
         return 1
     finally:
         diagnostics.publish(os.environ)

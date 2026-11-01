@@ -37,7 +37,7 @@ jobs:
     # attached to this repo AND in the `tanvrit` group.
     runs-on:
       group: tanvrit
-      labels: [self-hosted, macOS, ARM64]
+      labels: [self-hosted, Linux, X64]
     # A job that cannot be scheduled, or that wedges mid-build, must fail fast and
     # loud rather than masquerade as "in progress" for a day. Observed comparable
     # Next.js release builds in the fleet run 2-17 min (52 min worst case); 30 leaves
@@ -47,9 +47,6 @@ jobs:
     environment: production
 
     steps:
-      - name: Prepare macOS CI tools
-        if: runner.os == 'macOS'
-        uses: tanvrit/artifactory/.github/actions/macos-ci-tools@main
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

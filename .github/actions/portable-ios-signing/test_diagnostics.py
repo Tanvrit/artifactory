@@ -64,7 +64,10 @@ class DiagnosticTest(unittest.TestCase):
                 result, values, stdout = self.run_main(Path(d), failure)
                 self.assertEqual(result, 1)
                 self.assertEqual(values, {"stage": expected, "cleanup-stage": "completed"})
-                self.assertEqual(stdout, "::error::Portable iOS signing failed; diagnostics withheld.\n")
+                expected_output = "::error::Portable iOS signing failed; diagnostics withheld.\n"
+                if failure == "Verify exported code signature":
+                    expected_output += "::error title=Portable signing IPA diagnostic::ipa-strict-signature\n"
+                self.assertEqual(stdout, expected_output)
 
     def test_primary_and_cleanup_failure_are_independent_and_all_finally_blocks_run(self):
         class DoubleFailure(Tools):

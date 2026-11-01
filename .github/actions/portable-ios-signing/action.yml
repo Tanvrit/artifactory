@@ -22,6 +22,9 @@ inputs:
   upload-testflight:
     default: 'false'
     description: Explicitly upload an internal-only TestFlight build after export.
+  upload-appstore:
+    default: 'false'
+    description: Explicitly upload an App Store-eligible build; does not submit or publish it. Mutually exclusive with upload-testflight.
 outputs:
   stage:
     description: Fixed source lifecycle stage; create/enable/upload stages mean attempted, not confirmed external writes.
@@ -43,5 +46,6 @@ runs:
         PORTABLE_IOS_TEAM_ID: ${{ inputs.team-id }}
         PORTABLE_IOS_EXPORT_METHOD: ${{ inputs.export-method }}
         PORTABLE_IOS_UPLOAD_TESTFLIGHT: ${{ inputs.upload-testflight }}
+        PORTABLE_IOS_UPLOAD_APPSTORE: ${{ inputs.upload-appstore }}
         PORTABLE_IOS_ACTION_PATH: ${{ github.action_path }}
       run: python3 "$PORTABLE_IOS_ACTION_PATH/sign.py"
