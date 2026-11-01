@@ -17,12 +17,10 @@ jobs:
   publication-guards:
     runs-on:
       group: tanvrit
-      labels: [self-hosted, macOS, ARM64]
+      labels: [self-hosted, Linux, X64]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Prepare macOS CI tools
-        uses: tanvrit/artifactory/.github/actions/macos-ci-tools@main
       - name: Check publication guards with synthetic inputs
         shell: bash
         run: |

@@ -67,11 +67,11 @@ on:
       runner_labels:
         description: >-
           JSON labels within the tanvrit runner group. Defaults to
-          ["self-hosted","macOS","ARM64"]. Override only for a provisioned
+          ["self-hosted","Linux","X64"] (the ovh-x64 pool). Override only for a provisioned
           self-hosted host with the required OS and architecture toolchain.
         type: string
         required: false
-        default: '["self-hosted","macOS","ARM64"]'
+        default: '["self-hosted","Linux","X64"]'
     secrets:
       CLOUDFLARE_API_TOKEN:
         description: 'When absent, the Deploy step is skipped — workflow still builds artifacts.'

@@ -1,9 +1,14 @@
 # CI runner routing
 
-Portable CI uses the `tanvrit` runner group with `[self-hosted, macOS, ARM64]`
-from 2026-10-19. This replaces the older Linux routing notes in product docs.
-The shared Android/web templates and the Jashva version resolver use this default.
-Existing caller overrides remain self-hosted and must match the actual toolchain.
+Portable CI uses the `tanvrit` runner group with `[self-hosted, Linux, X64]`
+(the eight `ovh-x64-*` runners) from 2026-11-01. Between 2026-10-19 and
+2026-11-01 it used `[self-hosted, macOS, ARM64]`, which put the whole org on two
+runners on one laptop; battery, sleep and network drops there turned into flaky
+failures. The shared Android/web/Firebase templates default to Linux X64.
+
+Only jobs that genuinely need macOS stay on `[self-hosted, macOS, ARM64]`:
+Xcode/xcodebuild, iOS/macOS signing and notarization, Kotlin/Native Apple
+targets, and host-specific maintenance. The macOS notes below apply to those.
 
 ## Runner preparation
 
