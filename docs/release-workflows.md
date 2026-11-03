@@ -155,6 +155,14 @@ An explicit Android `upload_play_store: true` request fails if its Play credenti
 is absent or the upload fails; default release callers retain their existing
 optional upload failure behavior.
 
+Android callers may separately opt into `retain_ci_artifacts: true` (default false).
+After signature verification and checksum validation, a private calling repository
+retains exactly its signed APK/AAB and their two SHA-256 sidecars for three days in
+the Actions artifact `android-ci-<product>-<version>-<run_id>-<run_attempt>`. Public
+callers fail this opt-in rather than expose the verification files. Signing keys,
+Firebase JSON, logs and workspace directories are never selected. This does not
+enable Play, GitHub Release, R2 or manifest publication and is not a Play receipt.
+
 ## Manifest fan-out
 
 Each template's last step is `peter-evans/repository-dispatch@v3` posting an

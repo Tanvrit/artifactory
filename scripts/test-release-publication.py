@@ -8,6 +8,7 @@ import os
 import re
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -24,15 +25,20 @@ PUBLIC = {
 }
 PLAY = "Upload to Google Play"
 PLAY_PREFLIGHT = "Validate explicit Play upload prerequisites"
+CI_RETENTION = "Retain signed Android verification artifacts"
 CORE = {"Build APK + AAB", "Verify APK + AAB release signatures", "Rename + checksum artifacts"}
 
 
-def enabled(condition, *, publication, play=False, supported=True, credentials=True):
+def enabled(condition, *, publication, play=False, supported=True, credentials=True,
+            retained=False, signature=True, allowlist=True):
     """Evaluate the boolean subset used by publication guards, with all calls forbidden."""
     values = {
         "inputs.publish_artifacts": publication,
         "inputs.upload_play_store": play,
+        "inputs.retain_ci_artifacts": retained,
         "steps.guard.outputs.supported": str(supported).lower(),
+        "steps.signature_verify.outcome": "success" if signature else "failure",
+        "steps.ci_artifact_allowlist.outcome": "success" if allowlist else "failure",
         "env.PLAY_SA_PRESENT": str(credentials).lower(),
         "env.ARTIFACTS_TOKEN_PRESENT": str(credentials).lower(),
     }
@@ -68,6 +74,103 @@ class AndroidPublicationTest(unittest.TestCase):
         self.assertEqual(inputs["upload_play_store"]["default"], "false")
         for name in PUBLIC | {PLAY}:
             self.assertTrue(enabled(self.steps[name]["if"], publication=True), name)
+
+    def test_private_retention_is_opt_in_and_does_not_enable_publication(self):
+        value = self.workflow["on"]["workflow_call"]["inputs"]["retain_ci_artifacts"]
+        self.assertEqual({"type": "boolean", "required": "false", "default": "false"},
+                         {key: value[key] for key in ("type", "required", "default")})
+        verify = self.steps["Verify private CI artifact allowlist"]
+        upload = self.steps["Retain signed Android verification artifacts"]
+        for step in (verify, upload):
+            self.assertFalse(enabled(step["if"], publication=True))
+            self.assertTrue(enabled(step["if"], publication=False, retained=True))
+            self.assertFalse(enabled(step["if"], publication=False, retained=True, supported=False))
+            self.assertFalse(enabled(step["if"], publication=False, retained=True, signature=False))
+            self.assertNotIn("continue-on-error", step)
+        self.assertFalse(enabled(upload["if"], publication=False, retained=True, allowlist=False))
+        for name in PUBLIC | {PLAY, PLAY_PREFLIGHT}:
+            self.assertFalse(enabled(self.steps[name]["if"], publication=False, retained=True), name)
+
+    def test_retention_upload_has_an_exact_short_lived_signed_file_allowlist(self):
+        upload = self.steps["Retain signed Android verification artifacts"]
+        audit = yaml.load((ROOT / ".github/workflows/audit-caller-secrets.yml").read_text(), Loader=yaml.BaseLoader)
+        audit_uploads = [step["uses"] for job in audit["jobs"].values() for step in job["steps"]
+                         if step.get("uses", "").startswith("actions/upload-artifact@")]
+        self.assertIn(upload["uses"], audit_uploads)
+        self.assertRegex(upload["uses"], r"^actions/upload-artifact@[0-9a-f]{40}$")
+        self.assertEqual("3", upload["with"]["retention-days"])
+        self.assertEqual("0", upload["with"]["compression-level"])
+        self.assertEqual("error", upload["with"]["if-no-files-found"])
+        self.assertEqual("android-ci-${{ inputs.product }}-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}",
+                         upload["with"]["name"])
+        prefix = "${{ inputs.product }}-${{ inputs.version }}-android"
+        self.assertEqual([prefix + extension for extension in (".apk", ".apk.sha256", ".aab", ".aab.sha256")],
+                         upload["with"]["path"].splitlines())
+        self.assertNotIn("env", upload)
+        names = list(self.steps)
+        self.assertLess(names.index("Verify APK + AAB release signatures"), names.index("Verify private CI artifact allowlist"))
+        self.assertLess(names.index("Rename + checksum artifacts"), names.index("Verify private CI artifact allowlist"))
+        self.assertLess(names.index("Verify private CI artifact allowlist"), names.index("Retain signed Android verification artifacts"))
+
+    def invoke_retention(self, *, private="true", missing=None, symlink=None, corrupt=None,
+                         product="fixture", version="1.0.0"):
+        with tempfile.TemporaryDirectory(prefix="synthetic-ci-retention-") as directory:
+            root = Path(directory)
+            canary = root / "unrelated-private-canary.bin"
+            canary.write_bytes(b"synthetic-private-canary")
+            paths = []
+            for extension in ("apk", "aab"):
+                artifact = root / f"fixture-1.0.0-android.{extension}"
+                artifact.write_bytes(b"synthetic previously verified artifact payload")
+                checksum = Path(str(artifact) + ".sha256")
+                checksum.write_text(f"{hashlib.sha256(artifact.read_bytes()).hexdigest()}  {artifact.name}\n")
+                paths.extend((artifact, checksum))
+            if missing is not None:
+                paths[missing].unlink()
+            if symlink is not None:
+                paths[symlink].unlink()
+                paths[symlink].symlink_to(canary)
+            if corrupt == "digest":
+                paths[1].write_text("0" * 64 + "  " + paths[0].name + "\n")
+            elif corrupt == "name":
+                paths[1].write_text(f"{hashlib.sha256(paths[0].read_bytes()).hexdigest()}  ../{paths[0].name}\n")
+            elif corrupt == "oversize":
+                paths[1].write_text("A" * 1025)
+            environment = {"PATH": str(Path(sys.executable).parent) + ":/usr/bin:/bin",
+                           "REPOSITORY_IS_PRIVATE": private, "PRODUCT": product, "VERSION": version}
+            result = subprocess.run(["bash", "-c", self.steps["Verify private CI artifact allowlist"]["run"]],
+                                    cwd=root, env=environment, capture_output=True, text=True, timeout=30)
+            self.assertEqual(b"synthetic-private-canary", canary.read_bytes())
+            self.assertNotIn("synthetic-private-canary", result.stdout + result.stderr)
+            self.assertFalse((root / "injected").exists())
+            return result
+
+    def test_retention_accepts_only_complete_private_verified_build_files(self):
+        result = self.invoke_retention()
+        self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_retention_rejects_public_or_missing_private_scope(self):
+        for private in ("false", "", "True"):
+            with self.subTest(private=private):
+                self.assertNotEqual(0, self.invoke_retention(private=private).returncode)
+
+    def test_retention_rejects_each_missing_or_symlinked_file(self):
+        for index in range(4):
+            with self.subTest(missing=index):
+                self.assertNotEqual(0, self.invoke_retention(missing=index).returncode)
+            with self.subTest(symlink=index):
+                self.assertNotEqual(0, self.invoke_retention(symlink=index).returncode)
+
+    def test_retention_rejects_wrong_checksums_targets_and_oversized_sidecars(self):
+        for corrupt in ("digest", "name", "oversize"):
+            with self.subTest(corrupt=corrupt):
+                self.assertNotEqual(0, self.invoke_retention(corrupt=corrupt).returncode)
+
+    def test_retention_treats_names_as_data_and_rejects_paths_or_shell_injection(self):
+        for field, value in (("product", "../fixture"), ("product", "fixture$(touch injected)"),
+                             ("version", "1.0.0*"), ("version", "../../private")):
+            with self.subTest(field=field):
+                self.assertNotEqual(0, self.invoke_retention(**{field: value}).returncode)
 
     def test_validation_builds_and_verifies_with_no_external_publication_even_with_credentials(self):
         for name in PUBLIC | {PLAY, PLAY_PREFLIGHT}:
@@ -253,8 +356,9 @@ class AndroidPublicationTest(unittest.TestCase):
             self.assertTrue(adjacent.exists())
 
     def test_unsupported_target_never_builds_or_publishes(self):
-        for name in CORE | PUBLIC | {PLAY, PLAY_PREFLIGHT}:
-            self.assertFalse(enabled(self.steps[name]["if"], publication=True, play=True, supported=False), name)
+        for name in CORE | PUBLIC | {PLAY, PLAY_PREFLIGHT, CI_RETENTION, "Verify private CI artifact allowlist"}:
+            self.assertFalse(enabled(self.steps[name]["if"], publication=True, play=True,
+                                     retained=True, supported=False), name)
 
     def test_all_current_publication_steps_are_in_guard_inventory(self):
         found = set()
@@ -265,7 +369,7 @@ class AndroidPublicationTest(unittest.TestCase):
                     or re.search(r"softprops/action-gh-release|r0adkll/upload-google-play|peter-evans/repository-dispatch|actions/upload-artifact", action)
                     or "--upload-file" in run or "gh release" in run):
                 found.add(name)
-        self.assertEqual(found, PUBLIC | {PLAY, PLAY_PREFLIGHT})
+        self.assertEqual(found, PUBLIC | {PLAY, PLAY_PREFLIGHT, CI_RETENTION})
 
     def test_credential_cleanup_is_not_disabled_by_validation(self):
         cleanup = self.steps["Remove temporary Firebase configuration"]

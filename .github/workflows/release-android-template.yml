@@ -31,6 +31,8 @@
 # for a build/signature validation run with no GitHub Release, R2 or manifest writes.
 # Play upload also stays off in validation unless upload_play_store=true is explicitly
 # requested. Release publication still uploads to Play when its existing secret is set.
+# Private callers can opt into three-day Actions retention of only the signed
+# APK/AAB and their checksums with retain_ci_artifacts=true.
 #
 # Graceful-skip guard: no androidTarget() in composeApp/build.gradle.kts
 # → exit 0 with skip notice.
@@ -80,6 +82,11 @@ on:
         default: true
       upload_play_store:
         description: 'Explicitly permit Play Store upload when publish_artifacts is false; track upload is an external publication.'
+        type: boolean
+        required: false
+        default: false
+      retain_ci_artifacts:
+        description: 'Opt in to three-day signed APK/AAB and checksum retention in a private caller Actions run; independent of public publication.'
         type: boolean
         required: false
         default: false
@@ -350,6 +357,69 @@ jobs:
           AAB_DEST="${{ inputs.product }}-${{ inputs.version }}-android.aab"
           [ -n "$APK" ] && mv "$APK" "$APK_DEST" && sha256sum "$APK_DEST" > "${APK_DEST}.sha256"
           [ -n "$AAB" ] && mv "$AAB" "$AAB_DEST" && sha256sum "$AAB_DEST" > "${AAB_DEST}.sha256"
+
+      - name: Verify private CI artifact allowlist
+        id: ci_artifact_allowlist
+        if: >-
+          steps.guard.outputs.supported == 'true' && inputs.retain_ci_artifacts &&
+          steps.signature_verify.outcome == 'success'
+        shell: bash
+        env:
+          REPOSITORY_IS_PRIVATE: ${{ github.event.repository.private && 'true' || 'false' }}
+          PRODUCT: ${{ inputs.product }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set +x
+          set -euo pipefail
+          python3 - <<'PYTHON'
+          import hashlib
+          import os
+          from pathlib import Path
+          import re
+          import sys
+
+          def refuse():
+              sys.exit('::error::Private CI artifact retention requires a private caller and four verified regular artifact files.')
+
+          if os.environ.get('REPOSITORY_IS_PRIVATE') != 'true':
+              refuse()
+          product, version = os.environ['PRODUCT'], os.environ['VERSION']
+          if not all(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._+-]{0,127}', value) for value in (product, version)):
+              refuse()
+          for extension in ('apk', 'aab'):
+              artifact = Path(f'{product}-{version}-android.{extension}')
+              checksum = Path(f'{artifact}.sha256')
+              if any(path.is_symlink() or not path.is_file() or path.stat().st_size == 0 for path in (artifact, checksum)):
+                  refuse()
+              if checksum.stat().st_size > 1024:
+                  refuse()
+              declared = re.fullmatch(r'([A-Fa-f0-9]{64}) [ *](.+)', checksum.read_text().strip())
+              if declared is None or declared[2] != artifact.name:
+                  refuse()
+              digest = hashlib.sha256()
+              with artifact.open('rb') as stream:
+                  for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                      digest.update(chunk)
+              if digest.hexdigest() != declared[1].lower():
+                  refuse()
+          print('Verified four signed-build files for private CI retention.')
+          PYTHON
+
+      - name: Retain signed Android verification artifacts
+        if: >-
+          steps.guard.outputs.supported == 'true' && inputs.retain_ci_artifacts &&
+          steps.signature_verify.outcome == 'success' && steps.ci_artifact_allowlist.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android-ci-${{ inputs.product }}-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ inputs.product }}-${{ inputs.version }}-android.apk
+            ${{ inputs.product }}-${{ inputs.version }}-android.apk.sha256
+            ${{ inputs.product }}-${{ inputs.version }}-android.aab
+            ${{ inputs.product }}-${{ inputs.version }}-android.aab.sha256
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
 
       # ── Deliverable honesty gate (2026-08-13) ─────────────────────────────
       # The upload below used to stack three swallows: an
