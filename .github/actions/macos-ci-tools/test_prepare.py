@@ -73,6 +73,7 @@ esac
                 path.write_text(text)
                 path.chmod(0o755)
             env = dict(os.environ, RUNNER_TEMP=directory, FIXTURE=directory, ANDROID_HOME=str(fixture_sdk), ANDROID_SDK_ROOT=str(fixture_sdk), PATH=os.pathsep.join([str(binary), "/usr/bin", "/bin"]), MACOS_CI_APPLICATION_DIRS=str(applications), GITHUB_PATH=str(root / "paths"), GITHUB_ENV=str(root / "environment"))
+            env.pop("CI_REQUIRE_GITHUB_CLI", None)
             env.update(overrides)
             result = subprocess.run(["/bin/bash", str(SCRIPT)], env=env, capture_output=True, text=True)
             files = {name: (root / name).read_text() if (root / name).exists() else "" for name in ["paths", "environment", "installed", "started", "brew-calls"]}
@@ -93,7 +94,7 @@ esac
 
     def test_installs_only_missing_gh_without_logging_credentials(self):
         token = "synthetic-github-credential-never-log"
-        result, files = self.run_fixture(TEST_MISSING="gh", GH_TOKEN=token)
+        result, files = self.run_fixture(TEST_MISSING="gh", CI_REQUIRE_GITHUB_CLI="true", GH_TOKEN=token)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(files["installed"].strip(), "gh")
         self.assertIn("gh/bin", files["paths"])
@@ -102,12 +103,33 @@ esac
         self.assertNotIn(token, result.stdout + result.stderr + "".join(files.values()))
 
     def test_reuses_installed_gh_and_adds_its_binary_to_ci_path(self):
-        result, files = self.run_fixture()
+        result, files = self.run_fixture(CI_REQUIRE_GITHUB_CLI="true")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("list --versions gh", files["brew-calls"].splitlines())
         self.assertIn("gh/bin", files["paths"])
         self.assertEqual(files["installed"], "")
         self.assertNotIn("install gh", files["brew-calls"].splitlines())
+
+    def test_default_and_explicit_false_do_not_probe_or_install_github_cli(self):
+        for values in ({}, {"CI_REQUIRE_GITHUB_CLI": "false"}):
+            with self.subTest(values=values):
+                result, files = self.run_fixture(TEST_MISSING="gh", **values)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(files["installed"], "")
+                self.assertNotIn("gh/bin", files["paths"])
+                self.assertFalse(any(" gh" in call for call in files["brew-calls"].splitlines()))
+                for formula in ("bash", "coreutils", "findutils", "grep", "jq", "openssl@3"):
+                    self.assertIn("list --versions " + formula, files["brew-calls"].splitlines())
+
+    def test_rejects_invalid_github_cli_opt_in_before_homebrew_without_value_echo(self):
+        for value in ("", "TRUE", "yes", "1", "invalid-private-canary"):
+            with self.subTest(value=value):
+                result, files = self.run_fixture(CI_REQUIRE_GITHUB_CLI=value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(files["brew-calls"], "")
+                self.assertIn("github_cli must be true or false", result.stdout + result.stderr)
+                if value:
+                    self.assertNotIn(value, result.stdout + result.stderr)
 
     def test_waits_for_a_concurrent_homebrew_install(self):
         result, files = self.run_fixture(TEST_MISSING="findutils", TEST_BUSY="true")

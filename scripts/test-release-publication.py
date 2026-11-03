@@ -78,6 +78,23 @@ class AndroidPublicationTest(unittest.TestCase):
         for name in PUBLIC | {PLAY}:
             self.assertTrue(enabled(self.steps[name]["if"], publication=True), name)
 
+    def test_only_actual_android_build_opts_into_github_cli(self):
+        job = self.workflow["jobs"]["build-android"]
+        self.assertEqual("90", job["timeout-minutes"])
+        prepare = self.steps["Prepare macOS CI tools"]
+        self.assertEqual({"github_cli": "true"}, prepare["with"])
+        action = yaml.load((ROOT / ".github/actions/macos-ci-tools/action.yml").read_text(), Loader=yaml.BaseLoader)
+        self.assertEqual("false", action["inputs"]["github_cli"]["default"])
+        self.assertEqual("${{ inputs.github_cli }}", action["runs"]["steps"][0]["env"]["CI_REQUIRE_GITHUB_CLI"])
+        # Existing preflights/callers inherit the false default unless explicitly opted in.
+        for path in (ROOT / ".github/workflows").glob("*.yml"):
+            workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+            for name, candidate in workflow.get("jobs", {}).items():
+                for step in candidate.get("steps", []):
+                    if step.get("uses", "").lower().startswith("tanvrit/artifactory/.github/actions/macos-ci-tools@"):
+                        if path != ANDROID or name != "build-android":
+                            self.assertNotEqual("true", step.get("with", {}).get("github_cli"), str(path) + ":" + name)
+
     def test_private_retention_is_opt_in_and_does_not_enable_publication(self):
         value = self.workflow["on"]["workflow_call"]["inputs"]["retain_ci_artifacts"]
         self.assertEqual({"type": "boolean", "required": "false", "default": "false"},

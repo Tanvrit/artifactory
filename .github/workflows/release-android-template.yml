@@ -156,6 +156,8 @@ jobs:
       - name: Prepare macOS CI tools
         if: runner.os == 'macOS'
         uses: tanvrit/artifactory/.github/actions/macos-ci-tools@main
+        with:
+          github_cli: 'true'
       # Per-runner, persistent GRADLE_USER_HOME (2026-09-24). Concurrent Gradle
       # builds sharing one home corrupt each other's artifact-transform cache
       # (FileNotFoundException on jars Gradle itself just produced, measured on
