@@ -16,9 +16,13 @@ class PrepareMacTest(unittest.TestCase):
             fixture_sdk = root / "sdk-fixture/Library/Android/sdk"
             (fixture_sdk / "platforms").mkdir(parents=True)
             prefix = root / "prefix"
-            for formula in ["bash", "coreutils", "findutils", "grep", "jq", "openssl@3"]:
+            for formula in ["bash", "coreutils", "findutils", "grep", "gh", "jq", "openssl@3"]:
                 (prefix / formula / "libexec/gnubin").mkdir(parents=True)
                 (prefix / formula / "bin").mkdir()
+            if overrides.get("TEST_MISSING") != "gh":
+                github_cli = prefix / "gh/bin/gh"
+                github_cli.write_text("#!/bin/sh\nexit 0\n")
+                github_cli.chmod(0o755)
             scripts = {
                 "uname": '#!/bin/sh\nif [ "$1" = -s ]; then echo "${TEST_OS:-Darwin}"; else echo arm64; fi\n',
                 "brew": r"""#!/bin/sh
@@ -39,7 +43,11 @@ case "$1" in
       echo "Error: ncurses: undefined method 'different_method' for #<Class:0x123>"; exit 1
     fi
     if [ "${TEST_INSTALL_FAIL:-}" = true ]; then echo "Permission denied"; exit 1; fi
-    touch "$FIXTURE/installed-$2"; echo "$2" >> "$FIXTURE/installed" ;;
+    touch "$FIXTURE/installed-$2"; echo "$2" >> "$FIXTURE/installed"
+    if [ "$2" = gh ]; then
+      printf '#!/bin/sh\nexit 0\n' > "$FIXTURE/prefix/gh/bin/gh"
+      chmod 755 "$FIXTURE/prefix/gh/bin/gh"
+    fi ;;
   update)
     if [ "${TEST_UPDATE_FAIL:-}" = true ]; then echo "Synthetic Homebrew update failed"; exit 1; fi
     touch "$FIXTURE/brew-updated" ;;
@@ -82,6 +90,24 @@ esac
         result, files = self.run_fixture(TEST_MISSING="findutils")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(files["installed"].strip(), "findutils")
+
+    def test_installs_only_missing_gh_without_logging_credentials(self):
+        token = "synthetic-github-credential-never-log"
+        result, files = self.run_fixture(TEST_MISSING="gh", GH_TOKEN=token)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(files["installed"].strip(), "gh")
+        self.assertIn("gh/bin", files["paths"])
+        self.assertEqual(files["brew-calls"].splitlines().count("install gh"), 1)
+        self.assertFalse(any(call.startswith(("upgrade", "update")) for call in files["brew-calls"].splitlines()))
+        self.assertNotIn(token, result.stdout + result.stderr + "".join(files.values()))
+
+    def test_reuses_installed_gh_and_adds_its_binary_to_ci_path(self):
+        result, files = self.run_fixture()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("list --versions gh", files["brew-calls"].splitlines())
+        self.assertIn("gh/bin", files["paths"])
+        self.assertEqual(files["installed"], "")
+        self.assertNotIn("install gh", files["brew-calls"].splitlines())
 
     def test_waits_for_a_concurrent_homebrew_install(self):
         result, files = self.run_fixture(TEST_MISSING="findutils", TEST_BUSY="true")

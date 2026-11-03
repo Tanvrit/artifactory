@@ -1,5 +1,5 @@
 name: Prepare macOS CI tools
-description: Prepare GNU command compatibility and check optional Docker or GUI requirements.
+description: Prepare GNU command compatibility and GitHub CLI, and check optional Docker or GUI requirements.
 inputs:
   docker:
     description: Require a running Linux Docker engine reachable by the runner user.

@@ -451,24 +451,70 @@ jobs:
           import os
           from pathlib import Path
           import re
+          import shutil
           import subprocess
           import sys
 
-          def refuse():
+          # Only source-owned enums enter metadata. Never emit gh stderr, API bodies,
+          # request URLs or credentials, even when a command or authority check fails.
+          stages = {'context', 'artifact-verification', 'repository-authority-before-create',
+                    'draft-create', 'draft-verify', 'repository-authority-before-upload',
+                    'asset-upload', 'draft-readback', 'asset-verification',
+                    'repository-authority-final', 'receipt', 'success'}
+          reasons = {'none', 'context-invalid', 'gh-missing', 'artifact-not-regular',
+                     'checksum-oversized', 'checksum-format', 'checksum-mismatch',
+                     'repo-not-private', 'repo-mismatch', 'draft-binding', 'asset-set',
+                     'asset-metadata', 'asset-digest', 'output-too-large', 'malformed-json',
+                     'timeout', 'command-failed', 'io-error', 'invalid-data', 'guard-failed',
+                     'http-400', 'http-401', 'http-403', 'http-404', 'http-409', 'http-422',
+                     'http-429', 'http-5xx'}
+          stage = 'context'
+
+          def metadata(reason):
+              safe_stage = stage if stage in stages else 'diagnostic-unavailable'
+              safe_reason = reason if reason in reasons else 'diagnostic-unavailable'
+              try:
+                  with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+                      output.write(f'retention_stage={safe_stage}\nretention_reason={safe_reason}\n')
+              except (OSError, KeyError):
+                  pass  # Failure remains fatal if metadata itself cannot be written.
+
+          def refuse(reason='guard-failed'):
+              metadata(reason)
               sys.exit('::error::Private Android draft retention failed; no store upload is permitted without a retained signed build.')
 
           def command(arguments, payload=None, timeout=90):
-              result = subprocess.run(['gh', *arguments], input=payload, text=True,
-                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
-              if result.returncode or len(result.stdout) > 262144:
-                  refuse()
+              try:
+                  result = subprocess.run(['gh', *arguments], input=payload, text=True,
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+              except FileNotFoundError:
+                  refuse('gh-missing')
+              except subprocess.TimeoutExpired:
+                  refuse('timeout')
+              if result.returncode:
+                  codes = re.findall(r'\(HTTP ([0-9]{3})\)', result.stderr)
+                  reason = 'command-failed'
+                  if codes:
+                      candidate = 'http-5xx' if codes[-1].startswith('5') else 'http-' + codes[-1]
+                      if candidate in reasons:
+                          reason = candidate
+                  refuse(reason)
+              if len(result.stdout) > 262144:
+                  refuse('output-too-large')
               return result.stdout
 
           def api(path, payload=None):
               arguments = ['api', path]
               if payload is not None:
                   arguments += ['--method', 'POST', '--input', '-']
-              return json.loads(command(arguments, None if payload is None else json.dumps(payload)))
+              raw = command(arguments, None if payload is None else json.dumps(payload))
+              try:
+                  value = json.loads(raw)
+              except ValueError:
+                  refuse('malformed-json')
+              if not isinstance(value, dict):
+                  refuse('malformed-json')
+              return value
 
           try:
               repository, source = os.environ['CI_REPOSITORY'], os.environ['CI_SOURCE_SHA']
@@ -479,24 +525,31 @@ jobs:
                       or not re.fullmatch(r'[0-9a-f]{40}', source)
                       or not all(re.fullmatch(r'[1-9][0-9]{0,19}', value) for value in (run, attempt))
                       or not all(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._+-]{0,127}', value) for value in (product, version))):
-                  refuse()
+                  refuse('context-invalid')
+              if shutil.which('gh') is None:
+                  refuse('gh-missing')
 
-              def require_private():
+              def require_private(phase):
+                  global stage
+                  stage = phase
                   current = api(f'repos/{repository}')
-                  if current.get('private') is not True or current.get('full_name', '').lower() != repository.lower():
-                      refuse()
+                  if current.get('private') is not True:
+                      refuse('repo-not-private')
+                  if current.get('full_name', '').lower() != repository.lower():
+                      refuse('repo-mismatch')
 
+              stage = 'artifact-verification'
               files, qualified = [], {}
               for extension in ('apk', 'aab'):
                   artifact = Path(f'{product}-{version}-android.{extension}')
                   sidecar = Path(f'{artifact}.sha256')
                   if any(path.is_symlink() or not path.is_file() or path.stat().st_size == 0 for path in (artifact, sidecar)):
-                      refuse()
+                      refuse('artifact-not-regular')
                   if sidecar.stat().st_size > 1024:
-                      refuse()
+                      refuse('checksum-oversized')
                   declared = re.fullmatch(r'([A-Fa-f0-9]{64}) [ *](.+)', sidecar.read_text().strip())
                   if declared is None or declared[2] != artifact.name:
-                      refuse()
+                      refuse('checksum-format')
                   for path in (artifact, sidecar):
                       digest = hashlib.sha256()
                       with path.open('rb') as stream:
@@ -505,44 +558,106 @@ jobs:
                       qualified[path.name] = {'bytes': path.stat().st_size, 'sha256': digest.hexdigest()}
                       files.append(path.name)
                   if qualified[artifact.name]['sha256'] != declared[1].lower():
-                      refuse()
+                      refuse('checksum-mismatch')
 
-              require_private()  # Fresh API authority, rather than only event-time metadata.
+              # Fresh API authority, rather than only event-time metadata.
+              require_private('repository-authority-before-create')
               tag = f'ci-android-{run}-{attempt}'
+              stage = 'draft-create'
               release = api(f'repos/{repository}/releases', {
                   'tag_name': tag, 'target_commitish': source, 'name': tag,
                   'body': 'Private signed Android CI qualification files. Temporary operator-owned draft.',
                   'draft': True, 'prerelease': True, 'generate_release_notes': False, 'make_latest': 'false',
               })
+              stage = 'draft-verify'
               release_id = release.get('id')
               if (type(release_id) is not int or release_id <= 0 or release.get('draft') is not True
                       or release.get('tag_name') != tag or release.get('target_commitish') != source
                       or release.get('assets') != []):
-                  refuse()
-              require_private()
+                  refuse('draft-binding')
+              require_private('repository-authority-before-upload')
+              stage = 'asset-upload'
               command(['release', 'upload', tag, '--repo', repository, '--', *files], timeout=240)
+              stage = 'draft-readback'
               stored = api(f'repos/{repository}/releases/{release_id}')
               assets = stored.get('assets', [])
               if (stored.get('id') != release_id or stored.get('draft') is not True or stored.get('tag_name') != tag
                       or stored.get('target_commitish') != source or len(assets) != 4
                       or {asset.get('name') for asset in assets} != set(files)):
-                  refuse()
+                  refuse('asset-set')
+              stage = 'asset-verification'
               receipt = []
               for asset in assets:
                   expected = qualified[asset['name']]
                   if (type(asset.get('id')) is not int or asset['id'] <= 0
-                          or asset.get('state') != 'uploaded' or asset.get('size') != expected['bytes']
-                          or asset.get('digest') != 'sha256:' + expected['sha256']):
-                      refuse()
+                          or asset.get('state') != 'uploaded' or asset.get('size') != expected['bytes']):
+                      refuse('asset-metadata')
+                  if asset.get('digest') != 'sha256:' + expected['sha256']:
+                      refuse('asset-digest')
                   receipt.append({'id': asset['id'], 'name': asset['name'], **expected})
-              require_private()
+              require_private('repository-authority-final')
+              stage = 'receipt'
               print(json.dumps({'private_ci_draft': {'repository': repository, 'release_id': release_id,
                   'tag': tag, 'source_sha': source, 'draft': True, 'assets': receipt}}, sort_keys=True))
               with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
                   output.write(f'release_id={release_id}\nrelease_tag={tag}\nsource_sha={source}\n')
-          except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
-              refuse()
+              stage = 'success'
+              metadata('none')
+          except OSError:
+              refuse('io-error')
+          except (ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
+              refuse('invalid-data')
           PYTHON
+
+      # Preserve the failed step/job; expose only a fixed diagnostic vocabulary.
+      - name: >-
+          Private Android retention status — ${{
+          steps.ci_artifact_fallback.outputs.retention_stage == 'context' && 'context' ||
+          steps.ci_artifact_fallback.outputs.retention_stage == 'artifact-verification' && 'artifact-verification' ||
+          steps.ci_artifact_fallback.outputs.retention_stage == 'repository-authority-before-create' && 'repository-authority-before-create' ||
+          steps.ci_artifact_fallback.outputs.retention_stage == 'draft-create' && 'draft-create' ||
+          steps.ci_artifact_fallback.outputs.retention_stage == 'draft-verify' && 'draft-verify' ||
+          steps.ci_artifact_fallback.outputs.retention_stage == 'repository-authority-before-upload' && 'repository-authority-before-upload' ||
+          steps.ci_artifact_fallback.outputs.retention_stage == 'asset-upload' && 'asset-upload' ||
+          steps.ci_artifact_fallback.outputs.retention_stage == 'draft-readback' && 'draft-readback' ||
+          steps.ci_artifact_fallback.outputs.retention_stage == 'asset-verification' && 'asset-verification' ||
+          steps.ci_artifact_fallback.outputs.retention_stage == 'repository-authority-final' && 'repository-authority-final' ||
+          steps.ci_artifact_fallback.outputs.retention_stage == 'receipt' && 'receipt' ||
+          steps.ci_artifact_fallback.outputs.retention_stage == 'success' && 'success' ||
+          'diagnostic-unavailable' }} / ${{
+          steps.ci_artifact_fallback.outputs.retention_reason == 'none' && 'none' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'context-invalid' && 'context-invalid' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'gh-missing' && 'gh-missing' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'artifact-not-regular' && 'artifact-not-regular' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'checksum-oversized' && 'checksum-oversized' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'checksum-format' && 'checksum-format' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'checksum-mismatch' && 'checksum-mismatch' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'repo-not-private' && 'repo-not-private' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'repo-mismatch' && 'repo-mismatch' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'draft-binding' && 'draft-binding' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'asset-set' && 'asset-set' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'asset-metadata' && 'asset-metadata' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'asset-digest' && 'asset-digest' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'output-too-large' && 'output-too-large' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'malformed-json' && 'malformed-json' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'timeout' && 'timeout' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'command-failed' && 'command-failed' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'io-error' && 'io-error' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'invalid-data' && 'invalid-data' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'guard-failed' && 'guard-failed' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'http-400' && 'http-400' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'http-401' && 'http-401' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'http-403' && 'http-403' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'http-404' && 'http-404' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'http-409' && 'http-409' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'http-422' && 'http-422' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'http-429' && 'http-429' ||
+          steps.ci_artifact_fallback.outputs.retention_reason == 'http-5xx' && 'http-5xx' ||
+          'diagnostic-unavailable' }}
+        id: ci_artifact_diagnostic
+        if: always() && steps.ci_artifact_fallback.outcome != 'skipped' && steps.ci_artifact_fallback.outcome != ''
+        shell: bash
+        run: ':'
 
       - name: Require private Android CI retention
         if: steps.guard.outputs.supported == 'true' && inputs.retain_ci_artifacts

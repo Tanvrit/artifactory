@@ -17,7 +17,7 @@ if [ -z "$brew_bin" ]; then
 fi
 export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
 brew_updated=false
-for formula in bash coreutils findutils grep jq openssl@3; do
+for formula in bash coreutils findutils grep gh jq openssl@3; do
   if ! "$brew_bin" list --versions "$formula" >/dev/null 2>&1; then
     # Several runner registrations can share one Mac and Homebrew prefix.
     # Homebrew owns the package locks; wait only for its explicit busy errors.
@@ -146,7 +146,7 @@ if [ "${CI_REQUIRE_GUI:-false}" = true ]; then
     exit 1
   fi
 fi
-for tool in bash sha256sum timeout find sed grep jq openssl; do
+for tool in bash sha256sum timeout find sed grep gh jq openssl; do
   command -v "$tool" >/dev/null || { echo "::error::Missing CI tool: $tool"; exit 1; }
 done
 echo "macOS CI tools ready on ${RUNNER_ARCH:-$(uname -m)}"

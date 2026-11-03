@@ -155,7 +155,7 @@ class AndroidPublicationTest(unittest.TestCase):
                 (root / names[1]).symlink_to(root / "unrelated-private-canary")
             mock = root / "gh"
             mock.write_text(r'''#!/usr/bin/env python3
-import hashlib,json,os,sys
+import hashlib,json,os,sys,time
 from pathlib import Path
 args=sys.argv[1:]
 scenario=os.environ['SCENARIO']
@@ -164,6 +164,16 @@ tag='ci-android-12345-1'
 names=['fixture-1.0.0-android.'+extension for extension in ('apk','apk.sha256','aab','aab.sha256')]
 with open('gh-calls.jsonl','a') as log: log.write(json.dumps(args)+'\n')
 if args==['api','repos/Fixture/app']:
+    if scenario.startswith('http_'):
+        sys.stderr.write('SYNTHETIC private token canary https://private.invalid/secret (HTTP '+scenario[5:]+')\n')
+        sys.exit(1)
+    if scenario=='api_timeout': time.sleep(2)
+    if scenario=='malformed_json':
+        print('SYNTHETIC private token canary invalid-json'); sys.exit(0)
+    if scenario=='wrong_json_shape':
+        print('["SYNTHETIC private token canary"]'); sys.exit(0)
+    if scenario=='oversized_output':
+        print('SYNTHETIC private token canary'*10000); sys.exit(0)
     calls=Path('gh-calls.jsonl').read_text().count('repos/Fixture/app"')
     print(json.dumps({'private':scenario!='public' and not(scenario=='public_after_create' and calls>=2),
                       'full_name':'Other/app' if scenario=='wrong_repo' else 'Fixture/app'}))
@@ -171,6 +181,8 @@ elif args==['api','repos/Fixture/app/releases','--method','POST','--input','-']:
     body=json.load(sys.stdin)
     assert body['draft'] is True and body['target_commitish']==source and body['tag_name']==tag
     assert body['generate_release_notes'] is False and body['make_latest']=='false'
+    if scenario=='draft_403':
+        sys.stderr.write('SYNTHETIC private token canary (HTTP 403)\n'); sys.exit(1)
     if scenario=='existing_release': sys.exit(1)
     print(json.dumps({'id':42,'draft':True,'tag_name':tag,'target_commitish':source,'assets':[]}))
 elif args==['release','upload',tag,'--repo','Fixture/app','--',*names]:
@@ -190,8 +202,13 @@ else:
     sys.exit(1)
 ''')
             mock.chmod(0o700)
+            # Never fall through to a runner's real gh, including the missing-tool fixture.
+            (root / "python3").symlink_to(sys.executable)
+            (root / "bash").symlink_to("/bin/bash")
+            if scenario == "missing_gh":
+                mock.unlink()
             output = root / "output"
-            env = {"PATH": str(root) + ":" + os.environ["PATH"], "CI_REPOSITORY": "Fixture/app",
+            env = {"PATH": str(root), "CI_REPOSITORY": "Fixture/app",
                    "CI_SOURCE_SHA": "a" * 40, "CI_RUN_ID": "12345", "CI_RUN_ATTEMPT": "1",
                    "PRODUCT": "fixture", "VERSION": "1.0.0", "GH_TOKEN": "SYNTHETIC private token canary", "GH_HOST": "github.com",
                    "GITHUB_OUTPUT": str(output), "SCENARIO": scenario}
@@ -199,7 +216,11 @@ else:
                 env["GH_TOKEN"] = ""
             elif scenario == "foreign_host":
                 env["GH_HOST"] = "foreign.invalid"
-            result = subprocess.run(["bash", "-x", "-c", self.steps[CI_FALLBACK]["run"]], cwd=root,
+            script = self.steps[CI_FALLBACK]["run"]
+            if scenario == "api_timeout":
+                # Exercise real subprocess timeout handling without a real 90-second wait.
+                script = script.replace("timeout=90", "timeout=0.1")
+            result = subprocess.run(["bash", "-x", "-c", script], cwd=root,
                                     env=env, capture_output=True, text=True, timeout=30)
             self.assertNotIn("SYNTHETIC private token canary", result.stdout + result.stderr)
             calls = (root / "gh-calls.jsonl").read_text() if (root / "gh-calls.jsonl").exists() else ""
@@ -214,8 +235,60 @@ else:
         self.assertEqual("a" * 40, receipt["source_sha"])
         self.assertIs(True, receipt["draft"])
         self.assertEqual(4, len(receipt["assets"]))
-        self.assertEqual("release_id=42\nrelease_tag=ci-android-12345-1\nsource_sha=" + "a" * 40 + "\n", output)
+        self.assertEqual("release_id=42\nrelease_tag=ci-android-12345-1\nsource_sha=" + "a" * 40 +
+                         "\nretention_stage=success\nretention_reason=none\n", output)
         self.assertEqual(3, calls.count('["api", "repos/Fixture/app"]'))
+
+    def test_private_draft_missing_cli_reports_only_a_fixed_failure_enum(self):
+        result, output, calls = self.invoke_draft_fallback("missing_gh")
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("retention_stage=context\nretention_reason=gh-missing\n", output)
+        self.assertEqual("", calls)
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+
+    def test_draft_api_failure_stages_and_http_buckets_are_fixed_and_redacted(self):
+        for status, reason in (("400", "http-400"), ("401", "http-401"), ("403", "http-403"),
+                               ("404", "http-404"), ("409", "http-409"), ("422", "http-422"),
+                               ("429", "http-429"), ("500", "http-5xx"), ("503", "http-5xx"),
+                               ("418", "command-failed")):
+            with self.subTest(status=status):
+                result, output, calls = self.invoke_draft_fallback("http_" + status)
+                self.assertNotEqual(0, result.returncode)
+                self.assertEqual("retention_stage=repository-authority-before-create\nretention_reason=" + reason + "\n", output)
+                self.assertNotIn("https://private.invalid", result.stdout + result.stderr)
+                self.assertNotIn("releases", calls)
+        result, output, _ = self.invoke_draft_fallback("draft_403")
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual("retention_stage=draft-create\nretention_reason=http-403\n", output)
+
+    def test_draft_timeout_bad_json_and_oversized_response_stay_fatal_and_redacted(self):
+        for scenario, reason in (("api_timeout", "timeout"), ("malformed_json", "malformed-json"),
+                                 ("wrong_json_shape", "malformed-json"),
+                                 ("oversized_output", "output-too-large")):
+            with self.subTest(scenario=scenario):
+                result, output, _ = self.invoke_draft_fallback(scenario)
+                self.assertNotEqual(0, result.returncode)
+                self.assertEqual("retention_stage=repository-authority-before-create\nretention_reason=" + reason + "\n", output)
+
+    def test_draft_metadata_step_only_exposes_source_owned_enums_without_masking_failure(self):
+        status = next(step for name, step in self.steps.items() if name.startswith("Private Android retention status"))
+        self.assertEqual(":", status["run"])
+        self.assertEqual("ci_artifact_diagnostic", status["id"])
+        self.assertNotIn("uses", status)
+        self.assertNotIn("env", status)
+        self.assertIn("always()", status["if"])
+        self.assertNotIn("continue-on-error", status)
+        self.assertNotIn("continue-on-error", self.steps[CI_FALLBACK])
+        code = self.steps[CI_FALLBACK]["run"].split("<<'PYTHON'\n", 1)[1].rsplit("\nPYTHON", 1)[0]
+        tree = ast.parse(code)
+        enums = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                if node.targets[0].id in ("stages", "reasons"):
+                    enums[node.targets[0].id] = ast.literal_eval(node.value)
+        for field, values in (("retention_stage", enums["stages"]), ("retention_reason", enums["reasons"])):
+            emitted = set(re.findall(r"outputs\." + field + r" == '([^']+)' && '[^']+'", status["name"]))
+            self.assertEqual(values, emitted)
 
     def test_draft_refuses_public_foreign_or_changed_scope_and_failed_or_wrong_uploads(self):
         for scenario in ("public", "wrong_repo", "existing_release", "public_after_create", "upload_failure",
@@ -224,16 +297,17 @@ else:
             with self.subTest(scenario=scenario):
                 result, output, calls = self.invoke_draft_fallback(scenario)
                 self.assertNotEqual(0, result.returncode)
-                self.assertEqual("", output)
+                self.assertEqual({"retention_stage", "retention_reason"},
+                                 {line.split("=", 1)[0] for line in output.splitlines()})
                 self.assertIn("Private Android draft retention failed", result.stderr)
                 if scenario in ("public", "wrong_repo", "existing_release", "public_after_create"):
                     self.assertNotIn('["release", "upload"', calls)
 
     def test_draft_revalidates_checksum_and_symlink_guards_before_any_api_call(self):
-        for values in ({"corrupt": True}, {"symlink": True}):
+        for values, reason in (({"corrupt": True}, "checksum-mismatch"), ({"symlink": True}, "artifact-not-regular")):
             result, output, calls = self.invoke_draft_fallback(**values)
             self.assertNotEqual(0, result.returncode)
-            self.assertEqual("", output)
+            self.assertEqual("retention_stage=artifact-verification\nretention_reason=" + reason + "\n", output)
             self.assertEqual("", calls)
 
     def invoke_retention(self, *, private="true", missing=None, symlink=None, corrupt=None,
@@ -489,6 +563,11 @@ else:
         for name, step in self.steps.items():
             action = step.get("uses", "")
             run = step.get("run", "")
+            if step.get("id") == "ci_artifact_diagnostic":
+                self.assertEqual(":", run)
+                self.assertNotIn("uses", step)
+                self.assertNotIn("env", step)
+                continue
             if (re.search(r"upload|publish|mirror|dispatch", name, re.I)
                     or re.search(r"softprops/action-gh-release|r0adkll/upload-google-play|peter-evans/repository-dispatch|actions/upload-artifact", action)
                     or "--upload-file" in run or "gh release" in run or step.get("id") == "ci_artifact_fallback"):
