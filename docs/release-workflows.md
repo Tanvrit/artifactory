@@ -161,7 +161,18 @@ retains exactly its signed APK/AAB and their two SHA-256 sidecars for three days
 the Actions artifact `android-ci-<product>-<version>-<run_id>-<run_attempt>`. Public
 callers fail this opt-in rather than expose the verification files. Signing keys,
 Firebase JSON, logs and workspace directories are never selected. This does not
-enable Play, GitHub Release, R2 or manifest publication and is not a Play receipt.
+enable Play, public GitHub Release, R2 or manifest publication and is not a Play receipt.
+If Actions artifact storage rejects the upload, the workflow uses its ephemeral
+`github.token` to create a **draft** Release in the same private calling repository,
+tagged `ci-android-<run_id>-<run_attempt>` and targeting the exact source SHA. Fresh
+API checks require the repository to remain private. Only the same four regular,
+checksummed files are uploaded; all four remote asset digests and sizes must match.
+Either the Actions archive or this private draft must succeed before Play can run.
+The fallback emits only release ID/tag/source and asset IDs/names/sizes/SHA-256,
+never credentials or a public download manifest. The draft is temporary and has no
+automatic expiry: after independent verification, the operator removes only that
+run's owned draft and any corresponding temporary tag. Existing callers keep the
+default opt-out behavior and require no additional credential.
 
 ## Manifest fan-out
 

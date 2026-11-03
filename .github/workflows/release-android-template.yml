@@ -406,10 +406,12 @@ jobs:
           PYTHON
 
       - name: Retain signed Android verification artifacts
+        id: ci_artifact_upload
         if: >-
           steps.guard.outputs.supported == 'true' && inputs.retain_ci_artifacts &&
           steps.signature_verify.outcome == 'success' && steps.ci_artifact_allowlist.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true
         with:
           name: android-ci-${{ inputs.product }}-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -420,6 +422,140 @@ jobs:
           if-no-files-found: error
           retention-days: 3
           compression-level: 0
+
+      # Actions storage can be exhausted independently of Release asset storage.
+      # A private same-repository draft is the only fallback; neither transport
+      # may publish these QA files publicly or bypass the signed-file allowlist.
+      - name: Retain private Android draft fallback
+        id: ci_artifact_fallback
+        if: >-
+          steps.guard.outputs.supported == 'true' && inputs.retain_ci_artifacts &&
+          steps.signature_verify.outcome == 'success' && steps.ci_artifact_allowlist.outcome == 'success' &&
+          steps.ci_artifact_upload.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_HOST: github.com
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_SOURCE_SHA: ${{ github.sha }}
+          CI_RUN_ID: ${{ github.run_id }}
+          CI_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PRODUCT: ${{ inputs.product }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set +x
+          set -euo pipefail
+          python3 - <<'PYTHON'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import sys
+
+          def refuse():
+              sys.exit('::error::Private Android draft retention failed; no store upload is permitted without a retained signed build.')
+
+          def command(arguments, payload=None, timeout=90):
+              result = subprocess.run(['gh', *arguments], input=payload, text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+              if result.returncode or len(result.stdout) > 262144:
+                  refuse()
+              return result.stdout
+
+          def api(path, payload=None):
+              arguments = ['api', path]
+              if payload is not None:
+                  arguments += ['--method', 'POST', '--input', '-']
+              return json.loads(command(arguments, None if payload is None else json.dumps(payload)))
+
+          try:
+              repository, source = os.environ['CI_REPOSITORY'], os.environ['CI_SOURCE_SHA']
+              run, attempt = os.environ['CI_RUN_ID'], os.environ['CI_RUN_ATTEMPT']
+              product, version = os.environ['PRODUCT'], os.environ['VERSION']
+              if (not os.environ.get('GH_TOKEN') or os.environ.get('GH_HOST') != 'github.com'
+                      or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository)
+                      or not re.fullmatch(r'[0-9a-f]{40}', source)
+                      or not all(re.fullmatch(r'[1-9][0-9]{0,19}', value) for value in (run, attempt))
+                      or not all(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._+-]{0,127}', value) for value in (product, version))):
+                  refuse()
+
+              def require_private():
+                  current = api(f'repos/{repository}')
+                  if current.get('private') is not True or current.get('full_name', '').lower() != repository.lower():
+                      refuse()
+
+              files, qualified = [], {}
+              for extension in ('apk', 'aab'):
+                  artifact = Path(f'{product}-{version}-android.{extension}')
+                  sidecar = Path(f'{artifact}.sha256')
+                  if any(path.is_symlink() or not path.is_file() or path.stat().st_size == 0 for path in (artifact, sidecar)):
+                      refuse()
+                  if sidecar.stat().st_size > 1024:
+                      refuse()
+                  declared = re.fullmatch(r'([A-Fa-f0-9]{64}) [ *](.+)', sidecar.read_text().strip())
+                  if declared is None or declared[2] != artifact.name:
+                      refuse()
+                  for path in (artifact, sidecar):
+                      digest = hashlib.sha256()
+                      with path.open('rb') as stream:
+                          for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                              digest.update(chunk)
+                      qualified[path.name] = {'bytes': path.stat().st_size, 'sha256': digest.hexdigest()}
+                      files.append(path.name)
+                  if qualified[artifact.name]['sha256'] != declared[1].lower():
+                      refuse()
+
+              require_private()  # Fresh API authority, rather than only event-time metadata.
+              tag = f'ci-android-{run}-{attempt}'
+              release = api(f'repos/{repository}/releases', {
+                  'tag_name': tag, 'target_commitish': source, 'name': tag,
+                  'body': 'Private signed Android CI qualification files. Temporary operator-owned draft.',
+                  'draft': True, 'prerelease': True, 'generate_release_notes': False, 'make_latest': 'false',
+              })
+              release_id = release.get('id')
+              if (type(release_id) is not int or release_id <= 0 or release.get('draft') is not True
+                      or release.get('tag_name') != tag or release.get('target_commitish') != source
+                      or release.get('assets') != []):
+                  refuse()
+              require_private()
+              command(['release', 'upload', tag, '--repo', repository, '--', *files], timeout=240)
+              stored = api(f'repos/{repository}/releases/{release_id}')
+              assets = stored.get('assets', [])
+              if (stored.get('id') != release_id or stored.get('draft') is not True or stored.get('tag_name') != tag
+                      or stored.get('target_commitish') != source or len(assets) != 4
+                      or {asset.get('name') for asset in assets} != set(files)):
+                  refuse()
+              receipt = []
+              for asset in assets:
+                  expected = qualified[asset['name']]
+                  if (type(asset.get('id')) is not int or asset['id'] <= 0
+                          or asset.get('state') != 'uploaded' or asset.get('size') != expected['bytes']
+                          or asset.get('digest') != 'sha256:' + expected['sha256']):
+                      refuse()
+                  receipt.append({'id': asset['id'], 'name': asset['name'], **expected})
+              require_private()
+              print(json.dumps({'private_ci_draft': {'repository': repository, 'release_id': release_id,
+                  'tag': tag, 'source_sha': source, 'draft': True, 'assets': receipt}}, sort_keys=True))
+              with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+                  output.write(f'release_id={release_id}\nrelease_tag={tag}\nsource_sha={source}\n')
+          except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+              refuse()
+          PYTHON
+
+      - name: Require private Android CI retention
+        if: steps.guard.outputs.supported == 'true' && inputs.retain_ci_artifacts
+        shell: bash
+        env:
+          ARCHIVE_OUTCOME: ${{ steps.ci_artifact_upload.outcome }}
+          DRAFT_OUTCOME: ${{ steps.ci_artifact_fallback.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$ARCHIVE_OUTCOME" != success ] && [ "$DRAFT_OUTCOME" != success ]; then
+            echo '::error::The signed Android CI build was not retained; refusing store upload.'
+            exit 1
+          fi
 
       # ── Deliverable honesty gate (2026-08-13) ─────────────────────────────
       # The upload below used to stack three swallows: an

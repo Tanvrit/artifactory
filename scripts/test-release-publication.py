@@ -26,11 +26,13 @@ PUBLIC = {
 PLAY = "Upload to Google Play"
 PLAY_PREFLIGHT = "Validate explicit Play upload prerequisites"
 CI_RETENTION = "Retain signed Android verification artifacts"
+CI_FALLBACK = "Retain private Android draft fallback"
+CI_REQUIRED = "Require private Android CI retention"
 CORE = {"Build APK + AAB", "Verify APK + AAB release signatures", "Rename + checksum artifacts"}
 
 
 def enabled(condition, *, publication, play=False, supported=True, credentials=True,
-            retained=False, signature=True, allowlist=True):
+            retained=False, signature=True, allowlist=True, archive=False):
     """Evaluate the boolean subset used by publication guards, with all calls forbidden."""
     values = {
         "inputs.publish_artifacts": publication,
@@ -39,6 +41,7 @@ def enabled(condition, *, publication, play=False, supported=True, credentials=T
         "steps.guard.outputs.supported": str(supported).lower(),
         "steps.signature_verify.outcome": "success" if signature else "failure",
         "steps.ci_artifact_allowlist.outcome": "success" if allowlist else "failure",
+        "steps.ci_artifact_upload.outcome": "success" if archive else "failure",
         "env.PLAY_SA_PRESENT": str(credentials).lower(),
         "env.ARTIFACTS_TOKEN_PRESENT": str(credentials).lower(),
     }
@@ -86,7 +89,8 @@ class AndroidPublicationTest(unittest.TestCase):
             self.assertTrue(enabled(step["if"], publication=False, retained=True))
             self.assertFalse(enabled(step["if"], publication=False, retained=True, supported=False))
             self.assertFalse(enabled(step["if"], publication=False, retained=True, signature=False))
-            self.assertNotIn("continue-on-error", step)
+        self.assertNotIn("continue-on-error", verify)
+        self.assertEqual("true", upload["continue-on-error"])
         self.assertFalse(enabled(upload["if"], publication=False, retained=True, allowlist=False))
         for name in PUBLIC | {PLAY, PLAY_PREFLIGHT}:
             self.assertFalse(enabled(self.steps[name]["if"], publication=False, retained=True), name)
@@ -111,6 +115,126 @@ class AndroidPublicationTest(unittest.TestCase):
         self.assertLess(names.index("Verify APK + AAB release signatures"), names.index("Verify private CI artifact allowlist"))
         self.assertLess(names.index("Rename + checksum artifacts"), names.index("Verify private CI artifact allowlist"))
         self.assertLess(names.index("Verify private CI artifact allowlist"), names.index("Retain signed Android verification artifacts"))
+
+    def test_draft_fallback_only_follows_failed_opt_in_archive_and_cannot_bypass_retention(self):
+        fallback, required = self.steps[CI_FALLBACK], self.steps[CI_REQUIRED]
+        self.assertEqual("${{ github.token }}", fallback["env"]["GH_TOKEN"])
+        self.assertEqual("github.com", fallback["env"]["GH_HOST"])
+        self.assertNotIn("secrets.", json.dumps(fallback))
+        self.assertNotIn("continue-on-error", fallback)
+        self.assertNotIn("continue-on-error", required)
+        self.assertFalse(enabled(fallback["if"], publication=True))
+        self.assertTrue(enabled(fallback["if"], publication=False, retained=True))
+        for values in ({"archive": True}, {"allowlist": False}, {"signature": False}, {"supported": False}):
+            self.assertFalse(enabled(fallback["if"], publication=False, retained=True, **values))
+        names = list(self.steps)
+        self.assertLess(names.index(CI_RETENTION), names.index(CI_FALLBACK))
+        self.assertLess(names.index(CI_FALLBACK), names.index(CI_REQUIRED))
+        self.assertLess(names.index(CI_REQUIRED), names.index(PLAY))
+        for archive, draft, expected in (("success", "skipped", 0), ("failure", "success", 0),
+                                          ("failure", "failure", 1), ("failure", "skipped", 1),
+                                          ("skipped", "skipped", 1)):
+            result = subprocess.run(["bash", "-c", required["run"]], capture_output=True, text=True,
+                                    env={"PATH": os.environ["PATH"], "ARCHIVE_OUTCOME": archive, "DRAFT_OUTCOME": draft})
+            self.assertEqual(expected, result.returncode)
+
+    def invoke_draft_fallback(self, scenario="success", *, corrupt=False, symlink=False):
+        with tempfile.TemporaryDirectory(prefix="synthetic-private-draft-") as directory:
+            root = Path(directory)
+            names = []
+            for extension in ("apk", "aab"):
+                artifact = root / f"fixture-1.0.0-android.{extension}"
+                artifact.write_bytes(b"synthetic previously verified signed payload")
+                sidecar = Path(str(artifact) + ".sha256")
+                sidecar.write_text(hashlib.sha256(artifact.read_bytes()).hexdigest() + "  " + artifact.name + "\n")
+                names.extend((artifact.name, sidecar.name))
+            if corrupt:
+                (root / names[1]).write_text("0" * 64 + "  " + names[0] + "\n")
+            if symlink:
+                (root / names[1]).rename(root / "unrelated-private-canary")
+                (root / names[1]).symlink_to(root / "unrelated-private-canary")
+            mock = root / "gh"
+            mock.write_text(r'''#!/usr/bin/env python3
+import hashlib,json,os,sys
+from pathlib import Path
+args=sys.argv[1:]
+scenario=os.environ['SCENARIO']
+source='a'*40
+tag='ci-android-12345-1'
+names=['fixture-1.0.0-android.'+extension for extension in ('apk','apk.sha256','aab','aab.sha256')]
+with open('gh-calls.jsonl','a') as log: log.write(json.dumps(args)+'\n')
+if args==['api','repos/Fixture/app']:
+    calls=Path('gh-calls.jsonl').read_text().count('repos/Fixture/app"')
+    print(json.dumps({'private':scenario!='public' and not(scenario=='public_after_create' and calls>=2),
+                      'full_name':'Other/app' if scenario=='wrong_repo' else 'Fixture/app'}))
+elif args==['api','repos/Fixture/app/releases','--method','POST','--input','-']:
+    body=json.load(sys.stdin)
+    assert body['draft'] is True and body['target_commitish']==source and body['tag_name']==tag
+    assert body['generate_release_notes'] is False and body['make_latest']=='false'
+    if scenario=='existing_release': sys.exit(1)
+    print(json.dumps({'id':42,'draft':True,'tag_name':tag,'target_commitish':source,'assets':[]}))
+elif args==['release','upload',tag,'--repo','Fixture/app','--',*names]:
+    if scenario=='upload_failure': sys.exit(1)
+    Path('uploaded').write_text('true')
+elif args==['api','repos/Fixture/app/releases/42']:
+    assert Path('uploaded').exists()
+    assets=[{'id':i+1,'name':name,'state':'uploaded','size':Path(name).stat().st_size,
+             'digest':'sha256:'+hashlib.sha256(Path(name).read_bytes()).hexdigest()} for i,name in enumerate(names)]
+    if scenario=='extra_asset': assets.append(dict(assets[0],id=9,name='unrelated-file'))
+    if scenario=='wrong_digest': assets[0]['digest']='sha256:'+'0'*64
+    if scenario=='missing_digest': del assets[0]['digest']
+    if scenario=='wrong_size': assets[0]['size']+=1
+    print(json.dumps({'id':42,'draft':scenario!='published','tag_name':tag,
+                      'target_commitish':'b'*40 if scenario=='wrong_source' else source,'assets':assets}))
+else:
+    sys.exit(1)
+''')
+            mock.chmod(0o700)
+            output = root / "output"
+            env = {"PATH": str(root) + ":" + os.environ["PATH"], "CI_REPOSITORY": "Fixture/app",
+                   "CI_SOURCE_SHA": "a" * 40, "CI_RUN_ID": "12345", "CI_RUN_ATTEMPT": "1",
+                   "PRODUCT": "fixture", "VERSION": "1.0.0", "GH_TOKEN": "SYNTHETIC private token canary", "GH_HOST": "github.com",
+                   "GITHUB_OUTPUT": str(output), "SCENARIO": scenario}
+            if scenario == "missing_token":
+                env["GH_TOKEN"] = ""
+            elif scenario == "foreign_host":
+                env["GH_HOST"] = "foreign.invalid"
+            result = subprocess.run(["bash", "-x", "-c", self.steps[CI_FALLBACK]["run"]], cwd=root,
+                                    env=env, capture_output=True, text=True, timeout=30)
+            self.assertNotIn("SYNTHETIC private token canary", result.stdout + result.stderr)
+            calls = (root / "gh-calls.jsonl").read_text() if (root / "gh-calls.jsonl").exists() else ""
+            return result, output.read_text() if output.exists() else "", calls
+
+    def test_private_draft_retains_exact_four_assets_at_source_with_remote_digests(self):
+        result, output, calls = self.invoke_draft_fallback()
+        self.assertEqual(0, result.returncode, result.stderr)
+        receipt = json.loads(result.stdout)["private_ci_draft"]
+        self.assertEqual("Fixture/app", receipt["repository"])
+        self.assertEqual("ci-android-12345-1", receipt["tag"])
+        self.assertEqual("a" * 40, receipt["source_sha"])
+        self.assertIs(True, receipt["draft"])
+        self.assertEqual(4, len(receipt["assets"]))
+        self.assertEqual("release_id=42\nrelease_tag=ci-android-12345-1\nsource_sha=" + "a" * 40 + "\n", output)
+        self.assertEqual(3, calls.count('["api", "repos/Fixture/app"]'))
+
+    def test_draft_refuses_public_foreign_or_changed_scope_and_failed_or_wrong_uploads(self):
+        for scenario in ("public", "wrong_repo", "existing_release", "public_after_create", "upload_failure",
+                         "extra_asset", "wrong_digest", "missing_digest", "wrong_size", "published", "wrong_source",
+                         "missing_token", "foreign_host"):
+            with self.subTest(scenario=scenario):
+                result, output, calls = self.invoke_draft_fallback(scenario)
+                self.assertNotEqual(0, result.returncode)
+                self.assertEqual("", output)
+                self.assertIn("Private Android draft retention failed", result.stderr)
+                if scenario in ("public", "wrong_repo", "existing_release", "public_after_create"):
+                    self.assertNotIn('["release", "upload"', calls)
+
+    def test_draft_revalidates_checksum_and_symlink_guards_before_any_api_call(self):
+        for values in ({"corrupt": True}, {"symlink": True}):
+            result, output, calls = self.invoke_draft_fallback(**values)
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual("", output)
+            self.assertEqual("", calls)
 
     def invoke_retention(self, *, private="true", missing=None, symlink=None, corrupt=None,
                          product="fixture", version="1.0.0"):
@@ -356,7 +480,7 @@ class AndroidPublicationTest(unittest.TestCase):
             self.assertTrue(adjacent.exists())
 
     def test_unsupported_target_never_builds_or_publishes(self):
-        for name in CORE | PUBLIC | {PLAY, PLAY_PREFLIGHT, CI_RETENTION, "Verify private CI artifact allowlist"}:
+        for name in CORE | PUBLIC | {PLAY, PLAY_PREFLIGHT, CI_RETENTION, CI_FALLBACK, CI_REQUIRED, "Verify private CI artifact allowlist"}:
             self.assertFalse(enabled(self.steps[name]["if"], publication=True, play=True,
                                      retained=True, supported=False), name)
 
@@ -367,9 +491,9 @@ class AndroidPublicationTest(unittest.TestCase):
             run = step.get("run", "")
             if (re.search(r"upload|publish|mirror|dispatch", name, re.I)
                     or re.search(r"softprops/action-gh-release|r0adkll/upload-google-play|peter-evans/repository-dispatch|actions/upload-artifact", action)
-                    or "--upload-file" in run or "gh release" in run):
+                    or "--upload-file" in run or "gh release" in run or step.get("id") == "ci_artifact_fallback"):
                 found.add(name)
-        self.assertEqual(found, PUBLIC | {PLAY, PLAY_PREFLIGHT, CI_RETENTION})
+        self.assertEqual(found, PUBLIC | {PLAY, PLAY_PREFLIGHT, CI_RETENTION, CI_FALLBACK})
 
     def test_credential_cleanup_is_not_disabled_by_validation(self):
         cleanup = self.steps["Remove temporary Firebase configuration"]
