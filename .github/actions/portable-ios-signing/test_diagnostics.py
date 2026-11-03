@@ -46,6 +46,8 @@ class DiagnosticTest(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertEqual(values, {"stage": "completed", "cleanup-stage": "completed"})
             self.assertNotIn(CANARY, stdout)
+            self.assertNotIn("::error title=Portable signing stage::", stdout)
+            self.assertNotIn("::error title=Portable signing cleanup stage::", stdout)
 
     def test_each_tool_failure_keeps_nonzero_and_fixed_boundary_after_cleanup(self):
         cases = {
@@ -67,6 +69,8 @@ class DiagnosticTest(unittest.TestCase):
                 expected_output = "::error::Portable iOS signing failed; diagnostics withheld.\n"
                 if failure == "Verify exported code signature":
                     expected_output += "::error title=Portable signing IPA diagnostic::ipa-strict-signature\n"
+                expected_output += "::error title=Portable signing stage::" + expected + "\n"
+                expected_output += "::error title=Portable signing cleanup stage::completed\n"
                 self.assertEqual(stdout, expected_output)
 
     def test_primary_and_cleanup_failure_are_independent_and_all_finally_blocks_run(self):
@@ -94,6 +98,8 @@ class DiagnosticTest(unittest.TestCase):
             self.assertEqual(result, 1)
             self.assertEqual(values, {"stage": "cleanup", "cleanup-stage": "search-list"})
             self.assertNotIn("SigningError", stdout)
+            self.assertIn("::error title=Portable signing stage::cleanup\n", stdout)
+            self.assertIn("::error title=Portable signing cleanup stage::search-list\n", stdout)
 
     def test_private_directory_cleanup_failure_has_a_separate_fixed_label(self):
         class Directory:
@@ -137,8 +143,52 @@ class DiagnosticTest(unittest.TestCase):
                         patch.object(sign.signal, "signal", side_effect=lambda key, value: handlers.update({key: value})), \
                         patch.object(sign, "perform", side_effect=fail), redirect_stdout(stdout):
                     self.assertEqual(sign.main(), 1)
-                self.assertEqual(stdout.getvalue(), "::error::Portable iOS signing failed; diagnostics withheld.\n")
+                self.assertEqual(stdout.getvalue(), "::error::Portable iOS signing failed; diagnostics withheld.\n"
+                                 "::error title=Portable signing stage::archive\n"
+                                 "::error title=Portable signing cleanup stage::completed\n")
                 self.assertEqual(output.read_text(), "stage=archive\ncleanup-stage=completed\n")
+
+    def test_untrusted_failure_labels_never_cross_console_boundary(self):
+        class UntrustedString(str):
+            def __str__(self):
+                raise RuntimeError(CANARY)
+
+            def __eq__(self, other):
+                raise RuntimeError(CANARY)
+
+        candidates = [(CANARY + "\n::error::" + CANARY, CANARY),
+                      (UntrustedString("archive"), UntrustedString("completed")),
+                      (None, object()), ("archive", CANARY)]
+        for values in candidates:
+            with self.subTest(types=tuple(type(value).__name__ for value in values)):
+                stdout = io.StringIO()
+                with patch.object(Diagnostics, "values", return_value=values), redirect_stdout(stdout):
+                    sign.report_failure_stages(Diagnostics())
+                expected = "archive" if type(values[0]) is str and values[0] == "archive" else "unknown"
+                self.assertEqual(stdout.getvalue(), "::error title=Portable signing stage::" + expected + "\n"
+                                 "::error title=Portable signing cleanup stage::unknown\n")
+                self.assertNotIn(CANARY, stdout.getvalue())
+
+    def test_failure_label_lookup_and_console_errors_do_not_replace_failure_exit(self):
+        stdout = io.StringIO()
+        with patch.object(Diagnostics, "values", side_effect=RuntimeError(CANARY)), redirect_stdout(stdout):
+            sign.report_failure_stages(Diagnostics())
+        self.assertEqual(stdout.getvalue(), "::error title=Portable signing stage::unknown\n"
+                         "::error title=Portable signing cleanup stage::unknown\n")
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            original_print = print
+
+            def fail_stage_print(value, *args, **kwargs):
+                if value.startswith("::error title=Portable signing stage::"):
+                    raise BrokenPipeError(CANARY)
+                original_print(value, *args, **kwargs)
+
+            with patch("builtins.print", side_effect=fail_stage_print):
+                result, values, output = self.run_main(root, "Archive application")
+            self.assertEqual(result, 1)
+            self.assertEqual(values, {"stage": "archive", "cleanup-stage": "completed"})
+            self.assertNotIn(CANARY, output)
 
     def test_only_enum_values_can_cross_output_transport(self):
         diagnostics = Diagnostics()
@@ -292,7 +342,9 @@ class DiagnosticTest(unittest.TestCase):
                 self.assertEqual(sign.main(), 1)
             self.assertEqual(output.read_text(), "stage=configuration\ncleanup-stage=not-started\n")
             self.assertEqual(list(root.iterdir()), [output])
-            self.assertEqual(stdout.getvalue(), "::error::Portable iOS signing failed; diagnostics withheld.\n")
+            self.assertEqual(stdout.getvalue(), "::error::Portable iOS signing failed; diagnostics withheld.\n"
+                             "::error title=Portable signing stage::configuration\n"
+                             "::error title=Portable signing cleanup stage::not-started\n")
 
     def test_only_negative_fixture_relaxes_failure_and_asserts_fixed_outputs(self):
         workflow = (ROOT / ".github/workflows/selftest-portable-ios-signing.yml").read_text()

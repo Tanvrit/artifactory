@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
+from diagnostics import Stage
 import provision
 from provision import ApiFailure, ProvisioningApiError
 from test_sign import environment, sign
@@ -58,15 +59,22 @@ class ApiDiagnosticsTest(unittest.TestCase):
                 output = root / "output"; output.touch(mode=0o600)
                 env["GITHUB_OUTPUT"] = str(output)
                 stdout = io.StringIO()
+
+                def fail(_env, _private, diagnostics):
+                    diagnostics.begin(Stage.CAPABILITY_LOOKUP)
+                    raise ProvisioningApiError(CANARY, category)
+
                 with patch.object(sign.os, "environ", env), patch.object(sign.signal, "signal"), \
                         patch.object(sign.Path, "home", return_value=root / "home"), \
-                        patch.object(sign, "perform", side_effect=ProvisioningApiError(CANARY, category)), \
+                        patch.object(sign, "perform", side_effect=fail), \
                         redirect_stdout(stdout):
                     self.assertEqual(sign.main(), 1)
                 self.assertEqual(stdout.getvalue(), "::error::Portable iOS signing failed; diagnostics withheld.\n" +
-                                 "::error title=Portable signing API diagnostic::" + category.value + "\n")
+                                 "::error title=Portable signing API diagnostic::" + category.value + "\n" +
+                                 "::error title=Portable signing stage::capability-lookup\n" +
+                                 "::error title=Portable signing cleanup stage::completed\n")
                 self.assertNotIn(CANARY, stdout.getvalue())
-                self.assertIn("cleanup-stage=completed", output.read_text())
+                self.assertEqual(output.read_text(), "stage=capability-lookup\ncleanup-stage=completed\n")
                 self.assertFalse(list(root.glob("portable-ios-*")))
 
     def test_arbitrary_category_cannot_cross_annotation_boundary(self):

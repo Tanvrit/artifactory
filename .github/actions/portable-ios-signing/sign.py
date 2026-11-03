@@ -385,6 +385,24 @@ def private_directory(diagnostics, runner_temp):
         diagnostics.cleaned()
 
 
+def report_failure_stages(diagnostics):
+    """Best effort fixed labels only; never render an exception or API payload."""
+    stage, cleanup = Stage.UNKNOWN.value, CleanupStage.UNKNOWN.value
+    try:
+        candidate_stage, candidate_cleanup = diagnostics.values()
+        if type(candidate_stage) is str and candidate_stage in {label.value for label in Stage}:
+            stage = candidate_stage
+        if type(candidate_cleanup) is str and candidate_cleanup in {label.value for label in CleanupStage}:
+            cleanup = candidate_cleanup
+    except Exception:
+        pass
+    try:
+        print("::error title=Portable signing stage::" + stage)
+        print("::error title=Portable signing cleanup stage::" + cleanup)
+    except Exception:
+        pass
+
+
 def main():
     diagnostics = Diagnostics()
     def interrupted(_signal, _frame):
@@ -411,6 +429,7 @@ def main():
             print("::error title=Portable signing Xcode diagnostic::" + error.kind.value)
         if type(error) is IpaFailure and type(error.kind) is IpaFailureKind:
             print("::error title=Portable signing IPA diagnostic::" + error.kind.value)
+        report_failure_stages(diagnostics)
         return 1
     finally:
         diagnostics.publish(os.environ)
