@@ -16,6 +16,7 @@ if [ -z "$brew_bin" ]; then
   exit 1
 fi
 export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
+brew_updated=false
 for formula in bash coreutils findutils grep jq openssl@3; do
   if ! "$brew_bin" list --versions "$formula" >/dev/null 2>&1; then
     # Several runner registrations can share one Mac and Homebrew prefix.
@@ -27,6 +28,25 @@ for formula in bash coreutils findutils grep jq openssl@3; do
         cat "$log_file"
         ready=true
         break
+      fi
+      # An older Brew can fetch a newer ncurses formula whose DSL it cannot parse.
+      # Refresh Brew/tap metadata once for this exact failure, without upgrading packages.
+      if [ "$brew_updated" = false ] &&
+          grep -Eq 'ncurses: undefined method [[:punct:]]compatibility_version[[:punct:]] for #<Class:' "$log_file"; then
+        cat "$log_file"
+        brew_updated=true
+        echo "Updating Homebrew once to recognize ncurses compatibility_version"
+        if ! "$brew_bin" update > "$log_file" 2>&1; then
+          cat "$log_file"
+          rm -f "$log_file"
+          exit 1
+        fi
+        cat "$log_file"
+        if "$brew_bin" install "$formula" > "$log_file" 2>&1; then
+          cat "$log_file"
+          ready=true
+          break
+        fi
       fi
       if "$brew_bin" list --versions "$formula" >/dev/null 2>&1; then
         ready=true
