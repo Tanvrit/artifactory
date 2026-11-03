@@ -662,7 +662,7 @@ jobs:
       - name: Portable certificate/API-key signing
         id: portable-signing
         if: steps.guard.outputs.supported == 'true' && inputs.portable_signing
-        uses: tanvrit/artifactory/.github/actions/portable-ios-signing@7a1abc133d2742e508f9e29f8675b0abbbec2c38
+        uses: tanvrit/artifactory/.github/actions/portable-ios-signing@f53413912b88eccd66ac4da3de8eb1b72946c51d
         with:
           project: ${{ inputs.xcodeproj_path }}
           scheme: ${{ inputs.scheme }}
