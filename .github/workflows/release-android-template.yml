@@ -70,6 +70,11 @@ on:
         type: string
         required: false
         default: 'internal'
+      firebase_privacy_ready:
+        description: 'Optional qualified native telemetry readiness; only a build input, never a consent grant.'
+        type: boolean
+        required: false
+        default: false
       firebase_messaging:
         description: 'Opt-in to per-app GOOGLE_SERVICES_JSON validation and temporary build injection.'
         type: boolean
@@ -141,6 +146,8 @@ on:
 
 jobs:
   build-android:
+    env:
+      TANVRIT_FIREBASE_NATIVE_PRIVACY_READY: ${{ inputs.firebase_privacy_ready }}
     name: Android (signed APK + AAB)
     runs-on:
       group: tanvrit

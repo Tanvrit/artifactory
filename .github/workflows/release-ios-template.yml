@@ -139,6 +139,11 @@ on:
         type: boolean
         required: false
         default: false
+      firebase_privacy_ready:
+        description: 'Optional qualified native telemetry readiness; only a build input, never a consent grant.'
+        type: boolean
+        required: false
+        default: false
       firebase_messaging:
         description: 'Opt-in to a validated per-app Firebase plist supplied by GOOGLE_SERVICE_INFO_PLIST; removed after the build.'
         type: boolean
@@ -218,6 +223,8 @@ on:
 
 jobs:
   build-ios:
+    env:
+      TANVRIT_FIREBASE_NATIVE_PRIVACY_READY: ${{ inputs.firebase_privacy_ready }}
     name: iOS (.ipa)
     runs-on:
       group: tanvrit

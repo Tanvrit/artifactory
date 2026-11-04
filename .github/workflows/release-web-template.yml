@@ -32,6 +32,16 @@ on:
       product:
         type: string
         required: true
+      firebase_web_config_json:
+        description: 'Optional public Firebase client JSON; passed only through environment to the caller validator.'
+        type: string
+        required: false
+        default: ''
+      firebase_web_privacy_ready:
+        description: 'Explicit per-host privacy qualification; remains false until real vendor checks pass.'
+        type: boolean
+        required: false
+        default: false
       gradle_task:
         description: 'Gradle task that produces the Wasm/JS web bundle (default: wasmJsBrowserDistribution)'
         type: string
@@ -215,6 +225,20 @@ jobs:
         if: steps.guard.outputs.supported == 'true'
         with:
           cache-disabled: true
+
+      - name: Prepare optional public Firebase browser configuration
+        if: steps.guard.outputs.supported == 'true'
+        env:
+          TANVRIT_FIREBASE_WEB_CONFIG_JSON: ${{ inputs.firebase_web_config_json }}
+          TANVRIT_FIREBASE_WEB_PRIVACY_READY: ${{ inputs.firebase_web_privacy_ready }}
+        run: |
+          if [ -f scripts/prepare-telemetry-web.mjs ] && [ ! -L scripts/prepare-telemetry-web.mjs ]; then
+            # Run even with denied/empty inputs so a persistent workspace cannot retain an old grant.
+            node scripts/prepare-telemetry-web.mjs
+          elif [ -n "$TANVRIT_FIREBASE_WEB_CONFIG_JSON" ] || [ "$TANVRIT_FIREBASE_WEB_PRIVACY_READY" = true ]; then
+            echo "::error::Opted-in Firebase browser configuration requires the caller validator."
+            exit 1
+          fi
 
       - name: Build Wasm/JS bundle
         if: steps.guard.outputs.supported == 'true'
