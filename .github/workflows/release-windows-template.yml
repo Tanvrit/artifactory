@@ -32,6 +32,11 @@ on:
       version:
         type: string
         required: true
+      telemetry_api_relay_enabled:
+        description: 'Qualified first-party analytics relay build input; never a consent grant or diagnostic credential substitute.'
+        type: boolean
+        required: false
+        default: false
       gradle_module:
         type: string
         required: true
@@ -108,6 +113,8 @@ jobs:
     # default (and, if ever back on self-hosted, holds the fleet's single
     # Windows runner that whole time, blocking every other repo behind it).
     timeout-minutes: 90
+    env:
+      TANVRIT_TELEMETRY_API_RELAY_ENABLED: ${{ inputs.telemetry_api_relay_enabled }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

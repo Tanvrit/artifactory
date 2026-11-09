@@ -139,6 +139,14 @@ jobs:
 Inputs are passed as plain strings; secrets are inherited via `secrets: inherit`
 (no per-caller secret list — secrets live at the org or per-product repo level).
 
+All five native templates accept `telemetry_api_relay_enabled: false` by default.
+A qualified caller may pass its explicit relay readiness variable; the template
+forwards this boolean as `TANVRIT_TELEMETRY_API_RELAY_ENABLED` to Gradle, Xcode and
+packaging steps. Existing callers retain disabled relay defaults. Consumers must
+keep app-specific explicit false overrides, current session authority and per-user
+consent gates; this build input supplies neither credentials nor consent and does
+not enable diagnostic logging.
+
 The iOS template additionally supports explicit certificate/API-key signing with
 app-specific provisioning. Its defaults preserve existing runner/Match callers.
 See [portable iOS signing](portable-ios-signing.md) for required repository secrets,

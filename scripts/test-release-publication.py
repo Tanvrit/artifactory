@@ -770,5 +770,25 @@ else:
                 self.assertFalse(cache.exists())
 
 
+
+class NativeTelemetryRelayInputTest(unittest.TestCase):
+    def test_optional_boolean_is_off_for_every_existing_native_caller(self):
+        for platform in ("android", "ios", "macos", "linux", "windows"):
+            path = ROOT / (".github/workflows/release-" + platform + "-template.yml")
+            workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+            flag = workflow["on"]["workflow_call"]["inputs"]["telemetry_api_relay_enabled"]
+            self.assertEqual({"type": "boolean", "required": "false", "default": "false"},
+                             {key: flag[key] for key in ("type", "required", "default")}, platform)
+            jobs = workflow["jobs"]
+            self.assertEqual(1, len(jobs), platform)
+            job = next(iter(jobs.values()))
+            self.assertEqual("${{ inputs.telemetry_api_relay_enabled }}",
+                             job["env"]["TANVRIT_TELEMETRY_API_RELAY_ENABLED"], platform)
+            for step in job["steps"]:
+                self.assertNotIn("TANVRIT_TELEMETRY_API_RELAY_ENABLED", step.get("env", {}), platform)
+                # Build configuration must not change publication, signing,
+                # credentials, permission checks or consent handling.
+                self.assertNotIn("inputs.telemetry_api_relay_enabled", str(step), platform)
+
 if __name__ == "__main__":
     unittest.main()

@@ -61,6 +61,11 @@ on:
         description: 'Version string (e.g. 1.2.0)'
         type: string
         required: true
+      telemetry_api_relay_enabled:
+        description: 'Qualified first-party analytics relay build input; never a consent grant or diagnostic credential substitute.'
+        type: boolean
+        required: false
+        default: false
       gradle_module:
         description: 'Gradle module that owns the Compose Desktop config'
         type: string
@@ -172,6 +177,8 @@ jobs:
     # `notarytool ... --wait`, an Apple-side queue that can legitimately run long, so
     # 120 leaves room for a slow notarization without licensing a 6h hang.
     timeout-minutes: 120
+    env:
+      TANVRIT_TELEMETRY_API_RELAY_ENABLED: ${{ inputs.telemetry_api_relay_enabled }}
     steps:
       - name: Prepare macOS CI tools
         if: runner.os == 'macOS'

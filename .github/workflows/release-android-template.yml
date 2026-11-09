@@ -49,6 +49,11 @@ on:
       version:
         type: string
         required: true
+      telemetry_api_relay_enabled:
+        description: 'Qualified first-party analytics relay build input; never a consent grant or diagnostic credential substitute.'
+        type: boolean
+        required: false
+        default: false
       gradle_module:
         type: string
         required: true
@@ -147,6 +152,7 @@ on:
 jobs:
   build-android:
     env:
+      TANVRIT_TELEMETRY_API_RELAY_ENABLED: ${{ inputs.telemetry_api_relay_enabled }}
       TANVRIT_FIREBASE_NATIVE_PRIVACY_READY: ${{ inputs.firebase_privacy_ready }}
     name: Android (signed APK + AAB)
     runs-on:

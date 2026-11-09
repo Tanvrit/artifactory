@@ -35,6 +35,11 @@ on:
       version:
         type: string
         required: true
+      telemetry_api_relay_enabled:
+        description: 'Qualified first-party analytics relay build input; never a consent grant or diagnostic credential substitute.'
+        type: boolean
+        required: false
+        default: false
       gradle_module:
         type: string
         required: true
@@ -83,6 +88,8 @@ jobs:
     # alone. What was missing is a ceiling — without `timeout-minutes` a wedged job
     # inherits GitHub's 6h default and holds a scarce shared runner for that whole time.
     timeout-minutes: 90
+    env:
+      TANVRIT_TELEMETRY_API_RELAY_ENABLED: ${{ inputs.telemetry_api_relay_enabled }}
     steps:
       # Per-runner, persistent GRADLE_USER_HOME (2026-09-24). Concurrent Gradle
       # builds sharing one home corrupt each other's artifact-transform cache
