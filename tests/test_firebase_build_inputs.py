@@ -18,6 +18,35 @@ def browser_step():
 
 
 class FirebaseBuildInputsTest(unittest.TestCase):
+    def test_firebase_hosting_landing_readiness_is_optional_denied_and_build_only(self):
+        text = (ROOT / '.github/workflows/release-firebase-template.yml').read_text()
+        definition = text.split('      firebase_web_privacy_ready:\n', 1)[1].split('      assemble_script:', 1)[0]
+        self.assertIn('type: boolean', definition)
+        self.assertIn('required: false', definition)
+        self.assertIn('default: false', definition)
+        step = text.split('      - name: Build landing site\n', 1)[1].split('      - name:', 1)[0]
+        binding = 'TANVRIT_FIREBASE_WEB_PRIVACY_READY: ${{ inputs.firebase_web_privacy_ready }}'
+        self.assertEqual(1, text.count(binding))
+        self.assertIn(binding, step)
+        self.assertNotIn('secrets.', step)
+        script = '\n'.join(line[10:] for line in step.split('        run: |\n', 1)[1].splitlines())
+        script = script.replace('${{ inputs.landing_build_dir }}', 'web')
+        for ready in ('false', 'true'):
+            with self.subTest(ready=ready), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                (root / 'web').mkdir()
+                (root / 'bin').mkdir()
+                npm = root / 'bin/npm'
+                npm.write_text('#!/bin/sh\nprintf "%s:%s\\n" "$*" "$TANVRIT_FIREBASE_WEB_PRIVACY_READY" >> ../npm-calls\n')
+                npm.chmod(0o700)
+                env = dict(os.environ, PATH=str(root / 'bin') + os.pathsep + os.environ['PATH'],
+                           TANVRIT_FIREBASE_WEB_PRIVACY_READY=ready)
+                result = subprocess.run(['bash', '-c', script], cwd=root, env=env,
+                                        text=True, capture_output=True, timeout=10)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual([f'ci:{ready}', f'run build:{ready}'],
+                                 (root / 'npm-calls').read_text().splitlines())
+
     def execute(self, root, config='', ready='false'):
         env = dict(os.environ, TANVRIT_FIREBASE_WEB_CONFIG_JSON=config,
                    TANVRIT_FIREBASE_WEB_PRIVACY_READY=ready)

@@ -55,6 +55,11 @@ on:
         type: string
         required: false
         default: ''
+      firebase_web_privacy_ready:
+        description: 'Explicit public landing analytics readiness; callers remain denied by default'
+        type: boolean
+        required: false
+        default: false
       assemble_script:
         description: 'Optional bash script that assembles dist/ — overrides default merge logic'
         type: string
@@ -155,6 +160,8 @@ jobs:
 
       - name: Build landing site
         if: steps.guard.outputs.supported == 'true' && inputs.landing_build_dir != ''
+        env:
+          TANVRIT_FIREBASE_WEB_PRIVACY_READY: ${{ inputs.firebase_web_privacy_ready }}
         run: |
           cd ${{ inputs.landing_build_dir }}
           npm ci
