@@ -1,6 +1,7 @@
 """Synthetic uncompressed tar payloads only: no apt, native loader or network."""
 import importlib.util
 import io
+import json
 from pathlib import Path
 import stat
 import sys
@@ -130,6 +131,21 @@ class PayloadTest(unittest.TestCase):
         for name in [PREFIX + "libXi.so.6.1.0", "usr/share/doc/data"]:
             with self.subTest(name=name), patch.object(PAYLOAD, "MAX_MEMBER_BYTES", 8):
                 self.refused(archive(entry(name, b"ninebytes")))
+
+    def test_oversized_member_reports_only_numeric_and_selected_library_diagnostics(self):
+        for name, selected in [(PREFIX + "libGL.so.1", True), ("usr/share/doc/" + CANARY, False),
+                               ("usr/share/doc/libGL.so.1", False)]:
+            with self.subTest(selected=selected), patch.object(PAYLOAD, "MAX_MEMBER_BYTES", 8):
+                with self.assertRaises(PAYLOAD.PayloadError) as caught:
+                    self.extract(archive(entry(name, b"ninebytes")))
+                self.assertEqual(caught.exception.args[0], "payload_member_size_limit")
+                expected = {"selectedLibrary": selected, "observedSize": 9, "memberCount": 1,
+                            "memberSizeLimit": 8, "memberCountLimit": PAYLOAD.MAX_MEMBERS}
+                if selected:
+                    expected["library"] = "libGL.so.1"
+                self.assertEqual(caught.exception.diagnostics, expected)
+                self.assertNotIn(CANARY, json.dumps(caught.exception.diagnostics))
+                self.assertFalse(any(self.destination.iterdir()), "Rejected payload wrote a partial library")
 
     def test_stream_byte_limit_includes_unselected_payloads(self):
         raw = archive(entry("usr/share/doc/data", b"not an extracted library"))

@@ -188,6 +188,12 @@ class PrepareJobLocalTest(unittest.TestCase):
             PREPARE.extract_verified_archives(self.runner, archives, [record], library)
         extract.assert_called_once()
         self.assertIn("--field", self.runner.run.call_args.args[0])
+        payload_error = PREPARE.PayloadError("payload_member_size_limit", {"observedSize": 99})
+        with patch.object(PREPARE, "extract_deb", side_effect=payload_error):
+            with self.assertRaises(PREPARE.PayloadError) as error:
+                PREPARE.extract_verified_archives(self.runner, archives, [record], library)
+        self.assertEqual(error.exception.diagnostics["stage"], "data_extraction")
+        self.assertEqual(error.exception.diagnostics["package"], "libgl1")
         self.runner.run.return_value = result(stdout="Package: libgl1\nVersion: 1.0\nArchitecture: amd64\n")
         with self.assertRaisesRegex(PREPARE.PreparationError, "deb_metadata_mismatch"):
             PREPARE.extract_verified_archives(self.runner, archives, [record], library)
@@ -249,6 +255,22 @@ class PrepareJobLocalTest(unittest.TestCase):
             self.assertEqual(PREPARE.main(), 1)
         self.assertEqual(json.loads(output.getvalue())["reason"], "unexpected_preparation_failure")
         self.assertNotIn(PRIVATE, output.getvalue())
+
+    def test_payload_failure_emits_only_validated_numeric_public_diagnostics(self):
+        output = io.StringIO()
+        error = PREPARE.PayloadError("payload_member_size_limit", {
+            "stage": "data_extraction", "package": "libgl1", "selectedLibrary": False,
+            "observedSize": 100, "memberCount": 2, "memberSizeLimit": 32, "memberCountLimit": 100,
+            "library": "/private/" + PRIVATE, "raw": PRIVATE, "environment": PRIVATE,
+        })
+        with patch.object(PREPARE, "prepare", side_effect=error), contextlib.redirect_stdout(output):
+            self.assertEqual(PREPARE.main(), 1)
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["diagnostics"]["observedSize"], 100)
+        self.assertEqual(report["diagnostics"]["package"], "libgl1")
+        self.assertNotIn("library", report["diagnostics"])
+        self.assertNotIn(PRIVATE, output.getvalue())
+        self.assertNotIn("library", PREPARE.safe_diagnostics({"selectedLibrary": False, "library": "libGL.so.1"}))
 
     def full_flow(self, post_missing):
         def initialize(prefix, environment):

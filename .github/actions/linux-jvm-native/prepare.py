@@ -17,7 +17,7 @@ import sys
 import tempfile
 import time
 
-from payload import PayloadError, extract_tar_stream, finish_library_links
+from payload import LIBRARY, PayloadError, extract_tar_stream, finish_library_links
 
 PACKAGES = {"libgl1": "libGL.so.1", "libegl1": "libEGL.so.1", "libxi6": "libXi.so.6",
             "libxrender1": "libXrender.so.1", "libxtst6": "libXtst.so.6"}
@@ -323,7 +323,11 @@ def extract_verified_archives(runner, directory, records, library):
         if result.returncode or actual != {"Package": expected["name"], "Version": expected["version"], "Architecture": expected["architecture"]}:
             raise PreparationError("deb_metadata_mismatch")
         matched.add(expected["name"])
-        extract_deb(runner, archive, library, seen)
+        try:
+            extract_deb(runner, archive, library, seen)
+        except PayloadError as error:
+            error.diagnostics.update(stage="data_extraction", package=expected["name"])
+            raise
     finish_library_links(library)
 
 
@@ -392,7 +396,11 @@ def main():
     try:
         report = prepare()
     except (PreparationError, PayloadError) as error:
-        print(json.dumps({"status": "refused", "reason": str(error), "jvmTestsPassed": False}))
+        report = {"status": "refused", "reason": str(error), "jvmTestsPassed": False}
+        diagnostics = safe_diagnostics(getattr(error, "diagnostics", {}))
+        if diagnostics:
+            report["diagnostics"] = diagnostics
+        print(json.dumps(report))
         return 1
     except Exception:
         print(json.dumps({"status": "refused", "reason": "unexpected_preparation_failure", "jvmTestsPassed": False}))
@@ -401,6 +409,26 @@ def main():
         os.umask(previous)
     print(json.dumps(report, sort_keys=True))
     return 0
+
+
+def safe_diagnostics(values):
+    """Fixed public library/package labels and numeric bounds only, never raw data."""
+    result = {}
+    for key in ("observedSize", "memberCount", "memberSizeLimit", "memberCountLimit"):
+        value = values.get(key)
+        if type(value) is int and 0 <= value < 2**63:
+            result[key] = value
+    if type(values.get("selectedLibrary")) is bool:
+        result["selectedLibrary"] = values["selectedLibrary"]
+    if values.get("stage") == "data_extraction":
+        result["stage"] = "data_extraction"
+    package = values.get("package")
+    if isinstance(package, str) and re.fullmatch(r"[a-z0-9][a-z0-9+.-]{0,100}", package):
+        result["package"] = package
+    library = values.get("library")
+    if values.get("selectedLibrary") is True and isinstance(library, str) and len(library) <= 160 and LIBRARY.fullmatch(library):
+        result["library"] = library
+    return result
 
 
 if __name__ == "__main__":

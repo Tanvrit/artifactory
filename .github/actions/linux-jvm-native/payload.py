@@ -14,7 +14,9 @@ PREFIXES = {PurePosixPath("usr/lib/aarch64-linux-gnu"), PurePosixPath("lib/aarch
 
 
 class PayloadError(Exception):
-    pass
+    def __init__(self, reason, diagnostics=None):
+        super().__init__(reason)
+        self.diagnostics = diagnostics or {}
 
 
 class BoundedReader:
@@ -42,9 +44,17 @@ def extract_tar_stream(stream, destination, seen):
         with tarfile.open(fileobj=reader, mode="r|") as archive:
             for member in archive:
                 count += 1
-                if count > MAX_MEMBERS or member.size > MAX_MEMBER_BYTES:
-                    raise PayloadError("payload_member_limit")
                 name = PurePosixPath(member.name)
+                library_name = name.name if len(name.name) <= 160 and LIBRARY.fullmatch(name.name) else None
+                diagnostics = {"observedSize": member.size, "memberCount": count,
+                               "memberSizeLimit": MAX_MEMBER_BYTES, "memberCountLimit": MAX_MEMBERS,
+                               "selectedLibrary": bool(name.parent in PREFIXES and library_name)}
+                if library_name and diagnostics["selectedLibrary"]:
+                    diagnostics["library"] = library_name
+                if count > MAX_MEMBERS:
+                    raise PayloadError("payload_member_count_limit", diagnostics)
+                if member.size > MAX_MEMBER_BYTES:
+                    raise PayloadError("payload_member_size_limit", diagnostics)
                 if name.is_absolute() or ".." in name.parts or "\x00" in member.name:
                     raise PayloadError("unsafe_payload_path")
                 if member.islnk() or not (member.isdir() or member.isreg() or member.issym()):
