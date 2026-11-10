@@ -6,8 +6,8 @@ import re
 import tarfile
 
 MAX_TAR_BYTES = 256 * 1024 * 1024
-MAX_MEMBER_BYTES = 32 * 1024 * 1024
-MAX_LIBRARY_BYTES = 128 * 1024 * 1024
+MAX_MEMBER_BYTES = 192 * 1024 * 1024
+MAX_LIBRARY_BYTES = 256 * 1024 * 1024
 MAX_MEMBERS = 10000
 LIBRARY = re.compile(r"(?:lib[A-Za-z0-9_+.-]+|ld-linux-aarch64)\.so(?:\.[A-Za-z0-9_+.-]+)*")
 PREFIXES = {PurePosixPath("usr/lib/aarch64-linux-gnu"), PurePosixPath("lib/aarch64-linux-gnu")}

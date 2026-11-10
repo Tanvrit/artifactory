@@ -47,6 +47,12 @@ class PayloadTest(unittest.TestCase):
     def extract(self, raw):
         return PAYLOAD.extract_tar_stream(io.BytesIO(raw), self.destination, self.seen)
 
+    def test_measured_caps_remain_explicit_and_other_budgets_do_not_expand(self):
+        self.assertEqual(PAYLOAD.MAX_MEMBER_BYTES, 192 * 1024 * 1024)
+        self.assertEqual(PAYLOAD.MAX_LIBRARY_BYTES, 256 * 1024 * 1024)
+        self.assertEqual(PAYLOAD.MAX_TAR_BYTES, 256 * 1024 * 1024)
+        self.assertEqual(PAYLOAD.MAX_MEMBERS, 10000)
+
     def refused(self, raw, destination=None):
         with self.assertRaises(PAYLOAD.PayloadError) as caught:
             if destination is None:
@@ -167,6 +173,25 @@ class PayloadTest(unittest.TestCase):
             self.refused(archive(entry(PREFIX + "libEGL.so.1.1.0", b"new")))
         self.assertEqual((self.destination / "libGL.so.1.7.0").read_bytes(), b"four")
         self.assertFalse((self.destination / "libEGL.so.1.1.0").exists(), "Over-budget file was partially written")
+
+    def test_selected_member_exact_limit_succeeds_and_one_more_byte_refuses_before_write(self):
+        with patch.object(PAYLOAD, "MAX_MEMBER_BYTES", 4), patch.object(PAYLOAD, "MAX_LIBRARY_BYTES", 32):
+            self.assertEqual(self.extract(archive(entry(PREFIX + "libGL.so.1", b"four"))), 1)
+            with self.assertRaises(PAYLOAD.PayloadError) as caught:
+                self.extract(archive(entry(PREFIX + "libEGL.so.1", b"five!")))
+            self.assertEqual(caught.exception.args[0], "payload_member_size_limit")
+        self.assertEqual((self.destination / "libGL.so.1").read_bytes(), b"four")
+        self.assertFalse((self.destination / "libEGL.so.1").exists())
+
+    def test_aggregate_exact_limit_succeeds_and_next_stream_cannot_write_one_more_byte(self):
+        with patch.object(PAYLOAD, "MAX_MEMBER_BYTES", 4), patch.object(PAYLOAD, "MAX_LIBRARY_BYTES", 8):
+            self.assertEqual(self.extract(archive(entry(PREFIX + "libGL.so.1", b"four"))), 1)
+            self.assertEqual(self.extract(archive(entry(PREFIX + "libEGL.so.1", b"more"))), 1)
+            with self.assertRaises(PAYLOAD.PayloadError) as caught:
+                self.extract(archive(entry(PREFIX + "libXi.so.6", b"+")))
+            self.assertEqual(caught.exception.args[0], "extracted_library_limit")
+        self.assertEqual(sum(p.stat().st_size for p in self.destination.iterdir()), 8)
+        self.assertFalse((self.destination / "libXi.so.6").exists())
 
     def test_dangling_and_cyclic_soname_links_refuse_at_finish(self):
         for members in [

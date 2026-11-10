@@ -1,8 +1,11 @@
 # Job-local Linux JVM native libraries
 
 Opt in from offscreen Compose/Skiko JVM test jobs on Ubuntu 24.04 ARM64. No root,
-sudo, host package installation, display server or graphics driver is required.
+sudo, host package installation or display server is required.
 Native Apple/Android builds, publishing and browser host setup remain separate.
+The standard APT dependency closure can include Mesa/LLVM vendor libraries. These
+are authenticated private job payloads; their inclusion is not a graphics-driver
+installation on the host or proof that a display/GPU workload is supported.
 
 SDK diagnostic `42784517731` measured missing GL/EGL and JDK AWT system imports.
 The five package owners are verified by Ubuntu's official `noble/arm64` file lists:
@@ -36,7 +39,20 @@ are accepted. `dpkg-deb --fsys-tarfile` exposes only the data archive; control a
 maintainer scripts are never executed. Bounded tar validation selects only native
 library files and basename-only SONAME links, strips privileged modes, and refuses
 path escapes, special files, hardlinks, collisions, unresolved links or oversized
-payloads. Extracted libraries are limited to 128 MiB inside the private prefix.
+payloads. Each uncompressed tar member is limited to 192 MiB, each full tar stream
+to 256 MiB, and all extracted libraries together to 256 MiB in the private prefix.
+No other archive limit is increased. This stages the ordinary signed APT closure,
+including vendor libraries that a particular test may never load, within explicit
+resource bounds rather than maintaining a custom ELF dependency resolver.
+
+The initial live gate `42791739978` failed at the former 32 MiB member bound.
+Diagnostic gate `42793535520` identified the exact authenticated member:
+`libllvm20` / `libLLVM.so.20.1`, 138,943,216 bytes. That single legitimate library
+also exceeds the former 128 MiB aggregate extraction limit. The measured limits
+are now 192 MiB per member and 256 MiB extracted total; compressed archives remain
+32 MiB each / 128 MiB total / at most 32, and each uncompressed tar remains 256 MiB.
+Hash, architecture, source trust, path, symlink, script and child-process fences
+remain in force. The earlier failed runs remain failures.
 
 A fresh isolated Python child uses the exact loader path to load Skiko's eight
 system imports and the three additional AWT system imports. Only after that passes
