@@ -1,5 +1,5 @@
 name: Prepare Linux JVM native prerequisites
-description: Install only missing Ubuntu 24.04 ARM64 GL, EGL and JDK AWT runtime packages for offscreen JVM tests.
+description: Authenticate and stage Ubuntu 24.04 ARM64 native libraries in the private job directory without host installation.
 runs:
   using: composite
   steps:

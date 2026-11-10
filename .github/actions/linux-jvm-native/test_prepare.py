@@ -1,228 +1,308 @@
+"""Offline orchestration tests. Never run APT, native imports or package scripts."""
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import subprocess
+import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-
-SPEC = importlib.util.spec_from_file_location("prepare_linux_jvm", Path(__file__).with_name("prepare.py"))
+DIRECTORY = Path(__file__).resolve().parent
+SPEC = importlib.util.spec_from_file_location("job_local_native", DIRECTORY / "prepare.py")
 PREPARE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PREPARE)
-PRIVATE = "private-token-path-or-url-never-log"
+PRIVATE = "private-token-or-repository-url-never-log"
 
 
 def result(code=0, stdout="", stderr=""):
     return SimpleNamespace(returncode=code, stdout=stdout, stderr=stderr)
 
 
-class PrepareLinuxJvmTest(unittest.TestCase):
-    def test_wrong_os_arch_or_distro_refuses_before_package_operation(self):
-        for system, machine, release in [
-            ("Darwin", "arm64", ""), ("Linux", "x86_64", ""),
-            ("Linux", "aarch64", 'ID=debian\nVERSION_ID="12"'),
-            ("Linux", "aarch64", 'ID=ubuntu\nVERSION_ID="22.04"'),
-        ]:
-            with self.subTest(system=system, machine=machine, release=release), \
-                    patch.object(PREPARE.platform, "system", return_value=system), \
-                    patch.object(PREPARE.platform, "machine", return_value=machine), \
-                    patch.object(Path, "read_text", return_value=release), \
-                    patch.object(PREPARE, "run") as execute:
-                with self.assertRaisesRegex(PREPARE.PreparationError, "ubuntu_24_04_arm64_required"):
-                    PREPARE.require_supported_host()
-                execute.assert_not_called()
+def plan_text(name="libgl1", version="1.7.0-1build1", arch="arm64"):
+    return f"Inst {name} ({version} Ubuntu:24.04/noble [{arch}])\n"
 
-    def test_actual_dpkg_architecture_is_required_as_well_as_uname(self):
+
+class PrepareJobLocalTest(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name).resolve()
+        self.runner = Mock()
+        self.runner.environment = {"RUNNER_TEMP": str(self.root), "GITHUB_ENV": str(self.root / "environment")}
+        (self.root / "environment").write_text("")
+
+    def test_wrong_host_refuses_before_any_apt_or_native_operation(self):
+        for system, arch in [("Darwin", "arm64"), ("Linux", "x86_64")]:
+            with patch.object(PREPARE.platform, "system", return_value=system), \
+                    patch.object(PREPARE.platform, "machine", return_value=arch):
+                with self.assertRaises(PREPARE.PreparationError):
+                    PREPARE.require_supported_host(self.runner)
+        self.runner.run.assert_not_called()
+
+    def test_ubuntu_version_and_dpkg_architecture_are_both_fenced(self):
         with patch.object(PREPARE.platform, "system", return_value="Linux"), \
                 patch.object(PREPARE.platform, "machine", return_value="aarch64"), \
                 patch.object(Path, "read_text", return_value='ID=ubuntu\nVERSION_ID="24.04"'), \
-                patch.object(PREPARE, "run", return_value=result(stdout="amd64\n")):
+                patch.object(self.runner, "run", return_value=result(stdout="amd64")):
             with self.assertRaisesRegex(PREPARE.PreparationError, "dpkg_arm64_required"):
-                PREPARE.require_supported_host()
+                PREPARE.require_supported_host(self.runner)
 
-    def test_ready_host_never_asks_for_sudo_or_apt(self):
-        with patch.object(PREPARE, "require_supported_host"), \
-                patch.object(PREPARE, "missing_packages", return_value=[]), \
-                patch.object(PREPARE, "verify_libraries") as verify, \
-                patch.object(PREPARE, "privilege_prefix") as privilege, \
-                patch.object(PREPARE, "apt") as apt:
+    def test_existing_runtime_is_noop_without_creating_prefix_or_export(self):
+        with patch.object(PREPARE, "Runner", return_value=self.runner), \
+                patch.object(PREPARE, "require_supported_host"), \
+                patch.object(PREPARE, "probe_imports", return_value=[]), \
+                patch.object(PREPARE, "private_apt") as apt:
             report = PREPARE.prepare()
-        self.assertEqual(report["status"], "ready")
+        self.assertEqual(report["mode"], "existing_runtime")
         self.assertFalse(report["jvmTestsPassed"])
-        verify.assert_called_once()
-        privilege.assert_not_called()
         apt.assert_not_called()
+        self.assertEqual(list(self.root.iterdir()), [self.root / "environment"])
 
-    def test_only_fixed_package_statuses_are_queried_and_partial_is_missing(self):
-        with patch.object(PREPARE, "run", side_effect=[
-            result(stdout="install ok installed"), result(1), result(stdout="deinstall ok config-files"),
-            result(stdout="install ok installed"), result(stdout="install ok installed"),
-        ]) as execute:
-            self.assertEqual(PREPARE.missing_packages(), ["libegl1", "libxi6"])
-        self.assertEqual([call.args[0][-1] for call in execute.call_args_list], list(PREPARE.PACKAGES))
+    def test_missing_status_queries_are_exact_fixed_packages(self):
+        self.runner.run.side_effect = [result(stdout="install ok installed"), result(1), result(stdout="config-files"),
+                                       result(stdout="install ok installed"), result(stdout="install ok installed")]
+        self.assertEqual(PREPARE.missing_packages(self.runner), ["libegl1", "libxi6"])
+        self.assertEqual([c.args[0][-1] for c in self.runner.run.call_args_list], list(PREPARE.PACKAGES))
+        self.assertTrue(all(c.args[0][0] == "/usr/bin/dpkg-query" for c in self.runner.run.call_args_list))
 
-    def test_package_query_error_is_not_assumed_missing(self):
-        with patch.object(PREPARE, "run", return_value=result(2, stderr=PRIVATE)):
-            with self.assertRaisesRegex(PREPARE.PreparationError, "package_status_unavailable"):
-                PREPARE.missing_packages()
+    def source_files(self, text, extension=".sources"):
+        sources = self.root / "sources"
+        sources.mkdir(exist_ok=True)
+        (sources / ("ubuntu" + extension)).write_text(text)
+        return patch.multiple(PREPARE, SOURCES_LIST=self.root / "absent.list", SOURCES_PARTS=sources)
 
-    def test_root_never_invokes_sudo(self):
-        with patch.object(PREPARE.os, "geteuid", return_value=0), patch.object(PREPARE, "run") as execute:
-            self.assertEqual(PREPARE.privilege_prefix(), [])
-            execute.assert_not_called()
+    def test_existing_authenticated_sources_are_accepted_without_copying_or_edits(self):
+        text = "Types: deb\nURIs: https://ports.ubuntu.com/ubuntu-ports\nSuites: noble\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
+        with self.source_files(text):
+            PREPARE.check_source_security()
+        self.assertEqual((self.root / "sources/ubuntu.sources").read_text(), text)
 
-    def test_nonroot_requires_existing_noninteractive_sudo(self):
-        with patch.object(PREPARE.os, "geteuid", return_value=1000), \
-                patch.object(PREPARE.shutil, "which", return_value="/usr/bin/sudo"), \
-                patch.object(PREPARE, "run", return_value=result()) as execute:
-            self.assertEqual(PREPARE.privilege_prefix(), ["/usr/bin/sudo", "-n", "--"])
-            self.assertEqual(execute.call_args.args[0], ["/usr/bin/sudo", "-n", "--", "true"])
-        for sudo, code in [(None, 0), ("/usr/bin/sudo", 1)]:
-            with patch.object(PREPARE.os, "geteuid", return_value=1000), \
-                    patch.object(PREPARE.shutil, "which", return_value=sudo), \
-                    patch.object(PREPARE, "run", return_value=result(code, stderr=PRIVATE)):
-                with self.assertRaisesRegex(PREPARE.PreparationError, "noninteractive_sudo_required"):
-                    PREPARE.privilege_prefix()
+    def test_deb822_and_bracket_auth_or_time_overrides_are_refused(self):
+        values = [("Types: deb\nTrusted: yes\n", ".sources"),
+                  ("Types: deb\nTrusted: on\n", ".sources"),
+                  ("Types: deb\nTrusted:\n yes\n", ".sources"),
+                  ("Types: deb\nAllow-Insecure: true\n", ".sources"),
+                  ("Types: deb\nCheck-Valid-Until: no\n", ".sources"),
+                  ("deb [trusted=yes] https://private noble main\n", ".list"),
+                  ("deb [trusted=on] https://private noble main\n", ".list"),
+                  ("deb [trusted='yes'] https://private noble main\n", ".list"),
+                  ("deb [allow-weak=yes] https://private noble main\n", ".list"),
+                  ("deb [check-date=no] https://private noble main\n", ".list")]
+        for text, extension in values:
+            with self.subTest(text=text), self.source_files(text, extension), self.assertRaises(PREPARE.PreparationError):
+                PREPARE.check_source_security()
+            for file in (self.root / "sources").iterdir():
+                file.unlink()
 
-    def test_apt_lock_retry_is_bounded_and_keeps_same_command(self):
-        with patch.object(PREPARE.time, "monotonic", side_effect=[0, 0, 1, 2]), \
-                patch.object(PREPARE.time, "sleep") as sleep, \
-                patch.object(PREPARE, "run", side_effect=[
-                    result(100, stderr="E: Could not get lock /private/" + PRIVATE), result(stdout="done"),
-                ]) as execute:
-            self.assertEqual(PREPARE.apt([], ["update"], 10), "done")
-        self.assertEqual(execute.call_count, 2)
-        self.assertEqual(execute.call_args_list[0].args[0][4:], execute.call_args_list[1].args[0][4:])
-        self.assertEqual([call.args[1] for call in execute.call_args_list], [25, 23])
-        sleep.assert_called_once_with(2)
-        command = execute.call_args.args[0]
-        self.assertEqual(command[:8], ["/usr/bin/timeout", "--signal=TERM", "--kill-after=10s", "8s",
-                                      "/usr/bin/env", "DEBIAN_FRONTEND=noninteractive",
-                                      "NEEDRESTART_MODE=l", "/usr/bin/apt-get"])
-        self.assertIn("DPkg::Lock::Timeout=60", command)
-        self.assertIn("Acquire::Retries=2", command)
-        self.assertIn("DEBIAN_FRONTEND=noninteractive", command)
-        self.assertIn("NEEDRESTART_MODE=l", command)
+    def test_private_apt_config_disables_host_hooks_and_confines_writes(self):
+        status = self.root / "host-status"
+        status.write_bytes(b"inert installed-package metadata")
+        prefix = self.root / "prefix"
+        prefix.mkdir()
+        with patch.object(PREPARE, "check_source_security"), patch.object(PREPARE, "DPKG_STATUS", status):
+            environment = PREPARE.private_apt(prefix, {"APT_CONFIG": PRIVATE})
+        config = Path(environment["APT_CONFIG"]).read_text()
+        self.assertEqual((prefix / "state/status").read_bytes(), status.read_bytes())
+        self.assertIn('Dir::Etc::parts "' + str(prefix / "etc/empty-parts") + '";', config)
+        self.assertIn('Dir::Etc::main "' + str(prefix / "etc/empty.conf") + '";', config)
+        for key in ["Dir::State", "Dir::State::status", "Dir::State::lists", "Dir::Cache", "Dir::Cache::archives", "Dir::Log"]:
+            self.assertRegex(config, key + ' "' + str(prefix))
+        for key in ["APT::Get::AllowUnauthenticated", "Acquire::AllowInsecureRepositories", "Acquire::AllowDowngradeToInsecureRepositories"]:
+            self.assertIn(key + ' "false";', config)
+        self.assertIn('APT::Get::Download-Only "true";', config)
+        self.assertNotIn(PRIVATE, config)
 
-    def test_busy_lock_eventually_fails_and_never_waits_unboundedly(self):
+    def test_apt_install_without_download_only_never_executes(self):
+        with self.assertRaisesRegex(PREPARE.PreparationError, "host_install_command_refused"):
+            PREPARE.apt(self.runner, ["install", "libgl1"], 10)
+        self.runner.run.assert_not_called()
+
+    def test_apt_errors_are_classified_without_raw_output(self):
+        for text, reason in [("NO_PUBKEY " + PRIVATE, "authentication"), ("Permission denied " + PRIVATE, "permission"),
+                             ("Failed to fetch " + PRIVATE, "network"), ("No space left " + PRIVATE, "space")]:
+            self.runner.run.return_value = result(100, stderr=text)
+            with self.subTest(reason=reason), self.assertRaises(PREPARE.PreparationError) as error:
+                PREPARE.apt(self.runner, ["update"], 10)
+            self.assertEqual(str(error.exception), "private_apt_" + reason + "_failed")
+            self.assertNotIn(PRIVATE, str(error.exception))
+
+    def test_private_lock_wait_is_bounded(self):
+        self.runner.run.return_value = result(100, stderr="Could not get lock " + PRIVATE)
         with patch.object(PREPARE.time, "monotonic", side_effect=[0, 0, 9]), \
-                patch.object(PREPARE.time, "sleep") as sleep, \
-                patch.object(PREPARE, "run", return_value=result(100, stderr="Unable to acquire the dpkg frontend lock")) as execute:
-            with self.assertRaisesRegex(PREPARE.PreparationError, "apt_lock_timeout"):
-                PREPARE.apt([], ["update"], 10)
-        self.assertEqual(execute.call_count, 1)
-        sleep.assert_not_called()
-
-    def test_nonlock_permission_or_network_error_is_not_retried(self):
-        with patch.object(PREPARE, "run", return_value=result(100, stderr=PRIVATE)) as execute, \
                 patch.object(PREPARE.time, "sleep") as sleep:
-            with self.assertRaisesRegex(PREPARE.PreparationError, "apt_operation_failed"):
-                PREPARE.apt([], ["update"], 10)
-        self.assertEqual(execute.call_count, 1)
+            with self.assertRaisesRegex(PREPARE.PreparationError, "private_apt_lock_timeout"):
+                PREPARE.apt(self.runner, ["update"], 10)
         sleep.assert_not_called()
 
-    def test_privileged_timeout_owns_apt_group_and_gets_cleanup_margin(self):
-        with patch.object(PREPARE.time, "monotonic", return_value=0), \
-                patch.object(PREPARE, "run", return_value=result(124)) as execute:
-            with self.assertRaisesRegex(PREPARE.PreparationError, "apt_operation_timed_out"):
-                PREPARE.apt(["/usr/bin/sudo", "-n", "--"], ["update"], 180)
-        command, outer_timeout = execute.call_args.args
-        self.assertEqual(command[:7], ["/usr/bin/sudo", "-n", "--", "/usr/bin/timeout",
-                                      "--signal=TERM", "--kill-after=10s", "180s"])
-        self.assertEqual(outer_timeout, 195)
-        self.assertNotIn("--foreground", command)
-        self.assertEqual(execute.call_count, 1)
+    def test_plans_pin_only_complete_new_arm64_or_all_closure(self):
+        plan = PREPARE.parse_plan(plan_text() + plan_text("libglvnd0:arm64"), ["libgl1"])
+        self.assertEqual([p["pin"] for p in plan], ["libgl1=1.7.0-1build1", "libglvnd0:arm64=1.7.0-1build1"])
+        for unsafe in ["Remv libc6 [2.39]\n", "Inst libgl1 [1.0] (2.0 Ubuntu [arm64])\n",
+                       plan_text(arch="amd64"), plan_text("libgl1:arm64", arch="all"), "Conflicts: libgl1\n"]:
+            with self.subTest(unsafe=unsafe), self.assertRaises(PREPARE.PreparationError):
+                PREPARE.parse_plan(unsafe, ["libgl1"])
 
-    def test_plan_accepts_only_new_dependency_closure_and_pins_versions(self):
-        plan = "Inst libgl1 (1.7.0-1build1 Ubuntu:24.04/noble [arm64])\nInst libglvnd0:arm64 (1.7.0-1build1 Ubuntu:24.04/noble [arm64])\n"
-        self.assertEqual(PREPARE.new_installation_plan(plan, ["libgl1"]),
-                         ["libgl1=1.7.0-1build1", "libglvnd0:arm64=1.7.0-1build1"])
+    def test_signed_metadata_requires_exact_identity_hash_size_and_architecture(self):
+        plan = PREPARE.parse_plan(plan_text(), ["libgl1"])
+        valid = "Package: libgl1\nVersion: 1.7.0-1build1\nArchitecture: arm64\nSHA256: " + "a" * 64 + "\nSize: 42\n"
+        self.runner.run.return_value = result(stdout=valid)
+        self.assertEqual(PREPARE.signed_archive_metadata(self.runner, plan)[0]["size"], 42)
+        self.runner.run.return_value = result(stdout=valid + "\n" + valid)
+        self.assertEqual(len(PREPARE.signed_archive_metadata(self.runner, plan)), 1)
+        for invalid in [valid.replace("arm64", "amd64"), valid.replace("a" * 64, "missing"),
+                        valid.replace("Size: 42", "Size: 9999999999"), valid + "\n" + valid.replace("a" * 64, "b" * 64)]:
+            self.runner.run.return_value = result(stdout=invalid)
+            with self.subTest(invalid=invalid), self.assertRaises(PREPARE.PreparationError):
+                PREPARE.signed_archive_metadata(self.runner, plan)
 
-    def test_upgrade_removal_other_architecture_and_malformed_plans_refuse(self):
-        for plan in ["Remv libc6 [2.39]\n", "Purg libgl1\n", "Conflicts: libgl1\n", "Inst libgl1 [1.0] (2.0 Ubuntu [arm64])\n",
-                     "Inst libgl1:amd64 (1.0 Ubuntu [amd64])\n", "Inst libgl1 (1.0 Ubuntu [amd64])\n",
-                     "Inst libgl1:arm64 (1.0 Ubuntu [all])\n", "Inst libgl1 " + PRIVATE + "\n"]:
-            with self.subTest(plan=plan), self.assertRaises(PREPARE.PreparationError):
-                PREPARE.new_installation_plan(plan, ["libgl1"])
+    def archive_fixture(self):
+        archives = self.root / "archives"
+        archives.mkdir()
+        data = b"synthetic archive bytes; never a real library"
+        archive = archives / "fixture.deb"
+        archive.write_bytes(data)
+        record = {"name": "libgl1", "version": "1.0", "architecture": "arm64", "size": len(data),
+                  "sha256": hashlib.sha256(data).hexdigest()}
+        library = self.root / "lib"
+        library.mkdir()
+        return archives, archive, record, library
 
-    def test_plan_cannot_omit_requested_missing_package(self):
-        with self.assertRaisesRegex(PREPARE.PreparationError, "requested_package_plan_incomplete"):
-            PREPARE.new_installation_plan("Inst libglvnd0 (1.0 Ubuntu [arm64])\n", ["libgl1"])
+    def test_archive_hash_is_verified_before_dpkg_parser_or_extraction(self):
+        archives, archive, record, library = self.archive_fixture()
+        record["sha256"] = "a" * 64
+        with patch.object(PREPARE, "extract_deb") as extract:
+            with self.assertRaisesRegex(PREPARE.PreparationError, "signed_archive_hash_mismatch"):
+                PREPARE.extract_verified_archives(self.runner, archives, [record], library)
+        self.runner.run.assert_not_called()
+        extract.assert_not_called()
 
-    def test_full_flow_installs_only_missing_and_verifies_afterward(self):
-        plan = "Inst libgl1 (1.7.0-1build1 Ubuntu:24.04/noble [arm64])\n"
-        with patch.object(PREPARE, "require_supported_host"), \
-                patch.object(PREPARE, "missing_packages", side_effect=[["libgl1"], ["libgl1"], []]), \
-                patch.object(PREPARE, "privilege_prefix", return_value=["sudo", "-n", "--"]), \
-                patch.object(PREPARE, "apt", side_effect=["", plan, plan, ""]) as apt, \
-                patch.object(PREPARE, "verify_libraries") as verify:
-            report = PREPARE.prepare()
-        self.assertEqual(report["requestedPackages"], ["libgl1"])
-        self.assertEqual(apt.call_args_list[0].args[1], ["update"])
-        self.assertEqual(apt.call_args_list[1].args[1], ["--simulate", *PREPARE.INSTALL_OPTIONS, "install", "--", "libgl1"])
-        exact = [*PREPARE.INSTALL_OPTIONS, "install", "--", "libgl1=1.7.0-1build1"]
-        self.assertEqual(apt.call_args_list[2].args[1], ["--simulate", *exact])
-        self.assertEqual(apt.call_args_list[3].args[1], ["-y", *exact])
-        verify.assert_called_once()
+    def test_signed_archive_identity_is_rechecked_and_only_data_stream_is_extracted(self):
+        archives, archive, record, library = self.archive_fixture()
+        self.runner.run.return_value = result(stdout="Package: libgl1\nVersion: 1.0\nArchitecture: arm64\n")
+        with patch.object(PREPARE, "extract_deb") as extract, patch.object(PREPARE, "finish_library_links"):
+            PREPARE.extract_verified_archives(self.runner, archives, [record], library)
+        extract.assert_called_once()
+        self.assertIn("--field", self.runner.run.call_args.args[0])
+        self.runner.run.return_value = result(stdout="Package: libgl1\nVersion: 1.0\nArchitecture: amd64\n")
+        with self.assertRaisesRegex(PREPARE.PreparationError, "deb_metadata_mismatch"):
+            PREPARE.extract_verified_archives(self.runner, archives, [record], library)
 
-    def test_concurrent_runner_install_is_reused_without_install_command(self):
-        with patch.object(PREPARE, "require_supported_host"), \
-                patch.object(PREPARE, "missing_packages", side_effect=[["libgl1"], []]), \
-                patch.object(PREPARE, "privilege_prefix", return_value=[]), \
-                patch.object(PREPARE, "apt", return_value="") as apt, \
-                patch.object(PREPARE, "verify_libraries"):
-            PREPARE.prepare()
-        self.assertEqual(apt.call_count, 1)
-        self.assertEqual(apt.call_args.args[1], ["update"])
+    def test_archive_symlink_cannot_read_outside_private_cache(self):
+        archives, archive, record, library = self.archive_fixture()
+        target = self.root / "other"
+        archive.rename(target)
+        archive.symlink_to(target)
+        with self.assertRaisesRegex(PREPARE.PreparationError, "unsafe_archive"):
+            PREPARE.extract_verified_archives(self.runner, archives, [record], library)
 
-    def test_still_missing_after_install_refuses(self):
-        plan = "Inst libgl1 (1.0 Ubuntu [arm64])\n"
-        with patch.object(PREPARE, "require_supported_host"), \
-                patch.object(PREPARE, "missing_packages", return_value=["libgl1"]), \
-                patch.object(PREPARE, "privilege_prefix", return_value=[]), \
-                patch.object(PREPARE, "apt", side_effect=["", plan, plan, ""]):
-            with self.assertRaisesRegex(PREPARE.PreparationError, "package_postverification_failed"):
-                PREPARE.prepare()
+    def test_loader_environment_is_exactly_preserved_and_exported_inside_job(self):
+        library = self.root / "prefix/lib"
+        environment = PREPARE.loader_environment({**self.runner.environment, "LD_LIBRARY_PATH": "/existing/lib"}, library)
+        self.assertEqual(environment["LD_LIBRARY_PATH"], str(library) + ":/existing/lib")
+        PREPARE.publish_job_environment(self.root, environment)
+        self.assertEqual((self.root / "environment").read_text(), "LD_LIBRARY_PATH=" + environment["LD_LIBRARY_PATH"] + "\n")
+        with self.assertRaisesRegex(PREPARE.PreparationError, "unsafe_loader_environment"):
+            PREPARE.loader_environment({"LD_LIBRARY_PATH": "path\nEVIL=1"}, library)
 
-    def test_final_pinned_plan_cannot_gain_a_dependency_or_upgrade(self):
-        first = "Inst libgl1 (1.0 Ubuntu [arm64])\n"
-        for changed in [first + "Inst libc6 (2.39 Ubuntu [arm64])\n",
-                        "Inst libgl1 [0.9] (1.0 Ubuntu [arm64])\n"]:
-            with self.subTest(changed=changed), \
-                    patch.object(PREPARE, "require_supported_host"), \
-                    patch.object(PREPARE, "missing_packages", return_value=["libgl1"]), \
-                    patch.object(PREPARE, "privilege_prefix", return_value=[]), \
-                    patch.object(PREPARE, "apt", side_effect=["", first, changed]) as apt:
-                with self.assertRaises(PREPARE.PreparationError):
-                    PREPARE.prepare()
-                self.assertEqual(apt.call_count, 3)
+    def test_environment_export_rejects_symlink_and_outside_job(self):
+        with tempfile.TemporaryDirectory() as other:
+            outside = Path(other) / "file"
+            outside.write_text("")
+            with self.assertRaises(PREPARE.PreparationError):
+                PREPARE.publish_job_environment(self.root, {"GITHUB_ENV": str(outside), "LD_LIBRARY_PATH": "safe"})
+            (self.root / "environment").unlink()
+            (self.root / "environment").symlink_to(outside)
+            with self.assertRaises(PREPARE.PreparationError):
+                PREPARE.publish_job_environment(self.root, {**self.runner.environment, "LD_LIBRARY_PATH": "safe"})
+            self.assertEqual(outside.read_text(), "")
 
-    def test_fixed_sonames_are_actually_loaded_and_raw_errors_are_not_printed(self):
-        with patch.object(PREPARE.ctypes, "CDLL", side_effect=OSError(PRIVATE)) as load:
-            with self.assertRaises(PREPARE.PreparationError) as error:
-                PREPARE.verify_libraries()
-        self.assertEqual([call.args[0] for call in load.call_args_list], list(PREPARE.PACKAGES.values()))
+    def test_fresh_child_probe_rejects_arbitrary_data_and_uses_same_loader_env(self):
+        self.runner.run.return_value = result(stdout='{"missing":[]}')
+        environment = {"LD_LIBRARY_PATH": "/private/job/lib:/existing/lib"}
+        self.assertEqual(PREPARE.probe_imports(self.runner, environment), [])
+        self.assertIs(self.runner.run.call_args.args[2], environment)
+        self.assertEqual(self.runner.run.call_args.args[0][1:4], ["-I", "-B", "-c"])
+        self.runner.run.return_value = result(1, stdout=json.dumps({"missing": [PRIVATE]}))
+        with self.assertRaisesRegex(PREPARE.PreparationError, "native_probe_invalid") as error:
+            PREPARE.probe_imports(self.runner, environment)
         self.assertNotIn(PRIVATE, str(error.exception))
-        self.assertIn("libEGL.so.1", str(error.exception))
 
-    def test_processes_cannot_prompt_or_use_shell_and_timeouts_are_sanitized(self):
-        with patch.object(PREPARE.subprocess, "run") as execute:
-            PREPARE.run(["apt-get", "update"], 10)
-        self.assertEqual(execute.call_args.kwargs["stdin"], PREPARE.subprocess.DEVNULL)
+    def test_process_timeout_wrapper_is_owned_bounded_noninteractive_and_no_sudo(self):
+        runner = PREPARE.Runner({})
+        with patch.object(PREPARE.subprocess, "run", return_value=result()) as execute:
+            runner.run(["/usr/bin/apt-get", "update"], 10)
+        command = execute.call_args.args[0]
+        self.assertEqual(command[:3], ["/usr/bin/timeout", "--signal=TERM", "--kill-after=10s"])
+        self.assertEqual(execute.call_args.kwargs["stdin"], subprocess.DEVNULL)
+        self.assertNotIn("sudo", command)
         self.assertNotIn("shell", execute.call_args.kwargs)
-        with patch.object(PREPARE.subprocess, "run", side_effect=PREPARE.subprocess.TimeoutExpired(PRIVATE, 10)):
-            with self.assertRaisesRegex(PREPARE.PreparationError, "command_timeout") as error:
-                PREPARE.run(["apt-get", "update"], 10)
-        self.assertNotIn(PRIVATE, str(error.exception))
+        self.assertEqual(execute.call_args.kwargs["timeout"], 25)
 
-    def test_unknown_error_cannot_leak_into_actions_console(self):
+    def test_unknown_error_cannot_leak_into_console(self):
         output = io.StringIO()
         with patch.object(PREPARE, "prepare", side_effect=OSError(PRIVATE)), contextlib.redirect_stdout(output):
             self.assertEqual(PREPARE.main(), 1)
         self.assertEqual(json.loads(output.getvalue())["reason"], "unexpected_preparation_failure")
         self.assertNotIn(PRIVATE, output.getvalue())
+
+    def full_flow(self, post_missing):
+        def initialize(prefix, environment):
+            (prefix / "lib").mkdir()
+            return dict(environment, APT_CONFIG=str(prefix / "private.conf"))
+        plan = plan_text()
+        patches = [patch.object(PREPARE, "Runner", return_value=self.runner),
+                   patch.object(PREPARE, "require_supported_host"),
+                   patch.object(PREPARE, "probe_imports", side_effect=[["libGL.so.1"], post_missing]),
+                   patch.object(PREPARE, "missing_packages", return_value=["libgl1"]),
+                   patch.object(PREPARE, "private_apt", side_effect=initialize),
+                   patch.object(PREPARE, "apt", side_effect=["", plan, plan, ""]),
+                   patch.object(PREPARE, "signed_archive_metadata", return_value=[{"name": "libgl1"}]),
+                   patch.object(PREPARE, "extract_verified_archives")]
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        return [stack.enter_context(p) for p in patches]
+
+    def test_full_flow_downloads_only_and_exports_exact_child_verified_environment(self):
+        mocks = self.full_flow([])
+        report = PREPARE.prepare()
+        self.assertEqual(report["mode"], "authenticated_job_local_payload")
+        self.assertFalse(report["jvmTestsPassed"])
+        apt_calls = mocks[5].call_args_list
+        self.assertEqual(apt_calls[0].args[1], ["update"])
+        for call in apt_calls[1:]:
+            self.assertIn("--download-only", call.args[1])
+            self.assertIn("--no-upgrade", call.args[1])
+            self.assertIn("--no-remove", call.args[1])
+        child_environment = mocks[2].call_args_list[-1].args[1]
+        self.assertEqual((self.root / "environment").read_text(),
+                         "LD_LIBRARY_PATH=" + child_environment["LD_LIBRARY_PATH"] + "\n")
+        prefix = next(self.root.glob("tanvrit-jvm-native-*"))
+        self.assertEqual(prefix.stat().st_mode & 0o777, 0o700)
+
+    def test_failed_child_imports_remove_only_own_prefix_and_never_export(self):
+        self.full_flow(["libEGL.so.1"])
+        unrelated = self.root / "unrelated"
+        unrelated.write_text("preserve")
+        with self.assertRaisesRegex(PREPARE.PreparationError, "native_imports_unavailable"):
+            PREPARE.prepare()
+        self.assertEqual(list(self.root.glob("tanvrit-jvm-native-*")), [])
+        self.assertEqual((self.root / "environment").read_text(), "")
+        self.assertEqual(unrelated.read_text(), "preserve")
+
+    def test_owned_extraction_timeout_signals_only_owned_group_and_is_bounded(self):
+        process = Mock(pid=98765)
+        process.poll.return_value = None
+        process.wait.side_effect = [subprocess.TimeoutExpired("owned", 2), None]
+        with patch.object(PREPARE.os, "killpg") as kill:
+            PREPARE.stop_owned(process)
+        self.assertEqual([c.args[0] for c in kill.call_args_list], [98765, 98765])
+        self.assertEqual([c.args[1] for c in kill.call_args_list], [PREPARE.signal.SIGTERM, PREPARE.signal.SIGKILL])
+        self.assertEqual([c.kwargs["timeout"] for c in process.wait.call_args_list], [2, 2])
 
 
 if __name__ == "__main__":

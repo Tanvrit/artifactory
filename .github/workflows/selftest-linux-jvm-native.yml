@@ -6,6 +6,11 @@ on:
   pull_request:
     paths: ['.github/actions/linux-jvm-native/**', '.github/workflows/selftest-linux-jvm-native.yml']
   workflow_dispatch:
+    inputs:
+      live_prepare:
+        description: Verify authenticated job-local payloads on the actual Linux runner without host installation
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -17,9 +22,12 @@ jobs:
     runs-on:
       group: tanvrit
       labels: [self-hosted, Linux, ARM64]
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check preparation with mocked host and package commands
         shell: bash
-        run: python3 -B .github/actions/linux-jvm-native/test_prepare.py
+        run: python3 -B -m unittest discover -s .github/actions/linux-jvm-native -p 'test_*.py'
+      - name: Qualify actual job-local native preparation
+        if: github.event_name == 'workflow_dispatch' && inputs.live_prepare
+        uses: ./.github/actions/linux-jvm-native

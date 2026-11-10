@@ -1,12 +1,13 @@
-# Linux JVM native prerequisites
+# Job-local Linux JVM native libraries
 
-Explicitly opt in from offscreen Compose/Skiko JVM test jobs on Ubuntu 24.04 ARM64.
-This action does not prepare Android builds, Apple targets, publishing or browsers.
-It does not start a display server or establish that JVM tests pass.
+Opt in from offscreen Compose/Skiko JVM test jobs on Ubuntu 24.04 ARM64. No root,
+sudo, host package installation, display server or graphics driver is required.
+Native Apple/Android builds, publishing and browser host setup remain separate.
 
-The five package owners were verified from Ubuntu's `noble/arm64` file lists:
+SDK diagnostic `42784517731` measured missing GL/EGL and JDK AWT system imports.
+The five package owners are verified by Ubuntu's official `noble/arm64` file lists:
 
-| Package | Required library |
+| Package | Library |
 | --- | --- |
 | [libgl1](https://packages.ubuntu.com/noble/arm64/libgl1/filelist) | `libGL.so.1` |
 | [libegl1](https://packages.ubuntu.com/noble/arm64/libegl1/filelist) | `libEGL.so.1` |
@@ -14,26 +15,52 @@ The five package owners were verified from Ubuntu's `noble/arm64` file lists:
 | [libxrender1](https://packages.ubuntu.com/noble/arm64/libxrender1/filelist) | `libXrender.so.1` |
 | [libxtst6](https://packages.ubuntu.com/noble/arm64/libxtst6/filelist) | `libXtst.so.6` |
 
-SDK diagnostic `42784517731` measured these absent on an Ubuntu 24.04 AArch64
-runner. The published Skiko 0.150.2 ELF requires GL/EGL even for raster tests;
-the selected JDK 21 AWT library additionally requires Xi/Xrender/Xtst. Isolated
-`ldd` can report JVM-preloaded `libjvm.so` unresolved; this is not a system package
-to install, and the action does not treat it as one.
+An available runtime is reused. Otherwise the action creates a fresh private
+directory under `RUNNER_TEMP`, snapshots installed-package metadata there, and
+uses private APT state, indexes, cache, logs, configuration and temporary files.
+`APT_CONFIG` is read before other configuration, so its empty private fragment
+directory and main file prevent host APT hooks from running. Existing repository
+and trust definitions remain read-only. Explicit source authentication/date-check
+overrides are refused; unsigned, stale or unauthenticated indexes are not allowed.
 
-Installed packages are reused. A missing package requires root or already allowed
-noninteractive `sudo -n`; no privilege is granted by this action. Apt uses existing
-signed repositories, bounded lock/network waits, no recommendations, no upgrades
-and no removals. A simulation rejects upgrade/removal plans and pins only its new
-ARM64/all dependency closure before installation. The final pinned invocation is
-simulated again and must match. Privileged GNU `timeout` encloses apt and dpkg
-with TERM followed by KILL after ten seconds; the Python wait includes that cleanup
-margin, including when `sudo` creates its own session. Every fixed package and
-library is then verified. No repository, graphics driver, Xvfb, reboot or package upgrade command
-is added. The unchanged full JVM test and coverage command remains the capability
-gate after this action.
+APT simulates only the fixed missing packages and their new dependency closure.
+Upgrades, removals and non-ARM64/all packages are refused. A second simulation
+checks the exact pinned closure. **Every install-shaped command is download-only**,
+also enforced in the private configuration. No package is installed and no host
+dpkg database, keyring, repository or cache is modified. GNU timeout bounds child
+process groups; no privilege is granted or requested.
 
-Offline tests (mocked commands/libraries; no host package changes):
+Each downloaded archive must match the signed-index SHA-256 and size and the exact
+package/version/architecture. At most 32 archives, 32 MiB each and 128 MiB combined
+are accepted. `dpkg-deb --fsys-tarfile` exposes only the data archive; control and
+maintainer scripts are never executed. Bounded tar validation selects only native
+library files and basename-only SONAME links, strips privileged modes, and refuses
+path escapes, special files, hardlinks, collisions, unresolved links or oversized
+payloads. Extracted libraries are limited to 128 MiB inside the private prefix.
+
+A fresh isolated Python child uses the exact loader path to load Skiko's eight
+system imports and the three additional AWT system imports. Only after that passes
+is the confined loader prefix added to the **current job's** `GITHUB_ENV`, preserving
+its existing `LD_LIBRARY_PATH`. The payload is retained for that job and its normal
+runner-temp cleanup; failed preparation removes only its own fresh directory.
+No path, environment value, raw loader error or repository URL is logged.
+
+This establishes native prerequisite availability, **not** a JVM or coverage pass.
+Keep the existing read-only JDK probe and full JVM/coverage command after this
+action. An isolated `ldd` report of JVM-preloaded `libjvm.so` is not a system package
+to download. No SDK version, compiler flag or test exclusion is needed.
+
+Pure synthetic tests (no APT, native import or host changes):
 
 ```bash
-python3 -B .github/actions/linux-jvm-native/test_prepare.py
+python3 -B -m unittest discover -s .github/actions/linux-jvm-native -p 'test_*.py'
 ```
+
+The self-test workflow defaults to these fixtures only. Its explicit
+`workflow_dispatch` input `live_prepare=true` additionally checks the actual job-local
+action on a Linux ARM64 runner without changing the host.
+
+Primary contracts: [APT configuration order](https://manpages.ubuntu.com/manpages/noble/en/man5/apt.conf.5.html),
+[APT download-only and simulation](https://manpages.ubuntu.com/manpages/noble/en/man8/apt-get.8.html),
+[signed archive indexes](https://manpages.ubuntu.com/manpages/noble/en/man8/apt-secure.8.html),
+[dpkg data-only streaming](https://manpages.ubuntu.com/manpages/noble/en/man1/dpkg-deb.1.html).
