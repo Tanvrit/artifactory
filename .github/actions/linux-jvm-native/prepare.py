@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Authenticated job-local native libraries; no sudo, host install or scripts."""
+"""Authenticated fixed-profile job-local libraries; no host install or scripts."""
 
 import hashlib
 import json
@@ -24,6 +24,33 @@ PACKAGES = {"libgl1": "libGL.so.1", "libegl1": "libEGL.so.1", "libxi6": "libXi.s
 SKIKO_IMPORTS = ["libGL.so.1", "libX11.so.6", "libfontconfig.so.1", "libEGL.so.1",
                  "libstdc++.so.6", "libm.so.6", "libc.so.6", "ld-linux-aarch64.so.1"]
 IMPORTS = list(dict.fromkeys([*SKIKO_IMPORTS, *PACKAGES.values()]))
+# Playwright 1.64.1 nativeDeps.ts: Ubuntu 24.04 ARM64 inherits this exact
+# Chromium runtime package set from Ubuntu 24.04 x64. No tools/fonts/Xvfb.
+CHROMIUM_PACKAGE_IMPORTS = {
+    "libasound2t64": ("libasound.so.2",),
+    "libatk-bridge2.0-0t64": ("libatk-bridge-2.0.so.0",),
+    "libatk1.0-0t64": ("libatk-1.0.so.0",),
+    "libatspi2.0-0t64": ("libatspi.so.0",),
+    "libcairo2": ("libcairo.so.2",),
+    "libcups2t64": ("libcups.so.2",),
+    "libdbus-1-3": ("libdbus-1.so.3",),
+    "libdrm2": ("libdrm.so.2",),
+    "libgbm1": ("libgbm.so.1",),
+    "libglib2.0-0t64": ("libgio-2.0.so.0", "libglib-2.0.so.0", "libgmodule-2.0.so.0", "libgobject-2.0.so.0"),
+    "libnspr4": ("libnspr4.so",),
+    "libnss3": ("libnss3.so", "libnssutil3.so", "libsmime3.so"),
+    "libpango-1.0-0": ("libpango-1.0.so.0",),
+    "libx11-6": ("libX11.so.6",),
+    "libxcb1": ("libxcb.so.1",),
+    "libxcomposite1": ("libXcomposite.so.1",),
+    "libxdamage1": ("libXdamage.so.1",),
+    "libxext6": ("libXext.so.6",),
+    "libxfixes3": ("libXfixes.so.3",),
+    "libxkbcommon0": ("libxkbcommon.so.0",),
+    "libxrandr2": ("libXrandr.so.2",),
+}
+CHROMIUM_PACKAGES = {name: libraries[0] for name, libraries in CHROMIUM_PACKAGE_IMPORTS.items()}
+CHROMIUM_IMPORTS = list(dict.fromkeys(library for libraries in CHROMIUM_PACKAGE_IMPORTS.values() for library in libraries))
 PACKAGE_FLAGS = ["-y", "--download-only", "--no-install-recommends", "--no-upgrade", "--no-remove"]
 MAX_ARCHIVES = 32
 MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
@@ -33,18 +60,27 @@ DPKG_STATUS = Path("/var/lib/dpkg/status")
 SOURCES_LIST = Path("/etc/apt/sources.list")
 SOURCES_PARTS = Path("/etc/apt/sources.list.d")
 LOCK_FAILURE = re.compile(r"Could not get lock|Unable to acquire.*lock|Unable to lock directory", re.I)
-CHILD_PROBE = """import ctypes,json
+CHILD_PROBE_TEMPLATE = """import ctypes,json
 missing=[]
 for name in NAMES:
  try: ctypes.CDLL(name)
  except OSError: missing.append(name)
 print(json.dumps({'missing':missing}))
 raise SystemExit(bool(missing))
-""".replace("NAMES", repr(IMPORTS))
+"""
+CHILD_PROBE = CHILD_PROBE_TEMPLATE.replace("NAMES", repr(IMPORTS))
 
 
 class PreparationError(Exception):
     pass
+
+
+def runtime_profile(runtime):
+    if runtime == "jvm":
+        return PACKAGES, IMPORTS
+    if runtime == "chromium":
+        return CHROMIUM_PACKAGES, CHROMIUM_IMPORTS
+    raise PreparationError("runtime_profile_refused")
 
 
 class Runner:
@@ -96,9 +132,9 @@ def parse_fields(text):
     return result
 
 
-def missing_packages(runner):
+def missing_packages(runner, packages=None):
     missing = []
-    for name in PACKAGES:
+    for name in PACKAGES if packages is None else packages:
         result = runner.run(["/usr/bin/dpkg-query", "-W", "-f=${Status}", name], 10)
         if result.returncode not in {0, 1}:
             raise PreparationError("package_status_unavailable")
@@ -107,13 +143,15 @@ def missing_packages(runner):
     return missing
 
 
-def probe_imports(runner, environment):
-    result = runner.run([sys.executable, "-I", "-B", "-c", CHILD_PROBE], 30, environment)
+def probe_imports(runner, environment, imports=None):
+    names = IMPORTS if imports is None else imports
+    program = CHILD_PROBE if names == IMPORTS else CHILD_PROBE_TEMPLATE.replace("NAMES", repr(names))
+    result = runner.run([sys.executable, "-I", "-B", "-c", program], 30, environment)
     try:
         report = json.loads(result.stdout)
         if set(report) != {"missing"} or not isinstance(report["missing"], list):
             raise ValueError()
-        if any(name not in IMPORTS for name in report["missing"]):
+        if any(name not in names for name in report["missing"]):
             raise ValueError()
         if bool(result.returncode) != bool(report["missing"]):
             raise ValueError()
@@ -355,16 +393,29 @@ def publish_job_environment(temporary, environment):
         file.write("LD_LIBRARY_PATH=" + environment["LD_LIBRARY_PATH"] + "\n")
 
 
-def prepare():
+def preparation_report(runtime, mode, missing=None, archive_count=None):
+    # Availability is not workload execution. Keep the existing JVM contract unchanged.
+    report = {"status": "ready", "mode": mode, "jvmTestsPassed": False}
+    if missing is not None:
+        report.update(requestedPackages=missing, verifiedArchives=archive_count)
+        if runtime == "jvm":
+            report.update(skikoImportsLoaded=len(SKIKO_IMPORTS), awtSystemImportsLoaded=3)
+    if runtime == "chromium":
+        report.update(runtime="chromium", chromiumImportsLoaded=len(CHROMIUM_IMPORTS), browserTestsPassed=False)
+    return report
+
+
+def prepare(runtime="jvm"):
+    packages, imports = runtime_profile(runtime)
     runner = Runner()
     require_supported_host(runner)
-    if not probe_imports(runner, runner.environment):
-        return {"status": "ready", "mode": "existing_runtime", "jvmTestsPassed": False}
-    missing = missing_packages(runner)
+    if not probe_imports(runner, runner.environment, imports):
+        return preparation_report(runtime, "existing_runtime")
+    missing = missing_packages(runner, packages)
     if not missing:
         raise PreparationError("installed_package_runtime_inconsistent")
     temporary = clean_path(runner.environment.get("RUNNER_TEMP")).resolve(strict=True)
-    prefix = Path(tempfile.mkdtemp(prefix="tanvrit-jvm-native-", dir=temporary))
+    prefix = Path(tempfile.mkdtemp(prefix="tanvrit-" + runtime + "-native-", dir=temporary))
     prefix.chmod(0o700)
     try:
         runner.environment = private_apt(prefix, runner.environment)
@@ -379,13 +430,11 @@ def prepare():
         library = prefix / "lib"
         extract_verified_archives(runner, prefix / "cache/archives", records, library)
         child_environment = loader_environment(runner.environment, library)
-        remaining = probe_imports(runner, child_environment)
+        remaining = probe_imports(runner, child_environment, imports)
         if remaining:
             raise PreparationError("native_imports_unavailable:" + ",".join(remaining))
         publish_job_environment(temporary, child_environment)
-        return {"status": "ready", "mode": "authenticated_job_local_payload",
-                "requestedPackages": missing, "verifiedArchives": len(records),
-                "skikoImportsLoaded": len(SKIKO_IMPORTS), "awtSystemImportsLoaded": 3, "jvmTestsPassed": False}
+        return preparation_report(runtime, "authenticated_job_local_payload", missing, len(records))
     except Exception:
         shutil.rmtree(prefix)
         raise
@@ -394,7 +443,7 @@ def prepare():
 def main():
     previous = os.umask(0o077)
     try:
-        report = prepare()
+        report = prepare(os.environ.get("NATIVE_RUNTIME", "jvm"))
     except (PreparationError, PayloadError) as error:
         report = {"status": "refused", "reason": str(error), "jvmTestsPassed": False}
         diagnostics = safe_diagnostics(getattr(error, "diagnostics", {}))

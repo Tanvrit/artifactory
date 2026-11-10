@@ -1,11 +1,17 @@
-name: Prepare Linux JVM native prerequisites
-description: Authenticate and stage Ubuntu 24.04 ARM64 native libraries in the private job directory without host installation.
+name: Prepare Linux native prerequisites
+description: Authenticate and stage fixed-profile Ubuntu 24.04 ARM64 libraries in the private job directory without host installation.
+inputs:
+  runtime:
+    description: Closed runtime profile, jvm or chromium. The default preserves the JVM imports.
+    required: false
+    default: jvm
 runs:
   using: composite
   steps:
-    - name: Prepare the supported Linux JVM host
+    - name: Prepare the supported job-local Linux runtime
       shell: bash
       working-directory: ${{ runner.temp }}
       env:
         ACTION_DIR: ${{ github.action_path }}
+        NATIVE_RUNTIME: ${{ inputs.runtime }}
       run: python3 -B "$ACTION_DIR/prepare.py"

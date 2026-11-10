@@ -1,8 +1,8 @@
-# Job-local Linux JVM native libraries
+# Job-local Linux native libraries
 
 Opt in from offscreen Compose/Skiko JVM test jobs on Ubuntu 24.04 ARM64. No root,
 sudo, host package installation or display server is required.
-Native Apple/Android builds, publishing and browser host setup remain separate.
+Native Apple/Android builds, publishing and browser workload execution remain separate.
 The standard APT dependency closure can include Mesa/LLVM vendor libraries. These
 are authenticated private job payloads; their inclusion is not a graphics-driver
 installation on the host or proof that a display/GPU workload is supported.
@@ -17,6 +17,45 @@ The five package owners are verified by Ubuntu's official `noble/arm64` file lis
 | [libxi6](https://packages.ubuntu.com/noble/arm64/libxi6/filelist) | `libXi.so.6` |
 | [libxrender1](https://packages.ubuntu.com/noble/arm64/libxrender1/filelist) | `libXrender.so.1` |
 | [libxtst6](https://packages.ubuntu.com/noble/arm64/libxtst6/filelist) | `libXtst.so.6` |
+
+The action has a closed `runtime` input: `jvm` (the unchanged default above) or
+`chromium`. It accepts no package names, library paths or commands from callers.
+The Chromium profile uses the exact 21 runtime-library packages in
+[Playwright 1.64.1's Ubuntu 24.04 ARM64 requirements](https://github.com/microsoft/playwright/blob/v1.64.1/packages/playwright-core/src/server/registry/nativeDeps.ts).
+That architecture inherits the Ubuntu 24.04 x64 `chromium` list. Its `tools` list,
+fonts, Xvfb and development tools are not selected. The fresh-child import check
+covers all 26 known SONAMEs mapped to these packages by that pinned source.
+
+Actual diagnostic `42797631092` on Linux ARM64 with Node 24.22.2 and
+Playwright/core 1.64.1 failed its ordinary ten-second headless launch. Read-only
+`ldd` of the exact registry-selected AArch64 headless-shell ELF identified these
+seven missing runtime imports; their owners were independently checked against
+official Noble ARM64 file lists and checksum-matched package payloads:
+
+| Package | Measured missing library |
+| --- | --- |
+| `libxcomposite1` | `libXcomposite.so.1` |
+| `libxdamage1` | `libXdamage.so.1` |
+| `libxfixes3` | `libXfixes.so.3` |
+| `libxrandr2` | `libXrandr.so.2` |
+| `libatk1.0-0t64` | `libatk-1.0.so.0` |
+| `libatspi2.0-0t64` | `libatspi.so.0` |
+| `libgbm1` | `libgbm.so.1` |
+
+The complete fixed Chromium list handles fleet differences; only packages missing
+on the selected host are downloaded, along with their authenticated new closure.
+It uses the same staging/security/size limits as the JVM profile below. No host
+package or driver is installed. Its prerequisite receipt always says
+`browserTestsPassed: false`: successful imports alone do not prove a browser can
+launch, run pages or load application content.
+
+The separate `diagnose-linux-chromium-startup.yml` workflow defaults
+`prepare_chromium` to `false` to preserve the baseline measurement. Explicitly
+enabling it stages this profile, then runs the same normal Playwright validation
+and ten-second headless launch in a fresh Node process with the current job's
+verified loader environment. That real launch must pass before consumers rely on
+the profile. Browser fixtures, application boot and release checks stay required;
+no host-validation bypass or test exclusion is provided.
 
 An available runtime is reused. Otherwise the action creates a fresh private
 directory under `RUNNER_TEMP`, snapshots installed-package metadata there, and
@@ -54,8 +93,9 @@ are now 192 MiB per member and 256 MiB extracted total; compressed archives rema
 Hash, architecture, source trust, path, symlink, script and child-process fences
 remain in force. The earlier failed runs remain failures.
 
-A fresh isolated Python child uses the exact loader path to load Skiko's eight
-system imports and the three additional AWT system imports. Only after that passes
+A fresh isolated Python child uses the exact loader path to load the selected
+profile's fixed imports (eight Skiko and three additional AWT imports by default).
+Only after that passes
 is the confined loader prefix added to the **current job's** `GITHUB_ENV`, preserving
 its existing `LD_LIBRARY_PATH`. The payload is retained for that job and its normal
 runner-temp cleanup; failed preparation removes only its own fresh directory.

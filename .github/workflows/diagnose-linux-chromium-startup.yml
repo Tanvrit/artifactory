@@ -1,6 +1,11 @@
 name: Diagnose Linux Chromium startup
 on:
   workflow_dispatch:
+    inputs:
+      prepare_chromium:
+        description: Stage the fixed Chromium library profile privately before the unchanged normal launch
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -23,6 +28,10 @@ jobs:
             /tools/ci/chromium_startup_probe.mjs
             /tools/ci/test_chromium_startup_probe.mjs
             /.github/workflows/diagnose-linux-chromium-startup.yml
+            /.github/actions/linux-jvm-native/action.yml
+            /.github/actions/linux-jvm-native/prepare.py
+            /.github/actions/linux-jvm-native/payload.py
+            /.github/actions/linux-jvm-native/test_profiles.py
           persist-credentials: false
           lfs: false
           submodules: false
@@ -33,6 +42,13 @@ jobs:
       - name: Verify parser and owned browser lifecycle without launching a browser
         working-directory: chromium-startup-probe-source
         run: node --test tools/ci/test_chromium_startup_probe.mjs
+      - name: Verify closed native profiles without native or package operations
+        run: python3 -B -m unittest discover -s chromium-startup-probe-source/.github/actions/linux-jvm-native -p 'test_profiles.py'
+      - name: Stage Chromium libraries without changing the host
+        if: inputs.prepare_chromium
+        uses: ./chromium-startup-probe-source/.github/actions/linux-jvm-native
+        with:
+          runtime: chromium
       - name: Diagnose one isolated Chromium launch
         env:
           PROBE_SOURCE: ${{ github.workspace }}/chromium-startup-probe-source/tools/ci/chromium_startup_probe.mjs
