@@ -1,0 +1,67 @@
+name: Diagnose Linux Chromium startup
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on:
+      group: tanvrit
+      labels: [self-hosted, Linux, ARM64]
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: chromium-startup-probe-source
+          fetch-depth: 1
+          filter: blob:none
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /tools/ci/chromium_startup_probe.mjs
+            /tools/ci/test_chromium_startup_probe.mjs
+            /.github/workflows/diagnose-linux-chromium-startup.yml
+          persist-credentials: false
+          lfs: false
+          submodules: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Verify parser and owned browser lifecycle without launching a browser
+        working-directory: chromium-startup-probe-source
+        run: node --test tools/ci/test_chromium_startup_probe.mjs
+      - name: Diagnose one isolated Chromium launch
+        env:
+          PROBE_SOURCE: ${{ github.workspace }}/chromium-startup-probe-source/tools/ci/chromium_startup_probe.mjs
+        run: |
+          set -euo pipefail
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = ARM64
+          probe_home=$(mktemp -d "$RUNNER_TEMP/tanvrit-chromium-probe.XXXXXXXX")
+          chmod 700 "$probe_home"
+          trap 'rm -rf -- "$probe_home"' EXIT
+          cd "$probe_home"
+          : > .npmrc
+          : > user.npmrc
+          : > global.npmrc
+          printf '%s\n' '{"name":"tanvrit-chromium-startup-probe","version":"0.0.0","private":true}' > package.json
+          unset PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD
+          unset PLAYWRIGHT_DOWNLOAD_HOST PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST PLAYWRIGHT_CHROMIUM_HEADLESS_SHELL_DOWNLOAD_HOST
+          export PLAYWRIGHT_BROWSERS_PATH="$probe_home/browsers"
+          export PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=30000
+          npm_flags=(--ignore-scripts --no-save --no-package-lock --no-audit --no-fund --prefix="$probe_home"
+            --registry=https://registry.npmjs.org --userconfig="$probe_home/user.npmrc"
+            --globalconfig="$probe_home/global.npmrc" --cache="$probe_home/npm-cache"
+            --fetch-timeout=60000 --fetch-retries=1)
+          if ! /usr/bin/timeout --signal=TERM --kill-after=10s 180s npm install "${npm_flags[@]}" playwright@1.64.1 > npm-private.log 2>&1; then
+            node "$PROBE_SOURCE" --preparation-failed tooling_install_failed
+            exit 1
+          fi
+          if ! /usr/bin/timeout --signal=TERM --kill-after=10s 240s node node_modules/playwright/cli.js install chromium --only-shell > browser-private.log 2>&1; then
+            node "$PROBE_SOURCE" --preparation-failed browser_install_failed
+            exit 1
+          fi
+          /usr/bin/timeout --signal=TERM --kill-after=10s 35s node "$PROBE_SOURCE" "$probe_home"
