@@ -1,0 +1,54 @@
+name: Self-test opt-in Jashva desktop beta
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/actions/desktop-beta/**'
+      - '.github/workflows/release-linux-template.yml'
+      - '.github/workflows/release-windows-template.yml'
+      - '.github/workflows/release-macos-template.yml'
+      - '.github/workflows/update-manifest.yml'
+      - '.github/workflows/selftest-desktop-beta.yml'
+      - 'scripts/test-desktop-beta-workflows.py'
+      - 'scripts/test-product-registration.cjs'
+      - 'scripts/update-manifest.js'
+      - 'worker/src/index.js'
+      - 'functions/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/actions/desktop-beta/**'
+      - '.github/workflows/release-linux-template.yml'
+      - '.github/workflows/release-windows-template.yml'
+      - '.github/workflows/release-macos-template.yml'
+      - '.github/workflows/update-manifest.yml'
+      - '.github/workflows/selftest-desktop-beta.yml'
+      - 'scripts/test-desktop-beta-workflows.py'
+      - 'scripts/test-product-registration.cjs'
+      - 'scripts/update-manifest.js'
+      - 'worker/src/index.js'
+      - 'functions/**'
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on:
+      group: tanvrit
+      labels: [self-hosted, Linux, ARM64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: false
+      - name: Exercise synthetic source, artifact, manifest and mirrored route contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test scripts/test-product-registration.cjs .github/actions/desktop-beta/test-*.cjs
+          uv venv "$RUNNER_TEMP/desktop-beta-tests"
+          uv pip install --quiet --python "$RUNNER_TEMP/desktop-beta-tests/bin/python" PyYAML==6.0.3
+          "$RUNNER_TEMP/desktop-beta-tests/bin/python" scripts/test-desktop-beta-workflows.py

@@ -1,0 +1,28 @@
+name: Qualified Jashva desktop beta
+description: 'Explicit main-source, native-build and immutable artifact custody; never changes stable release contracts.'
+inputs:
+  phase:
+    required: true
+    description: 'verify, publish or verify-windows-signature'
+  product:
+    required: true
+  version:
+    required: false
+  source_commit:
+    required: false
+  expected_build_code:
+    required: false
+  platform:
+    required: false
+  artifact:
+    required: false
+    description: 'Exact MSI path for strict Jashva signature-only verification'
+  appimage_built:
+    required: false
+    default: 'false'
+outputs:
+  release_key:
+    description: 'Public-version plus native-build transport identity'
+runs:
+  using: node24
+  main: index.cjs

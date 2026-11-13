@@ -60,6 +60,7 @@ const PRODUCT_META = {
   swyft:             { display_name: 'Swyft',            tagline: 'Logistics for Bharat',             min_version_bump: 'minor' },
   'bharat-bandhu':   { display_name: 'Bharat Bandhu',    tagline: 'Communities for Bharat',           min_version_bump: 'patch' },
   school:            { display_name: 'School',           tagline: 'Education Management for Bharat',  min_version_bump: 'minor' },
+  jashva:            { display_name: 'Jashva',           tagline: 'Gather your people',                min_version_bump: 'minor' },
   wedding:           { display_name: 'Wedding',          tagline: 'Weddings, Made Magical',           min_version_bump: 'minor' },
   control:           { display_name: 'Control',          tagline: 'Mission Control for Tanvrit',      min_version_bump: 'patch' },
   ai:                { display_name: 'Tanvrit AI',       tagline: 'AI for Bharat',                    min_version_bump: 'minor' },
@@ -96,6 +97,7 @@ const PLATFORM_CONFIGS = {
   swyft:             ALL_OS_KEYS,
   school:            ALL_OS_KEYS,
   wedding:           ALL_OS_KEYS,
+  jashva:            ALL_OS_KEYS,
   'bharat-bandhu':   ALL_OS_KEYS,
   control:           ALL_OS_KEYS,
   ai:                ALL_OS_KEYS,
@@ -142,6 +144,7 @@ function artifactFilename(product, version, platform, ext) {
 }
 
 const WEB_URLS = {
+  jashva: 'https://jashva.com/app/',
   wedding: 'https://friendly.wedding',
 };
 
@@ -397,4 +400,8 @@ async function main() {
   console.log(`\n✓ Done. ${available}/${total} platforms available. Commit and push manifests/\n`);
 }
 
-main().catch((err) => { console.error(err); process.exit(1); });
+// Requiring the generator is side-effect free for synthetic contract tests.
+module.exports = { PRODUCT_META, PLATFORM_CONFIGS, PLATFORM_EXT, artifactFilename, buildManifest };
+if (require.main === module) {
+  main().catch((err) => { console.error(err); process.exit(1); });
+}

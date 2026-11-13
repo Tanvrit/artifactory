@@ -1,3 +1,5 @@
+import { routeBeta } from './_shared/beta-routes.js';
+
 /**
  * Root middleware — intercepts /brand/* before any [product] dynamic route can match.
  * All other requests pass through to their matched function.
@@ -13,7 +15,7 @@ const CORS_HEADERS = {
 
 const VALID_PRODUCTS = [
   'friendly', 'desipops', 'mandee', 'swyft',
-  'bharat-bandhu', 'school', 'wedding', 'control', 'compute',
+  'bharat-bandhu', 'school', 'wedding', 'jashva', 'control', 'compute',
 ];
 
 const TANVRIT_ICONS = ['tanvrit-mark', 'tanvrit-wordmark', 'tanvrit-wordmark-light'];
@@ -46,6 +48,9 @@ export async function onRequest(context) {
   if (request.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
   }
+
+  const beta = await routeBeta(request, env);
+  if (beta) return beta;
 
   // Intercept /brand/* before the [product] dynamic route can match
   if (url.pathname.startsWith('/brand/')) {

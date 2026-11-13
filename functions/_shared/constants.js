@@ -14,6 +14,7 @@ export const VALID_PRODUCTS = [
   'bharat-bandhu',
   'school',
   'wedding',
+  'jashva',
   'control',
   'compute',
 ];
@@ -25,6 +26,7 @@ export const PLATFORM_FILE_MAP = {
   'windows-x64':        { ext: 'msi',      label: 'Windows x64' },
   'linux-x64':          { ext: 'deb',      label: 'Linux (DEB)' },
   'linux-x64-rpm':      { ext: 'rpm',      label: 'Linux (RPM)' },
+  'linux-x64-app': { ext: 'AppImage', label: 'Linux (AppImage)' },
   'linux-x64-appimage': { ext: 'AppImage', label: 'Linux (AppImage)' },
 };
 
