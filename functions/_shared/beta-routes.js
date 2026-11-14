@@ -2,7 +2,7 @@
 const RAW = 'https://raw.githubusercontent.com/tanvrit/artifactory/main';
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS' };
 const KEY = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-beta\.([1-9][0-9]{0,9})$/;
-const EXT = { 'macos-arm64': 'dmg', 'windows-x64': 'msi', 'linux-x64': 'deb', 'linux-x64-app': 'AppImage' };
+const EXT = { 'macos-arm64': 'dmg', 'windows-x64': 'msi', 'linux-x64': 'deb', 'linux-arm64': 'deb', 'linux-x64-app': 'AppImage' };
 function error(status, message) {
   return new Response(JSON.stringify({ error: message, status }), { status,
     headers: { ...CORS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });

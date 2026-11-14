@@ -60,3 +60,17 @@ test('receipt rejects path injection, missing hashes, empty files and cross-plat
 test('immutable candidate tag remains valid when its exact source is still on main', () => {
   assert.deepEqual(c.verifySource({ ...source, ref: 'refs/tags/desktop-beta-candidate' }), contract);
 });
+
+
+test('ARM64 DEB has a distinct beta identity and cannot share an x64 receipt', () => {
+  const arm = receipt('linux-arm64');
+  assert.equal(arm.artifacts[0].filename, 'jashva-1.0.0-beta.12345-linux-arm64.deb');
+  c.validateReceipt(arm, contract);
+  const manifest = c.mergeManifest(null, arm, '2026-11-14T00:00:00Z');
+  assert.deepEqual(Object.keys(manifest.platforms), ['linux-arm64']);
+  assert.equal(manifest.platforms['linux-arm64'].format, 'deb');
+  assert.ok(!Object.hasOwn(manifest.platforms, 'linux-x64'));
+  assert.throws(() => c.filename(contract, 'linux-arm64-app'));
+  arm.artifacts.push(receipt('linux-x64').artifacts[0]);
+  assert.throws(() => c.validateReceipt(arm, contract));
+});

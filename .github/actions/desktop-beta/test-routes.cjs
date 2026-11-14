@@ -43,3 +43,17 @@ test('missing or mismatched source metadata never advertises a beta', async () =
   }
   assert.equal((await request('/jashva/beta/1.0.0-beta.12346/latest.json')).response.status, 503);
 });
+
+
+test('ARM64 beta redirects only to its qualified DEB without x64 or AppImage substitution', async () => {
+  const arm = { ...contract, schema: 1, artifacts: [{ ...row, platform: 'linux-arm64',
+    filename: c.filename(contract, 'linux-arm64') }] };
+  const value = c.mergeManifest(null, arm, '2026-11-14T00:00:00Z');
+  const result = await request('/jashva/beta/latest/linux-arm64', value);
+  assert.equal(result.response.status, 302);
+  assert.equal(result.response.headers.get('Location'), value.platforms['linux-arm64'].r2_url);
+  assert.equal((await request('/jashva/beta/latest/linux-x64', value)).response.status, 503);
+  assert.equal((await request('/jashva/beta/latest/linux-arm64-app', value)).response.status, 400);
+  value.platforms['linux-arm64'].filename = c.filename(contract, 'linux-x64');
+  assert.equal((await request('/jashva/beta/latest/linux-arm64', value)).response.status, 503);
+});

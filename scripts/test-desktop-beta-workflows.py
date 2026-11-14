@@ -18,7 +18,11 @@ class DesktopBetaWorkflowTest(unittest.TestCase):
                 self.assertEqual(inputs['expected_build_code']['default'], '')
                 job = workflow['jobs']['build-macos-arm64' if os == 'macos' else 'build-' + os]
                 labels = job['runs-on']['labels']
-                if architecture:
+                if os == 'linux':
+                    self.assertEqual(inputs['architecture']['default'], 'x64')
+                    self.assertEqual(inputs['publish_artifacts']['default'], 'true')
+                    self.assertEqual(labels[-1], "${{ inputs.architecture == 'arm64' && 'ARM64' || 'X64' }}")
+                elif architecture:
                     self.assertIn(architecture, labels)
                 self.assertIn('self-hosted', labels)
                 steps = {step.get('name'): step for step in job['steps'] if step.get('name')}
@@ -59,8 +63,28 @@ class DesktopBetaWorkflowTest(unittest.TestCase):
         workflow = yaml.load((ROOT / '.github/workflows/release-linux-template.yml').read_text(), Loader=yaml.BaseLoader)
         step = next(step for step in workflow['jobs']['build-linux']['steps'] if step.get('name') == 'Validate desktop release channel')
         for product, channel, expected in [('friendly', 'stable', 0), ('jashva', 'beta', 0), ('friendly', 'beta', 1), ('jashva', 'arbitrary', 1)]:
-            result = subprocess.run(['bash', '-c', step['run']], env={'PRODUCT': product, 'RELEASE_CHANNEL': channel}, capture_output=True)
+            result = subprocess.run(['bash', '-c', step['run']], env={'PRODUCT': product, 'RELEASE_CHANNEL': channel, 'ARCHITECTURE': 'x64', 'PUBLISH_ARTIFACTS': 'true'}, capture_output=True)
             self.assertEqual(expected, result.returncode)
+
+    def test_arm64_is_beta_deb_only_and_private_candidate_has_no_publication(self):
+        workflow = yaml.load((ROOT / '.github/workflows/release-linux-template.yml').read_text(), Loader=yaml.BaseLoader)
+        steps = {step.get('name'): step for step in workflow['jobs']['build-linux']['steps'] if step.get('name')}
+        validation = steps['Validate desktop release channel']['run']
+        for product, channel, arch, publish, expected in [
+            ('jashva', 'beta', 'arm64', 'false', 0), ('jashva', 'beta', 'arm64', 'true', 0),
+            ('jashva', 'stable', 'arm64', 'true', 1), ('friendly', 'beta', 'arm64', 'true', 1),
+            ('jashva', 'beta', 'x64', 'false', 1), ('jashva', 'beta', 'unknown', 'true', 1),
+        ]:
+            result = subprocess.run(['bash', '-c', validation], capture_output=True,
+                                    env={'PRODUCT': product, 'RELEASE_CHANNEL': channel,
+                                         'ARCHITECTURE': arch, 'PUBLISH_ARTIFACTS': publish})
+            self.assertEqual(result.returncode, expected)
+        self.assertIn("inputs.architecture == 'x64'", steps['Build Linux AppImage']['if'])
+        self.assertIn("inputs.architecture == 'x64'", steps['Install Linux packaging tools']['if'])
+        self.assertNotIn('sudo', steps['Require native ARM64 packaging prerequisites']['run'])
+        self.assertIn('inputs.publish_artifacts', steps['Publish qualified immutable Jashva beta']['if'])
+        self.assertIn('!inputs.publish_artifacts', steps['Retain private ARM64 beta candidate']['if'])
+        self.assertEqual(steps['Qualify private ARM64 beta candidate']['with']['phase'], 'qualify')
 
     def test_manifest_update_keeps_beta_separate_and_does_not_cancel_inflight_update(self):
         workflow = yaml.load((ROOT / '.github/workflows/update-manifest.yml').read_text(), Loader=yaml.BaseLoader)

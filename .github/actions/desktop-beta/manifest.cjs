@@ -62,7 +62,7 @@ async function qualify(payload, io = { jsonAt, fingerprintAt }) {
   requireValue(payload.release_key === contract.release_key, 'Beta release key differs');
   const release = (await io.jsonAt(`https://api.github.com/repos/Tanvrit/artifactory/releases/tags/${contract.tag}`)).value;
   c.validateRelease(release, contract);
-  const receiptNames = ['macos-arm64', 'windows-x64', 'linux-x64'].map(platform => `jashva-${contract.release_key}-${platform}.release.json`);
+  const receiptNames = ['macos-arm64', 'windows-x64', 'linux-x64', 'linux-arm64'].map(platform => `jashva-${contract.release_key}-${platform}.release.json`);
   requireValue(receiptNames.includes(payload.receipt), 'Unexpected requested platform receipt');
   const receipts = [];
   for (const name of receiptNames) {

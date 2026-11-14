@@ -17,6 +17,13 @@ function verifyNative(contract, platform, artifact) {
     requireValue(version === contract.version || version.startsWith(contract.version + '-'), 'DEB public version differs');
     return;
   }
+  if (platform === 'linux-arm64') {
+    requireValue(run('dpkg-deb', ['--field', artifact, 'Architecture']) === 'arm64', 'DEB architecture must be arm64');
+    const version = run('dpkg-deb', ['--field', artifact, 'Version']);
+    requireValue(version === contract.version || version.startsWith(contract.version + '-'), 'DEB public version differs');
+    run('python3', [path.join(__dirname, 'verify-linux-deb.py'), artifact], { timeout: 120000 });
+    return;
+  }
   if (platform === 'linux-x64-app') {
     const fd = fs.openSync(artifact, 'r'); const header = Buffer.alloc(20);
     try { requireValue(fs.readSync(fd, header, 0, 20, 0) === 20, 'AppImage header is truncated'); }
