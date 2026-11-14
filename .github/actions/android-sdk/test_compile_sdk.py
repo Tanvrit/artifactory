@@ -62,6 +62,7 @@ class CompileSdkTest(unittest.TestCase):
                 }
             }""",
             "compileSdk { /* explanation */ version = release(37) { minorApiLevel = 1; } }",
+            "compileSdk {\nversion\n=\nrelease (\n37\n) {\nminorApiLevel\n=\n1\n}\n}",
         ):
             result = self.run_fixture(modules=(module, module))
             self.assertEqual(result.returncode, 0, result.stderr)

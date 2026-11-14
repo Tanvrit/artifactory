@@ -71,7 +71,7 @@ def resolve():
     paths = subprocess.check_output(["git", "ls-files", "-z", "--", "*build.gradle.kts"]).decode().split("\0")
     values = set()
     block = re.compile(
-        r"\bcompileSdk\s*\{\s*version\s*=\s*release\(\s*([1-9][0-9]*)\s*\)\s*"
+        r"\bcompileSdk\s*\{\s*version\s*=\s*release\s*\(\s*([1-9][0-9]*)\s*\)\s*"
         r"\{\s*minorApiLevel\s*=\s*(0|[1-9][0-9]*)\s*;?\s*\}\s*\}"
     )
     literal = re.compile(r"^\s*compileSdk(?:Version)?\s*=\s*([1-9][0-9]*)\s*;?\s*$", re.M)
