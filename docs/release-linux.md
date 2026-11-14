@@ -74,6 +74,19 @@ into the `.AppImage` payload's `.DirIcon`. No extra step.
 
 ## Troubleshooting
 
+**Branding checkout and release publishing credentials**
+
+The supported-target branding checkout reads the public `Tanvrit/artifactory`
+repository with the caller's ephemeral `github.token`, without persisting its
+credentials. Both x64 callers and the explicit ARM64 beta use this read path;
+private qualification does not depend on a release-write PAT being present or
+valid. The branding source, sparse icon path and icon-copy step are unchanged.
+
+Public publication still requires a valid `ARTIFACTS_REPO_TOKEN` with release
+write access, plus the existing R2 credentials. A successful branding checkout or
+private candidate does not establish those write permissions or public delivery.
+Do not remove the publication preconditions to compensate for an invalid PAT.
+
 **`packageDeb` fails with "dpkg-deb: error: parsing file 'control'"**
 
 `linux.packageName` contains an underscore or uppercase. Use lowercase
