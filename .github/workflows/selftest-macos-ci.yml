@@ -25,4 +25,6 @@ jobs:
         run: |
           bash -n .github/actions/macos-ci-tools/prepare.sh
           python3 .github/actions/macos-ci-tools/test_prepare.py
+          bash -n .github/actions/android-sdk/ensure-platform.sh
           python3 .github/actions/android-sdk/test_compile_sdk.py
+          python3 .github/actions/android-sdk/test_ensure_platform.py

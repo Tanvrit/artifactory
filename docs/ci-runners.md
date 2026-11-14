@@ -35,8 +35,12 @@ A workflow change cannot make an offline or inaccessible runner accept jobs.
   LaunchDaemon does not supply a native window server. These tests run directly on
   macOS; Linux overrides retain Xvfb where applicable.
 - `.github/actions/android-sdk` reads compileSdk from the catalog or tracked module
-  declarations. The SHA-pinned setup action selects the host OS command-line tools
-  archive. API37 uses `platforms;android-37.0`; an existing platform is reused.
+  declarations, including `compileSdk { version = release(37) { minorApiLevel = 1 } }`.
+  The explicit `compile-sdk` input and catalog values accept whole or minor API
+  levels. An explicit `37.1` requires exactly `platforms;android-37.1`; `37.0`
+  cannot satisfy it. Integer inputs keep their existing behavior (API37 installs
+  `platforms;android-37.0`). The SHA-pinned setup action selects the host OS
+  command-line tools archive.
   Android SDK paths are exported through Actions environment files.
 - The existing `gradle-home` action continues to isolate caches by runner and trust
   level. Credentials, release signing, deployment gates and artifact versions are unchanged.
