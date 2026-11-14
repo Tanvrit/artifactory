@@ -44,27 +44,13 @@ jobs:
   update:
     if: github.event.client_payload.release_channel != 'beta'
     name: Update ${{ github.event.client_payload.product || github.event.inputs.product }} manifest
-    # NOTE 2026-09-20: the paragraph below opens "GitHub-hosted, deliberately".
-    # That is history, not the current selection - org policy since 2026-09-11 is
-    # self-hosted only, enforced by scripts/check-self-hosted-runners.sh. The
-    # paragraph is kept because its FINDING still holds (nothing here needs the
-    # mac pool); only its conclusion was overtaken. See the `runs-on` block below.
-    # GitHub-hosted, deliberately. This job is Node + git + wrangler over the public
-    # internet (github.com, api.cloudflare.com) — it has no macOS/Xcode dependency, no
-    # private-network dependency, and no signing material, so nothing here requires the
-    # self-hosted pool.
-    #
-    # It previously asked for `group: tanvrit` + `[self-hosted, Linux]`. This repository
-    # has ZERO attached self-hosted runners (`GET /repos/Tanvrit/artifactory/actions/runners`
-    # → total_count: 0), so that request could never be satisfied: every run since at
-    # least 2026-06-21 sat queued with runner_name:"" until GitHub's 24h queue expiry
-    # cancelled it. Never once did this workflow execute a single step, which is why the
-    # R2 catalog.json was still the 2026-04-12 copy. That made the whole artifacts CDN
-    # catalogue unrefreshable. Do not move this back to the self-hosted pool without
-    # first confirming a runner is actually attached AND in the `tanvrit` group.
+    # Portable Node/git/wrangler metadata work uses the existing Linux ARM64
+    # pool (owner routing instruction, 2026-11-10). No native packaging or
+    # Apple signing tools are used. Payload, publication gates and credentials
+    # remain unchanged; native per-OS release templates keep their required hosts.
     runs-on:
       group: tanvrit
-      labels: [self-hosted, Linux, X64]
+      labels: [self-hosted, Linux, ARM64]
     # A job that cannot be scheduled must fail fast and loud, not masquerade as
     # "in progress" for a day. The real work is well under two minutes.
     timeout-minutes: 15
