@@ -182,6 +182,14 @@ automatic expiry: after independent verification, the operator removes only that
 run's owned draft and any corresponding temporary tag. Existing callers keep the
 default opt-out behavior and require no additional credential.
 
+## Explicit Jashva desktop beta
+
+The three desktop templates accept an opt-in Jashva beta channel with an exact
+main-reachable source SHA and native build guard. Existing stable callers retain
+their defaults and download contracts. Beta uses separate immutable transport
+paths and explicit consumer selection; see [Jashva desktop beta](jashva-desktop-beta.md)
+for receipts, required native/signing gates and availability checks.
+
 ## Manifest fan-out
 
 Each template's last step is `peter-evans/repository-dispatch@v3` posting an

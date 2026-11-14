@@ -1,3 +1,5 @@
+import { routeBeta } from '../../functions/_shared/beta-routes.js';
+
 /**
  * Tanvrit Artifacts CDN Worker
  * artifacts.tanvrit.com
@@ -33,7 +35,7 @@ const CACHE_CATALOG  = 'public, max-age=30, s-maxage=30';        // 30 sec — c
 
 const VALID_PRODUCTS = [
   'friendly', 'desipops', 'mandee', 'swyft',
-  'bharat-bandhu', 'school', 'wedding', 'control', 'compute'
+  'bharat-bandhu', 'school', 'wedding', 'jashva', 'control', 'compute'
 ];
 
 const PLATFORM_FILE_MAP = {
@@ -43,6 +45,7 @@ const PLATFORM_FILE_MAP = {
   'windows-x64':     { ext: 'msi', label: 'Windows' },
   'linux-x64':       { ext: 'deb', label: 'Linux (DEB)' },
   'linux-x64-rpm':   { ext: 'rpm', label: 'Linux (RPM)' },
+  'linux-x64-app': { ext: 'AppImage', label: 'Linux (AppImage)' },
   'linux-x64-appimage': { ext: 'AppImage', label: 'Linux (AppImage)' },
 };
 
@@ -110,6 +113,9 @@ async function routeRequest(path, request, env, ctx) {
     if (key.includes('..') || key.includes('//')) return jsonError(400, 'Invalid object key');
     return serveBinaryFromR2(env.ARTIFACTS, key, request);
   }
+
+  const beta = await routeBeta(request, env);
+  if (beta) return beta;
 
   // Strip leading slash and split segments
   const segments = path.replace(/^\//, '').split('/');
