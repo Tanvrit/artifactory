@@ -63,3 +63,23 @@ test('Mac then Mac+Windows cannot regress to a Windows-only scan or partially re
     assert.ok(fs.readFileSync(latest).equals(latestBytes));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+
+test('manifest independently discovers the ARM64 receipt without advertising absent x64', async () => {
+  const armRow = { ...row, platform: 'linux-arm64', filename: c.filename(contract, 'linux-arm64') };
+  const armReceipt = { ...contract, schema: 1, artifacts: [armRow] };
+  const armPayload = { ...payload, receipt: `jashva-${contract.release_key}-linux-arm64.release.json` };
+  const verified = [];
+  const result = await qualify(armPayload, {
+    async jsonAt(url, optional) {
+      if (url.includes('api.github.com')) return { value: { tag_name: contract.tag, prerelease: true,
+        draft: false, body: c.sourceMarker(contract) } };
+      if (!url.endsWith(armPayload.receipt)) { assert.equal(optional, true); return null; }
+      return { value: armReceipt, bytes: Buffer.from('same-arm64-receipt') };
+    },
+    async fingerprintAt(url) { verified.push(url); return armRow; },
+  });
+  assert.deepEqual(result.receipts, [armReceipt]);
+  assert.equal(verified.length, 2);
+  assert.ok(verified.every(url => url.endsWith('linux-arm64.deb')));
+});

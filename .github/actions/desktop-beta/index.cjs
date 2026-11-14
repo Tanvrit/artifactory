@@ -39,7 +39,7 @@ function sourceContract({ fetchMain = true } = {}) {
     properties: fs.readFileSync('gradle.properties', 'utf8') });
 }
 function verifyHost(platform) {
-  const expected = { 'macos-arm64': ['darwin', 'arm64'], 'windows-x64': ['win32', 'x64'], 'linux-x64': ['linux', 'x64'] }[platform];
+  const expected = { 'macos-arm64': ['darwin', 'arm64'], 'windows-x64': ['win32', 'x64'], 'linux-x64': ['linux', 'x64'], 'linux-arm64': ['linux', 'arm64'] }[platform];
   requireValue(expected && os.platform() === expected[0] && os.arch() === expected[1], 'Native installer host/architecture differs');
 }
 function cleanNativeOutputs() {
@@ -176,7 +176,8 @@ async function main() {
     fs.appendFileSync(process.env.GITHUB_OUTPUT, `release_key=${contract.release_key}\n`);
     return;
   }
-  requireValue(input('phase') === 'publish', 'Unknown beta action phase');
+  requireValue(['publish', 'qualify'].includes(input('phase')), 'Unknown beta action phase');
+  requireValue(input('phase') !== 'qualify' || platform === 'linux-arm64', 'Private qualification is scoped to ARM64 beta');
   const platforms = [platform];
   if (platform === 'linux-x64' && input('appimage_built') === 'true') platforms.push('linux-x64-app');
   const artifacts = new Map(), rows = [];
@@ -189,6 +190,12 @@ async function main() {
   }
   const receipt = { ...contract, schema: 1, artifacts: rows };
   c.validateReceipt(receipt, contract);
+  if (input('phase') === 'qualify') {
+    fs.writeFileSync(`${contract.product}-${contract.release_key}-${platform}.release.json`,
+      JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx' });
+    console.log('Native ARM64 DEB/source/hash qualification passed; no publication, installation or runtime launch was performed.');
+    return;
+  }
   const directory = fs.mkdtempSync(path.join(process.env.RUNNER_TEMP || os.tmpdir(), 'jashva-desktop-beta-'));
   try {
     const result = await publish(contract, receipt, artifacts, transport(contract, directory));

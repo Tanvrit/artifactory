@@ -3,7 +3,7 @@ description: 'Explicit main-source, native-build and immutable artifact custody;
 inputs:
   phase:
     required: true
-    description: 'verify, publish or verify-windows-signature'
+    description: 'verify, qualify (private ARM64 package receipt), publish or verify-windows-signature'
   product:
     required: true
   version:

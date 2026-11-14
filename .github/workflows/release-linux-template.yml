@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────
-# Reusable Workflow: Build + publish Linux x64 .deb + .AppImage
+# Reusable Workflow: Linux x64 DEB/AppImage; opt-in Jashva beta ARM64 DEB
 #
 # Caller example:
 #   jobs:
@@ -40,6 +40,16 @@ on:
         type: string
         required: false
         default: 'stable'
+      architecture:
+        description: 'Native Linux architecture. ARM64 is an explicit Jashva beta DEB; x64 remains the fleet default.'
+        type: string
+        required: false
+        default: 'x64'
+      publish_artifacts:
+        description: 'False is a private Jashva ARM64 beta candidate only; never updates public releases or manifests.'
+        type: boolean
+        required: false
+        default: true
       source_commit:
         description: 'Beta only: exact full source SHA, reachable from main and equal to workflow event SHA.'
         type: string
@@ -90,14 +100,12 @@ on:
 
 jobs:
   build-linux:
-    name: Linux x64
+    name: Linux ${{ inputs.architecture }}
     runs-on:
       group: tanvrit
-      # This job builds the linux-x64 .deb/.AppImage itself (apt-get fakeroot/binutils/libfuse2,
-      # appimagetool-x86_64, artifacts named *-linux-x64.*), so it must run on an x86-64 Linux
-      # runner. A bare [self-hosted, Linux] also matches the Linux ARM64 runners (GX10), which
-      # have no passwordless sudo and would package arm64 binaries under an x64 name.
-      labels: [self-hosted, Linux, X64]
+      # Native packaging follows the requested architecture; every existing caller
+      # defaults to X64. Channel validation rejects ARM64 outside Jashva beta.
+      labels: [self-hosted, Linux, "${{ inputs.architecture == 'arm64' && 'ARM64' || 'X64' }}"]
     # Reusable template: `runs-on` resolves against the CALLING repository's runners,
     # not artifactory's, so the self-hosted request here is satisfiable and is left
     # alone. What was missing is a ceiling — without `timeout-minutes` a wedged job
@@ -139,12 +147,22 @@ jobs:
         env:
           RELEASE_CHANNEL: ${{ inputs.release_channel }}
           PRODUCT: ${{ inputs.product }}
+          ARCHITECTURE: ${{ inputs.architecture }}
+          PUBLISH_ARTIFACTS: ${{ inputs.publish_artifacts }}
         run: |
           case "$RELEASE_CHANNEL" in
             stable) ;;
             beta) test "$PRODUCT" = jashva || { echo '::error::Public desktop beta is scoped to Jashva.'; exit 1; } ;;
             *) echo '::error::Unknown desktop release channel.'; exit 1 ;;
           esac
+          case "$ARCHITECTURE" in
+            x64) ;;
+            arm64) test "$PRODUCT:$RELEASE_CHANNEL" = jashva:beta || { echo '::error::ARM64 is a Jashva beta DEB only.'; exit 1; } ;;
+            *) echo '::error::Unsupported Linux architecture.'; exit 1 ;;
+          esac
+          if [ "$PUBLISH_ARTIFACTS" != true ]; then
+            test "$PRODUCT:$RELEASE_CHANNEL:$ARCHITECTURE" = jashva:beta:arm64 || { echo '::error::Private candidates are scoped to the ARM64 beta.'; exit 1; }
+          fi
 
       - name: Verify target supported
         id: guard
@@ -173,7 +191,7 @@ jobs:
           version: ${{ inputs.version }}
           source_commit: ${{ inputs.source_commit }}
           expected_build_code: ${{ inputs.expected_build_code }}
-          platform: linux-x64
+          platform: linux-${{ inputs.architecture }}
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
@@ -205,10 +223,19 @@ jobs:
           cache-disabled: true
 
       - name: Install Linux packaging tools
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && inputs.architecture == 'x64'
         run: |
           sudo apt-get update
           sudo apt-get install -y fakeroot binutils libfuse2
+
+      - name: Require native ARM64 packaging prerequisites
+        if: steps.guard.outputs.supported == 'true' && inputs.architecture == 'arm64'
+        shell: bash
+        run: |
+          test "$(uname -m)" = aarch64
+          for tool in jpackage jlink fakeroot dpkg-deb readelf; do
+            command -v "$tool" >/dev/null || { echo "::error::Required native packaging tool missing: $tool"; exit 1; }
+          done
 
       # ── DEB ────────────────────────────────────────────────────────────
       - name: Build Linux DEB
@@ -221,7 +248,7 @@ jobs:
         if: steps.guard.outputs.supported == 'true'
         run: |
           DEB=$(find ${{ steps.guard.outputs.module_dir }}/build/compose/binaries -name "*.deb" | head -1)
-          ARTIFACT="${{ inputs.product }}-${{ steps.beta.outputs.release_key || inputs.version }}-linux-x64.deb"
+          ARTIFACT="${{ inputs.product }}-${{ steps.beta.outputs.release_key || inputs.version }}-linux-${{ inputs.architecture }}.deb"
           mv "$DEB" "$ARTIFACT"
           sha256sum "$ARTIFACT" > "${ARTIFACT}.sha256"
 
@@ -229,7 +256,7 @@ jobs:
       # Distro-agnostic. Compose Desktop has no built-in AppImage task — we
       # wrap createDistributable's output with appimagetool.
       - name: Build Linux AppImage
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && inputs.architecture == 'x64'
         id: appimage
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -303,7 +330,7 @@ jobs:
       # one step would have forced `fail_on_unmatched_files: false` back on and
       # re-swallowed a missing DEB.
       - name: Verify release upload preconditions
-        if: steps.guard.outputs.supported == 'true'
+        if: steps.guard.outputs.supported == 'true' && inputs.publish_artifacts
         shell: bash
         env:
           ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
@@ -312,6 +339,7 @@ jobs:
           PRODUCT: ${{ inputs.product }}
           VERSION: ${{ steps.beta.outputs.release_key || inputs.version }}
           APPIMAGE_BUILT: ${{ steps.appimage.outputs.appimage_built }}
+          ARCHITECTURE: ${{ inputs.architecture }}
         run: |
           set -uo pipefail
           fail=0
@@ -319,7 +347,7 @@ jobs:
             echo "::error::ARTIFACTS_REPO_TOKEN is empty in ${CALLER_REPO} — the ${PRODUCT} ${VERSION} Linux installer cannot be attached to the Tanvrit/artifactory GitHub Release. Add a REPO-level secret named ARTIFACTS_REPO_TOKEN (a PAT with contents:write on Tanvrit/artifactory) under Settings -> Secrets and variables -> Actions in ${CALLER_REPO}. Org secrets are not injected into private repos on the free plan, so they arrive empty. This step used to skip silently — that is how the fleet reported green while shipping nothing."
             fail=1
           fi
-          required="${PRODUCT}-${VERSION}-linux-x64.deb ${PRODUCT}-${VERSION}-linux-x64.deb.sha256"
+          required="${PRODUCT}-${VERSION}-linux-${ARCHITECTURE}.deb ${PRODUCT}-${VERSION}-linux-${ARCHITECTURE}.deb.sha256"
           if [ "${APPIMAGE_BUILT:-false}" = "true" ]; then
             required="$required ${PRODUCT}-${VERSION}-linux-x64.AppImage ${PRODUCT}-${VERSION}-linux-x64.AppImage.sha256"
           fi
@@ -346,7 +374,7 @@ jobs:
             esac
           fi
           if [ "$fail" -ne 0 ]; then exit 1; fi
-          echo "Release upload preconditions OK for ${PRODUCT} ${VERSION} (linux-x64, appimage_built=${APPIMAGE_BUILT:-false})."
+          echo "Release upload preconditions OK for ${PRODUCT} ${VERSION} (linux-${ARCHITECTURE}, appimage_built=${APPIMAGE_BUILT:-false})."
 
       - name: Upload to GitHub Release (DEB)
         if: steps.guard.outputs.supported == 'true' && inputs.release_channel != 'beta'
@@ -364,8 +392,8 @@ jobs:
           prerelease: false
           fail_on_unmatched_files: true
           files: |
-            ${{ inputs.product }}-${{ steps.beta.outputs.release_key || inputs.version }}-linux-x64.deb
-            ${{ inputs.product }}-${{ steps.beta.outputs.release_key || inputs.version }}-linux-x64.deb.sha256
+            ${{ inputs.product }}-${{ steps.beta.outputs.release_key || inputs.version }}-linux-${{ inputs.architecture }}.deb
+            ${{ inputs.product }}-${{ steps.beta.outputs.release_key || inputs.version }}-linux-${{ inputs.architecture }}.deb.sha256
 
       - name: Upload to GitHub Release (AppImage)
         if: steps.guard.outputs.supported == 'true' && steps.appimage.outputs.appimage_built == 'true' && inputs.release_channel != 'beta'
@@ -539,8 +567,31 @@ jobs:
             }
 
 
+      - name: Qualify private ARM64 beta candidate
+        if: steps.guard.outputs.supported == 'true' && !inputs.publish_artifacts
+        uses: Tanvrit/artifactory/.github/actions/desktop-beta@main
+        with:
+          phase: qualify
+          product: ${{ inputs.product }}
+          version: ${{ inputs.version }}
+          source_commit: ${{ inputs.source_commit }}
+          expected_build_code: ${{ inputs.expected_build_code }}
+          platform: linux-arm64
+
+      - name: Retain private ARM64 beta candidate
+        if: steps.guard.outputs.supported == 'true' && !inputs.publish_artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: jashva-linux-arm64-${{ inputs.source_commit }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            ${{ inputs.product }}-${{ steps.beta.outputs.release_key }}-linux-arm64.deb
+            ${{ inputs.product }}-${{ steps.beta.outputs.release_key }}-linux-arm64.deb.sha256
+            ${{ inputs.product }}-${{ steps.beta.outputs.release_key }}-linux-arm64.release.json
+
       - name: Publish qualified immutable Jashva beta
-        if: steps.guard.outputs.supported == 'true' && inputs.release_channel == 'beta'
+        if: steps.guard.outputs.supported == 'true' && inputs.release_channel == 'beta' && inputs.publish_artifacts
         uses: Tanvrit/artifactory/.github/actions/desktop-beta@main
         with:
           phase: publish
@@ -548,7 +599,7 @@ jobs:
           version: ${{ inputs.version }}
           source_commit: ${{ inputs.source_commit }}
           expected_build_code: ${{ inputs.expected_build_code }}
-          platform: linux-x64
+          platform: linux-${{ inputs.architecture }}
           appimage_built: ${{ steps.appimage.outputs.appimage_built }}
         env:
           ARTIFACTS_REPO_TOKEN: ${{ secrets.ARTIFACTS_REPO_TOKEN }}

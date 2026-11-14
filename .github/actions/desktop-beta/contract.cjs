@@ -4,6 +4,7 @@ const FORMATS = Object.freeze({
   'macos-arm64': 'dmg',
   'windows-x64': 'msi',
   'linux-x64': 'deb',
+  'linux-arm64': 'deb',
   'linux-x64-app': 'AppImage',
 });
 const SHA = /^[a-f0-9]{40}$/;

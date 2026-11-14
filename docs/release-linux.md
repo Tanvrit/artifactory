@@ -114,3 +114,40 @@ ship unsigned — users verify integrity via the `.sha256` checksum file.
 - Flatpak packaging for Fedora/Arch users (different sandbox model).
 - Arm64 builds (linux-arm64) for Raspberry Pi / ARM servers.
 - RPM packaging via `jpackage --type rpm` for Fedora/RHEL.
+
+
+## Explicit Jashva Linux ARM64 beta
+
+The additive `architecture: arm64` selection is limited to `product: jashva`
+and `release_channel: beta`. Existing callers default to x64 and keep their
+stable DEB/AppImage contract. ARM64 produces a DEB only; there is no ARM64
+AppImage, x64 substitution or Windows availability claim.
+
+Start with `publish_artifacts: false` and the approved exact main source and
+native build inputs. This path retains a private CI DEB/checksum/source receipt
+and cannot write a GitHub release, R2 object or public manifest. The native
+package check requires `dpkg` architecture `arm64`, the requested public version,
+and real ELF64/AArch64 launcher and bundled JVM bytes. It scans data without
+installing or executing a package. That check does not establish GUI, selected
+Skiko/JNA/SQLite imports, keyring service, installation or upgrade readiness.
+
+The ARM64 job never runs the x64 `sudo apt-get` or AppImage tooling. It requires
+native `jpackage`, `jlink`, `fakeroot`, `dpkg-deb` and `readelf` and fails explicitly
+when any is missing. Do not provision a shared host or add a speculative package
+profile: first run the App's source-bound read-only Linux ARM64 preflight. A
+missing-tool result needs a reviewed, authenticated, job-local preparation step.
+
+Before authorizing the first public ARM64 beta, qualify the actual GX10 candidate
+on a native display (an isolated Xvfb session counts as virtual display only),
+including rendering/input/fonts/images/SQLite and a disposable SecretService
+session with synthetic store/read/restart/delete. Never use the runner user's
+keyring or a plaintext fallback. Prove real DEB install and same-version upgrade
+inside an isolated native test environment; extracting a DEB is not install proof.
+Retain the exact installer hash and source receipt with those results. Until
+those gates pass, keep `publish_artifacts: false` and do not advertise availability.
+
+A shared beta build number has one immutable source marker across platforms.
+Confirm the exact/latest manifest and existing GitHub source marker before
+publication; do not reuse a desktop beta build at a conflicting source. Native
+build allocation remains an owner decision. DEBs currently have source-bound
+hashes and immutable provider readback, not a code-signing claim.
