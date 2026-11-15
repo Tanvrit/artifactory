@@ -85,6 +85,36 @@ class DesktopBetaWorkflowTest(unittest.TestCase):
         self.assertIn('inputs.publish_artifacts', publish['if'])
         self.assertEqual(publish['env']['ARTIFACTS_REPO_TOKEN'], '${{ secrets.ARTIFACTS_REPO_TOKEN }}')
 
+    def test_private_retention_fallback_requires_qualification_and_verified_backend(self):
+        workflow = yaml.load((ROOT / '.github/workflows/release-linux-template.yml').read_text(), Loader=yaml.BaseLoader)
+        steps = {step.get('name'): step for step in workflow['jobs']['build-linux']['steps'] if step.get('name')}
+        qualification = steps['Qualify private ARM64 beta candidate']
+        archive = steps['Retain private ARM64 beta candidate']
+        fallback = steps['Retain private ARM64 candidate in calling repository']
+        guard = steps['Require verified private ARM64 candidate retention']
+        self.assertEqual(qualification['id'], 'private_qualification')
+        self.assertEqual(archive['id'], 'private_archive')
+        self.assertEqual(archive['continue-on-error'], 'true')
+        self.assertEqual(archive['with']['retention-days'], '7')
+        for step in (archive, fallback, guard):
+            self.assertIn("steps.private_qualification.outcome == 'success'", step['if'])
+            self.assertIn('!inputs.publish_artifacts', step['if'])
+        self.assertIn('!cancelled()', fallback['if'])
+        self.assertIn("steps.private_archive.outcome == 'failure'", fallback['if'])
+        self.assertNotIn('continue-on-error', fallback)
+        self.assertEqual(fallback['with']['phase'], 'retain-private')
+        self.assertEqual(fallback['with']['publish_artifacts'], 'false')
+        self.assertEqual(fallback['env'], {'GITHUB_TOKEN': '${{ github.token }}'})
+        self.assertIn('always()', guard['if'])
+        self.assertNotIn('continue-on-error', guard)
+        self.assertEqual(guard['env']['ARCHIVE_OUTCOME'], '${{ steps.private_archive.outcome }}')
+        self.assertEqual(guard['env']['DRAFT_VERIFIED'], '${{ steps.private_draft.outputs.private_retained }}')
+        for archive_outcome, draft_verified, expected in [('success', '', 0), ('failure', 'true', 0),
+                                                        ('failure', '', 1), ('failure', 'false', 1), ('skipped', '', 1)]:
+            result = subprocess.run(['bash', '-c', guard['run']], capture_output=True,
+                                    env={'ARCHIVE_OUTCOME': archive_outcome, 'DRAFT_VERIFIED': draft_verified})
+            self.assertEqual(result.returncode, expected)
+
     def test_channel_rejection_executes_without_credentials(self):
         workflow = yaml.load((ROOT / '.github/workflows/release-linux-template.yml').read_text(), Loader=yaml.BaseLoader)
         step = next(step for step in workflow['jobs']['build-linux']['steps'] if step.get('name') == 'Validate desktop release channel')

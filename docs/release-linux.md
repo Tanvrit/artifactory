@@ -138,11 +138,27 @@ AppImage, x64 substitution or Windows availability claim.
 
 Start with `publish_artifacts: false` and the approved exact main source and
 native build inputs. This path retains a private CI DEB/checksum/source receipt
-and cannot write a GitHub release, R2 object or public manifest. The native
+and cannot publish a public GitHub release, R2 object or public manifest. The native
 package check requires `dpkg` architecture `arm64`, the requested public version,
 and real ELF64/AArch64 launcher and bundled JVM bytes. It scans data without
 installing or executing a package. That check does not establish GUI, selected
 Skiko/JNA/SQLite imports, keyring service, installation or upgrade readiness.
+
+Actions artifact retention is attempted for seven days. If that backend fails,
+the private calling repository can retain exactly the same three qualified files
+in a draft Release tagged `ci-linux-<run_id>-<run_attempt>`, using its ephemeral
+job token with caller-scoped `contents: write`. The helper checks repository
+privacy before creation and every upload, binds the draft to the exact source,
+and verifies the complete remote asset set, sizes and SHA-256 digests. An existing
+tag, unknown request outcome or changed bytes fails; nothing is overwritten or
+retried. The final custody guard requires a verified backend, so storage quota
+does not silently discard the candidate or turn a missing archive into success.
+
+Draft releases have no seven-day automatic expiry. The operator removes only
+the owned draft and its temporary tag after independent verification and when
+that candidate is no longer needed. Other Linux callers keep their existing
+token permissions. Public publishing still requires its separate release PAT
+and R2 credentials; private custody does not advertise installer availability.
 
 The ARM64 job never runs the x64 `sudo apt-get` or AppImage tooling. It requires
 native `jpackage`, `jlink`, `fakeroot`, `dpkg-deb` and `readelf` and fails explicitly

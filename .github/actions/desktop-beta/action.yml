@@ -3,7 +3,7 @@ description: 'Explicit main-source, native-build and immutable artifact custody;
 inputs:
   phase:
     required: true
-    description: 'verify, qualify (private ARM64 package receipt), publish or verify-windows-signature'
+    description: 'verify, qualify (private ARM64 package receipt), retain-private, publish or verify-windows-signature'
   product:
     required: true
   version:
@@ -20,9 +20,21 @@ inputs:
   appimage_built:
     required: false
     default: 'false'
+  publish_artifacts:
+    required: false
+    default: 'true'
+    description: 'retain-private requires explicit false; it never enables public publishing'
 outputs:
   release_key:
     description: 'Public-version plus native-build transport identity'
+  private_retained:
+    description: 'True only after private draft source and all three remote assets are verified'
+  private_release_id:
+    description: 'Verified private draft release ID'
+  private_release_tag:
+    description: 'Run/attempt-bound private draft tag'
+  private_source_sha:
+    description: 'Exact qualified source of the private candidate'
 runs:
   using: node24
   main: index.cjs
