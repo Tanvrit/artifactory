@@ -22,7 +22,8 @@ function fixture(t) {
   fs.writeFileSync(path.join(directory, receiptName), JSON.stringify(receipt, null, 2) + '\n');
   const options = { directory, repository: 'Tanvrit/app-jashva', sourceSha: contract.source_commit,
     runId: '123456789', runAttempt: '2', sourceRef: 'refs/tags/linux-arm64-private-10138', publishArtifacts: false };
-  return { directory, bytes, receipt, options, writeReceipt: () => fs.writeFileSync(path.join(directory, receiptName), JSON.stringify(receipt)) };
+  return { directory, bytes, receipt, options,
+    writeReceipt: () => fs.writeFileSync(path.join(directory, receiptName), JSON.stringify(receipt, null, 2) + '\n') };
 }
 function fake(overrides = {}) {
   const trace = [], assets = []; let release;
@@ -57,6 +58,12 @@ test('exact three-file private draft custody binds source, build, hashes and eac
   assert.deepEqual(result.private_ci_draft.assets.map(row => row.name), [deb, `${deb}.sha256`, receiptName]);
   assert.equal(result.private_ci_draft.assets[0].sha256, sha(f.bytes));
   assert.equal(JSON.stringify(result).includes(f.directory), false);
+});
+test('rewritten canonical fixture reaches retention before semantic corruption cases', async t => {
+  const f = fixture(t), x = fake(); f.writeReceipt();
+  const result = await retainPrivate(contract, { ...f.options, transport: x.io });
+  assert.equal(result.private_ci_draft.source_sha, contract.source_commit);
+  assert.equal(x.assets.length, 3);
 });
 for (const [key, value] of [['publishArtifacts', undefined], ['publishArtifacts', true], ['publishArtifacts', 'false'],
   ['repository', 'Tanvrit/artifactory'], ['sourceSha', 'b'.repeat(40)], ['runId', '0'], ['runAttempt', '../2']]) {
