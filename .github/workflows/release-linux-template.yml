@@ -193,14 +193,16 @@ jobs:
           expected_build_code: ${{ inputs.expected_build_code }}
           platform: linux-${{ inputs.architecture }}
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: steps.guard.outputs.supported == 'true' && env.ARTIFACTS_TOKEN_PRESENT == 'true'
-        env:
-          ARTIFACTS_TOKEN_PRESENT: ${{ secrets.ARTIFACTS_REPO_TOKEN != '' && 'true' || 'false' }}
+      # Branding is public read-only data. A stale release-write PAT must not
+      # block native qualification; publication still requires that PAT below.
+      - name: Checkout public branding
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.guard.outputs.supported == 'true'
         with:
           repository: Tanvrit/artifactory
           path: _branding
-          token: ${{ secrets.ARTIFACTS_REPO_TOKEN }}
+          token: ${{ github.token }}
+          persist-credentials: false
           sparse-checkout: branding/icons/dist/${{ inputs.product }}
 
       - name: Copy icons

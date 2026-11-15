@@ -59,6 +59,32 @@ class DesktopBetaWorkflowTest(unittest.TestCase):
         self.assertIn('WINDOWS_SIGNING_CERT && process.env.WINDOWS_SIGNING_PASSWORD', action)
         self.assertIn('verifyNative(contract, current, source)', action)
 
+    def test_linux_public_branding_uses_only_ephemeral_read_credentials(self):
+        workflow = yaml.load((ROOT / '.github/workflows/release-linux-template.yml').read_text(), Loader=yaml.BaseLoader)
+        steps = workflow['jobs']['build-linux']['steps']
+        branding = [step for step in steps if step.get('with', {}).get('path') == '_branding']
+        self.assertEqual(len(branding), 1)
+        checkout = branding[0]
+        self.assertEqual(checkout['if'], "steps.guard.outputs.supported == 'true'")
+        self.assertNotIn('continue-on-error', checkout)
+        self.assertNotIn('env', checkout)
+        self.assertEqual(checkout['with']['repository'], 'Tanvrit/artifactory')
+        self.assertEqual(checkout['with']['token'], '${{ github.token }}')
+        self.assertEqual(checkout['with']['persist-credentials'], 'false')
+        self.assertEqual(checkout['with']['sparse-checkout'], 'branding/icons/dist/${{ inputs.product }}')
+
+    def test_linux_publication_still_requires_separate_write_credential(self):
+        workflow = yaml.load((ROOT / '.github/workflows/release-linux-template.yml').read_text(), Loader=yaml.BaseLoader)
+        steps = {step.get('name'): step for step in workflow['jobs']['build-linux']['steps'] if step.get('name')}
+        preflight = steps['Verify release upload preconditions']
+        self.assertIn('inputs.publish_artifacts', preflight['if'])
+        self.assertEqual(preflight['env']['ARTIFACTS_REPO_TOKEN'], '${{ secrets.ARTIFACTS_REPO_TOKEN }}')
+        self.assertIn('ARTIFACTS_TOKEN_PRESENT', preflight['run'])
+        self.assertEqual(steps['Upload to GitHub Release (DEB)']['with']['token'], '${{ secrets.ARTIFACTS_REPO_TOKEN }}')
+        publish = steps['Publish qualified immutable Jashva beta']
+        self.assertIn('inputs.publish_artifacts', publish['if'])
+        self.assertEqual(publish['env']['ARTIFACTS_REPO_TOKEN'], '${{ secrets.ARTIFACTS_REPO_TOKEN }}')
+
     def test_channel_rejection_executes_without_credentials(self):
         workflow = yaml.load((ROOT / '.github/workflows/release-linux-template.yml').read_text(), Loader=yaml.BaseLoader)
         step = next(step for step in workflow['jobs']['build-linux']['steps'] if step.get('name') == 'Validate desktop release channel')
