@@ -169,6 +169,20 @@ async function main() {
   }
   const contract = sourceContract();
   const platform = input('platform'); verifyHost(platform);
+  if (input('phase') === 'retain-private') {
+    requireValue(platform === 'linux-arm64' && input('publish_artifacts') === 'false',
+      'Private retention requires the explicit ARM64 non-public candidate path');
+    const { retainPrivate } = require('./private-custody.cjs');
+    const result = await retainPrivate(contract, { publishArtifacts: false });
+    const saved = result.private_ci_draft;
+    requireValue(saved && Number.isSafeInteger(saved.release_id) && saved.release_id > 0 &&
+      /^ci-linux-[1-9][0-9]*-[1-9][0-9]*$/.test(saved.tag) && saved.source_sha === contract.source_commit,
+    'Private draft output binding differs');
+    fs.appendFileSync(process.env.GITHUB_OUTPUT, `private_retained=true\nprivate_release_id=${saved.release_id}\n` +
+      `private_release_tag=${saved.tag}\nprivate_source_sha=${saved.source_sha}\n`);
+    console.log(JSON.stringify(result));
+    return;
+  }
   if (input('phase') === 'verify') {
     if (platform === 'windows-x64') requireValue(process.env.WINDOWS_SIGNING_CERT && process.env.WINDOWS_SIGNING_PASSWORD,
       'Jashva beta requires existing Windows signing credentials');
@@ -204,7 +218,21 @@ async function main() {
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 }
 module.exports = { fingerprint, sourceContract, verifyHost, cleanNativeOutputs, configValue, transport };
-if (require.main === module) main().catch(() => {
+if (require.main === module) main().catch(error => {
+  const { CustodyError, STAGES, REASONS } = require('./private-custody.cjs');
+  if (error instanceof CustodyError && STAGES.includes(error.stage) && REASONS.includes(error.reason)) {
+    const status = Number.isInteger(error.httpStatus) && error.httpStatus >= 100 && error.httpStatus <= 599
+      ? error.httpStatus : 0;
+    if (process.env.GITHUB_OUTPUT) {
+      try {
+        fs.appendFileSync(process.env.GITHUB_OUTPUT, `private_retention_stage=${error.stage}\n` +
+          `private_retention_reason=${error.reason}\nprivate_retention_http_status=${status}\n`);
+      } catch {}
+    }
+    console.error(`::error::Private Linux custody refused: ${error.stage}/${error.reason}; HTTP ${status}.`);
+    process.exitCode = 1;
+    return;
+  }
   // Never echo transport stderr, response bodies, URLs containing credentials or command arguments.
   console.error('::error::Qualified Jashva beta action failed. Check source/build custody, native verification and configured publication credentials.');
   process.exitCode = 1;

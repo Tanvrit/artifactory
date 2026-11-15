@@ -570,6 +570,7 @@ jobs:
 
 
       - name: Qualify private ARM64 beta candidate
+        id: private_qualification
         if: steps.guard.outputs.supported == 'true' && !inputs.publish_artifacts
         uses: Tanvrit/artifactory/.github/actions/desktop-beta@main
         with:
@@ -581,7 +582,13 @@ jobs:
           platform: linux-arm64
 
       - name: Retain private ARM64 beta candidate
-        if: steps.guard.outputs.supported == 'true' && !inputs.publish_artifacts
+        id: private_archive
+        if: >-
+          steps.guard.outputs.supported == 'true' && !inputs.publish_artifacts &&
+          steps.private_qualification.outcome == 'success'
+        # Failure transfers to the private draft backend; the mandatory guard
+        # below still fails unless one backend verifies the candidate.
+        continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: jashva-linux-arm64-${{ inputs.source_commit }}
@@ -591,6 +598,39 @@ jobs:
             ${{ inputs.product }}-${{ steps.beta.outputs.release_key }}-linux-arm64.deb
             ${{ inputs.product }}-${{ steps.beta.outputs.release_key }}-linux-arm64.deb.sha256
             ${{ inputs.product }}-${{ steps.beta.outputs.release_key }}-linux-arm64.release.json
+
+      - name: Retain private ARM64 candidate in calling repository
+        id: private_draft
+        if: >-
+          !cancelled() && steps.guard.outputs.supported == 'true' && !inputs.publish_artifacts &&
+          steps.private_qualification.outcome == 'success' &&
+          steps.private_archive.outcome == 'failure'
+        uses: Tanvrit/artifactory/.github/actions/desktop-beta@main
+        with:
+          phase: retain-private
+          product: ${{ inputs.product }}
+          version: ${{ inputs.version }}
+          source_commit: ${{ inputs.source_commit }}
+          expected_build_code: ${{ inputs.expected_build_code }}
+          platform: linux-arm64
+          publish_artifacts: 'false'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Require verified private ARM64 candidate retention
+        if: >-
+          always() && steps.guard.outputs.supported == 'true' && !inputs.publish_artifacts &&
+          steps.private_qualification.outcome == 'success'
+        shell: bash
+        env:
+          ARCHIVE_OUTCOME: ${{ steps.private_archive.outcome }}
+          DRAFT_VERIFIED: ${{ steps.private_draft.outputs.private_retained }}
+        run: |
+          set -euo pipefail
+          if [ "$ARCHIVE_OUTCOME" != 'success' ] && [ "$DRAFT_VERIFIED" != 'true' ]; then
+            echo '::error::Neither private retention backend verified the qualified ARM64 candidate.'
+            exit 1
+          fi
 
       - name: Publish qualified immutable Jashva beta
         if: steps.guard.outputs.supported == 'true' && inputs.release_channel == 'beta' && inputs.publish_artifacts
