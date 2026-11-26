@@ -1,6 +1,8 @@
 import os
 import pathlib
+import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -16,9 +18,33 @@ class PrepareMacTest(unittest.TestCase):
             fixture_sdk = root / "sdk-fixture/Library/Android/sdk"
             (fixture_sdk / "platforms").mkdir(parents=True)
             prefix = root / "prefix"
-            for formula in ["bash", "coreutils", "findutils", "grep", "gh", "jq", "openssl@3"]:
+            for formula in ["bash", "coreutils", "findutils", "grep", "gh", "jq", "openssl@3", "python@3.14"]:
                 (prefix / formula / "libexec/gnubin").mkdir(parents=True)
                 (prefix / formula / "bin").mkdir()
+            python_dir = prefix / "python@3.14" / overrides.pop("TEST_PYTHON_LAYOUT", "libexec/bin")
+            python_dir.mkdir(parents=True, exist_ok=True)
+            # Execute the action's actual Python probe with controlled interpreter facts.
+            # Keep this fixture runnable even on the old Python used by the failing runner.
+            python_probe = r"""
+import builtins, os, pathlib, sys, types
+with (pathlib.Path(os.environ["FIXTURE"]) / "python-calls").open("a") as trace:
+    trace.write("qualified\n")
+sys.version_info = (3, 10) if os.environ.get("TEST_PYTHON_MODE") == "old" else (3, 14)
+sys.version = ".".join(map(str, sys.version_info)) + " fixture"
+sys.modules["tomllib"] = types.ModuleType("tomllib")
+original_import = builtins.__import__
+def import_module(name, *args, **kwargs):
+    if name == "tomllib" and os.environ.get("TEST_PYTHON_MODE") == "missing-tomllib":
+        raise ImportError("Fixture interpreter lacks tomllib")
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = import_module
+exec(compile(sys.stdin.read(), "<action-python-probe>", "exec"))
+"""
+            python_launcher = "#!/bin/sh\nexec " + shlex.quote(sys.executable) + " -c " + shlex.quote(python_probe) + ' "$@"\n'
+            (root / "python-fixture").write_text(python_launcher)
+            if overrides.get("TEST_MISSING") != "python@3.14" and overrides.get("TEST_PYTHON_MODE") != "missing-binary":
+                (python_dir / "python3").write_text(python_launcher)
+                (python_dir / "python3").chmod(0o755)
             if overrides.get("TEST_MISSING") != "gh":
                 github_cli = prefix / "gh/bin/gh"
                 github_cli.write_text("#!/bin/sh\nexit 0\n")
@@ -47,6 +73,9 @@ case "$1" in
     if [ "$2" = gh ]; then
       printf '#!/bin/sh\nexit 0\n' > "$FIXTURE/prefix/gh/bin/gh"
       chmod 755 "$FIXTURE/prefix/gh/bin/gh"
+    elif [ "$2" = python@3.14 ]; then
+      cp "$FIXTURE/python-fixture" "$FIXTURE_PYTHON_DIR/python3"
+      chmod 755 "$FIXTURE_PYTHON_DIR/python3"
     fi ;;
   update)
     if [ "${TEST_UPDATE_FAIL:-}" = true ]; then echo "Synthetic Homebrew update failed"; exit 1; fi
@@ -58,6 +87,7 @@ esac
                 "docker": '#!/bin/sh\nif [ "$1" = context ]; then echo "${TEST_DOCKER_CONTEXT:-desktop-linux}"; exit 0; fi\nif [ "${TEST_DOCKER_FAIL:-}" = true ] && [ ! -f "$FIXTURE/engine-started" ]; then exit 1; fi\nif [ "$2" = --format ]; then echo "${TEST_DOCKER_OS:-linux}"; fi\n',
                 "open": '#!/bin/sh\necho "$@" >> "$FIXTURE/started"\n[ "${TEST_ENGINE_NEVER_STARTS:-}" = true ] || touch "$FIXTURE/engine-started"\n',
                 "sleep": "#!/bin/sh\nexit 0\n",
+                "python3": '#!/bin/sh\necho old >> "$FIXTURE/python-calls"\nexit 89\n',
                 "launchctl": '#!/bin/sh\nexit 1\n',
             }
             for tool in ["sha256sum", "timeout", "jq", "openssl"]:
@@ -72,12 +102,46 @@ esac
                 path = binary / name
                 path.write_text(text)
                 path.chmod(0o755)
-            env = dict(os.environ, RUNNER_TEMP=directory, FIXTURE=directory, ANDROID_HOME=str(fixture_sdk), ANDROID_SDK_ROOT=str(fixture_sdk), PATH=os.pathsep.join([str(binary), "/usr/bin", "/bin"]), MACOS_CI_APPLICATION_DIRS=str(applications), GITHUB_PATH=str(root / "paths"), GITHUB_ENV=str(root / "environment"))
+            env = dict(os.environ, RUNNER_TEMP=directory, FIXTURE=directory, FIXTURE_PYTHON_DIR=str(python_dir), ANDROID_HOME=str(fixture_sdk), ANDROID_SDK_ROOT=str(fixture_sdk), PATH=os.pathsep.join([str(binary), "/usr/bin", "/bin"]), MACOS_CI_APPLICATION_DIRS=str(applications), GITHUB_PATH=str(root / "paths"), GITHUB_ENV=str(root / "environment"))
             env.pop("CI_REQUIRE_GITHUB_CLI", None)
             env.update(overrides)
             result = subprocess.run(["/bin/bash", str(SCRIPT)], env=env, capture_output=True, text=True)
-            files = {name: (root / name).read_text() if (root / name).exists() else "" for name in ["paths", "environment", "installed", "started", "brew-calls"]}
+            files = {name: (root / name).read_text() if (root / name).exists() else "" for name in ["paths", "environment", "installed", "started", "brew-calls", "python-calls"]}
+            if result.returncode == 0 and overrides.get("TEST_FOLLOWUP_PYTHON") == "true":
+                # Actions prepends GITHUB_PATH entries for subsequent steps, last entry first.
+                following_env = dict(env, PATH=os.pathsep.join(list(reversed(files["paths"].splitlines())) + [env["PATH"]]))
+                following = subprocess.run(["/bin/bash", "-c", "command -v python3; python3 - <<'PY'\nimport sys, tomllib\nassert sys.version_info >= (3, 11)\nPY"], env=following_env, capture_output=True, text=True)
+                files["following-python-status"] = following.returncode
+                files["following-python-path"] = following.stdout.strip()
+                files["python-calls"] = (root / "python-calls").read_text() if (root / "python-calls").exists() else ""
             return result, files
+
+    def test_selects_qualified_homebrew_python_over_an_older_path_for_this_and_following_steps(self):
+        for layout in ("bin", "libexec/bin"):
+            with self.subTest(layout=layout):
+                result, files = self.run_fixture(TEST_PYTHON_LAYOUT=layout, TEST_FOLLOWUP_PYTHON="true")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(files["python-calls"].splitlines(), ["qualified", "qualified"])
+                self.assertEqual(files["following-python-status"], 0)
+                self.assertTrue(files["following-python-path"].endswith("/python@3.14/" + layout + "/python3"))
+                self.assertEqual(files["installed"], "")
+                self.assertIn("provides stdlib tomllib", result.stdout)
+
+    def test_installs_missing_python_through_the_existing_bounded_brew_retry(self):
+        result, files = self.run_fixture(TEST_MISSING="python@3.14", TEST_BUSY="true")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(files["installed"].strip(), "python@3.14")
+        self.assertEqual(files["brew-calls"].splitlines().count("install python@3.14"), 2)
+        self.assertEqual(files["python-calls"].splitlines(), ["qualified"])
+        self.assertFalse(any(call.startswith(("upgrade", "link", "unlink", "reinstall")) for call in files["brew-calls"].splitlines()))
+
+    def test_rejects_old_missing_stdlib_or_missing_homebrew_python_without_system_fallback(self):
+        for mode, message in (("old", ">= 3.11"), ("missing-tomllib", "stdlib tomllib"), ("missing-binary", "Homebrew python3")):
+            with self.subTest(mode=mode):
+                result, files = self.run_fixture(TEST_PYTHON_MODE=mode)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stdout + result.stderr)
+                self.assertNotIn("old", files["python-calls"].splitlines())
 
     def test_prepares_gnu_paths_and_reuses_the_existing_mac_sdk(self):
         result, files = self.run_fixture()
