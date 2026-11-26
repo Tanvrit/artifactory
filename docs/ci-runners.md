@@ -18,9 +18,15 @@ repositories access to that group. The default GitHub runner labels must include
 A workflow change cannot make an offline or inaccessible runner accept jobs.
 
 - Install Xcode/Command Line Tools and Homebrew for the runner user. Each workflow
-  continues to select its own JDK, Node and Python versions.
+  continues to select its own JDK and Node versions and can select a different
+  Python after the shared preparation step when its target requires one.
 - `.github/actions/macos-ci-tools` provisions missing GNU command tools, Bash, jq
-  and OpenSSL through Homebrew, and exports their paths. Existing packages are reused.
+  and OpenSSL through Homebrew, and exports their paths. It also selects Homebrew
+  `python@3.14` for the current job and later steps through `GITHUB_PATH`, supporting
+  both the `bin/python3` and versioned `libexec/bin/python3` layouts. It verifies
+  Python >= 3.11 and stdlib `tomllib` before declaring the runner ready. Missing
+  Python is installed through the same bounded Homebrew provisioning path;
+  existing packages are reused without global relinking, upgrading or system-Python changes.
   Concurrent registrations retry explicit Homebrew busy-lock errors; other install
   failures stop the job immediately.
 - Docker jobs require Docker Desktop, Colima, or a configured Docker context with a

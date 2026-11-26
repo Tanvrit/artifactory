@@ -22,7 +22,8 @@ if [ -z "$brew_bin" ]; then
 fi
 export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
 brew_updated=false
-formulas=(bash coreutils findutils grep jq openssl@3)
+formulas=(bash coreutils findutils grep jq openssl@3 python@3.14)
+python_prefix=""
 if [ "${CI_REQUIRE_GITHUB_CLI-false}" = true ]; then formulas+=(gh); fi
 for formula in "${formulas[@]}"; do
   if ! "$brew_bin" list --versions "$formula" >/dev/null 2>&1; then
@@ -76,7 +77,14 @@ for formula in "${formulas[@]}"; do
     rm -f "$log_file"
   fi
   prefix=$("$brew_bin" --prefix "$formula")
-  for dir in "$prefix/libexec/gnubin" "$prefix/bin"; do
+  paths=("$prefix/libexec/gnubin" "$prefix/bin")
+  if [ "$formula" = python@3.14 ]; then
+    python_prefix=$prefix
+    # Versioned Brew formulae put python3 in libexec/bin; older default-formula
+    # installations put it in bin. Select either layout only for this job.
+    paths+=("$prefix/libexec/bin")
+  fi
+  for dir in "${paths[@]}"; do
     if [ -d "$dir" ]; then
       printf '%s
 ' "$dir" >> "$GITHUB_PATH"
@@ -84,6 +92,25 @@ for formula in "${formulas[@]}"; do
     fi
   done
 done
+
+# Never fall back to Apple's or a previously selected older Python. GITHUB_PATH
+# carries this selection into later steps without relinking the global installation.
+hash -r
+python_path=$(command -v python3 || true)
+case "$python_path" in
+  "$python_prefix/bin/python3"|"$python_prefix/libexec/bin/python3") ;;
+  *) echo "::error::Homebrew python3 is missing from the selected Python formula"; exit 1 ;;
+esac
+python3 -I - <<'PYTHON'
+import sys
+if sys.version_info < (3, 11):
+    raise SystemExit("::error::Runner python3 >= 3.11 is required for CI.")
+try:
+    import tomllib
+except ImportError:
+    raise SystemExit("::error::Runner python3 must provide stdlib tomllib.") from None
+print(f"Runner Python {sys.version.split()[0]} at {sys.executable} provides stdlib tomllib.")
+PYTHON
 
 # Reuse the runner user's SDK when present; jobs needing installation use android-sdk.
 for sdk in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" "$HOME/Library/Android/sdk" "$HOME/Android/Sdk"; do
